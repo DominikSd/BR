@@ -1,0 +1,24 @@
+app:
+  name: "botlab"
+  mode: "simulation"
+
+cycle:
+  interval_s: 45.0
+  prepare_before_s: 5.0
+  ready_before_s: 1.0
+  ready_after_s: 1.0
+  verify_timeout_s: 0.5
+  recover_timeout_s: 2.0
+
+combat:
+  low_hp_threshold: 0.35
+  rest_start_threshold: 0.50
+  rest_stop_threshold: 0.90
+
+telemetry:
+  sqlite_path: "data/telemetry/botlab.sqlite3"
+  log_path: "logs/botlab.log"
+  log_level: "INFO"
+
+vision:
+  enabled: false
