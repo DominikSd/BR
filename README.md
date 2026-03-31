@@ -1,124 +1,145 @@
 # botlab
 
-Minimalny, modularny symulator lokalnego rdzenia cyklicznego systemu PvE w Pythonie.
+Stabilny, testowalny rdzen logiczny dla cyklicznego bota PvE, rozwijany najpierw jako architektura i przeplyw use-case, a dopiero potem jako adaptery srodowiskowe.
 
-## 1. Czym projekt jest teraz
+## Aktualna architektura
 
-Projekt realizuje samodzielny przebieg symulacyjny z następującymi warstwami:
-- konfiguracja z YAML (`config/default.yaml`),
-- scheduler/predictor dla cyklicznych zdarzeń (interval + drift + okna czasowe),
-- FSM decydujący o fazach cyklu (IDLE -> PREPARE -> READY -> ATTEMPT -> VERIFY -> COMBAT/REST/RECOVER),
-- prosty generator zdarzeń i świata symulacji (spawny, timingi, symulowane walki),
-- telemetryka do logu i SQLite (wpisy cyklu, prób, przejść stanów),
-- warstwa odzysku przy timeoutach i wyjątkach.
+Repo uzywa jednej kanonicznej sciezki:
 
-## 2. Moduły projektu
+- `src/botlab/domain`
+  logika domenowa: predictor, scheduler, decision engine, FSM, recovery, model swiata i targetowanie
+- `src/botlab/application`
+  DTO, porty i use-case flow: orchestrator cyklu, target acquisition, approach, interaction, engagement
+- `src/botlab/adapters/simulation`
+  symulacyjny runtime swiata, scenariusze, replay runner, combat/rest i composition root
+- `src/botlab/adapters/telemetry`
+  logger JSON i zapis do SQLite
 
-- `src/botlab/config.py` - wczytanie/validacja konfiguracji aplikacji, cyklu, combat, telemetry, vision.
-- `src/botlab/types.py` - klasy domenowe (`BotState`, `CyclePrediction`, `Observation`, `Decision`, `CombatSnapshot`, `TelemetryRecord`).
-- `src/botlab/domain/predictor.py` - `SpawnPredictor`, odkłada anchor, obserwacje i estymacja interwału.
-- `src/botlab/domain/scheduler.py` - `CycleScheduler`, stany czasowe, predykcje okien przygotowania i gotowości.
-- `src/botlab/domain/decision_engine.py` - `DecisionEngine`, algorytm podejmowania decyzji dla FSM.
-- `src/botlab/domain/fsm.py` - `CycleFSM`, przetwarzanie decyzji i historia przejść.
-- `src/botlab/domain/recovery.py` - `RecoveryManager`, wykrywanie stuck stanu i plan recovery.
-- `src/botlab/adapters/simulation/runner.py` - `SimulationRunner`, orchestracja cykli, telemetria i logika przebiegu.
-- `src/botlab/adapters/simulation/spawner.py` - `SimulatedSpawner`, scenariusze cykli, generacja obserwacji i wyników verify.
-- `src/botlab/adapters/simulation/world.py` - `SimulatedWorld`, timeline cyklu (prepare/ready/attempt/verify/rest) dla świata.
-- `src/botlab/adapters/simulation/battle.py` - symulacja walki i odpocznienia.
-- `src/botlab/adapters/telemetry/logger.py` - logger JSON + plik + opcjonalnie konsola.
-- `src/botlab/adapters/telemetry/storage.py` - `SQLiteTelemetryStorage`, schema init i przeszukiwanie.
-- `src/botlab/adapters/telemetry/schema.py` - definicje tabel SQLite (`cycles`, `state_transitions`, `attempts`).
+W repo nie ma juz rownoleglych namespace'ow `botlab.core`, `botlab.simulation` ani `botlab.telemetry`.
 
-## 3. Jak działa przebieg symulacyjny
+## Przebieg cyklu
 
-1. `main.py` uruchamia `SimulationRunner.from_settings()`.
-2. `CycleScheduler` bootstrapuje predykcję na `anchor_spawn_ts` i `anchor_cycle_id`.
-3. Dla każdego cyklu `run_cycles()`:
-   - wylicza predykcję z `SpawnPredictor`,
-   - generuje `SpawnEvent` w `SimulatedSpawner`,
-   - tworzy `CycleTrace` w `SimulatedWorld` (przygotowanie/ready/attempt/verify...),
-   - kolejno `FSM.tick()` w kluczowych momentach (prepare, ready, attempt, verify itd.),
-   - zapisuje rekordy stanu/atempt/cykl do SQLite i do logów,
-   - przy błędach lub timeoutach weryfikacji: wykonuje `RecoveryManager` i dodatkowe przejścia.
-4. Po cyklu raportuje `SimulationReport` z liczbą sukcesów, porażek, timeoutów itp.
+Aktualny flow symulacji:
 
-## 4. Komponenty rdzenia
+1. przygotowanie obserwacji strefy spawnu
+2. wykrycie zdarzenia w oknie obserwacji
+3. acquire / keep target
+4. approach do targetu
+5. final revalidate przed interakcja
+6. verify
+7. combat
+8. rest, jesli potrzeba
+9. powrot do `WAIT_NEXT_CYCLE`
 
-### config
-`botlab.config.Settings` i podsekcje to jednoźródłowa konfiguracja: `app`, `cycle`, `combat`, `telemetry`, `vision`.
+Target moze zostac utracony podczas ruchu albo tuz przed interakcja. W takim przypadku system natychmiast robi retarget albo konczy cykl jako `no_target_available`.
 
-### types
-`BotState`, `CyclePrediction`, `Observation`, `Decision`, `CombatSnapshot`, `TelemetryRecord`.
+## Symulacja walki
 
-### predictor
-`SpawnPredictor` wykorzystuje historyczne spawny do uśrednienia interwału i przewidywania czasu następnego spawn.
+Aktualna walka jest celowo prosta i deterministyczna:
 
-### scheduler
-`CycleScheduler` wykorzystuje predykcje do określenia stanu czasowego: `WAIT_NEXT_CYCLE`, `PREPARE_WINDOW`, `READY_WINDOW`.
+- domyslna sekwencja wejsc to `1 -> space`
+- nazwane plany walki sa ladowane z `config/combat_plans.yaml`
+- profile walki mapujace sie na named plans sa ladowane z `config/combat_profiles.yaml`
+- standardowy run moze miec domyslny profil z `combat.default_profile_name` w `config/default.yaml`
+- sekwencja jest jawna w scenariuszu jako `combat_inputs`
+- mozna wybrac profil walki przez `combat_profile_name` albo CLI `--combat-profile`
+- mozna tez wybrac nazwany plan walki przez `combat_plan_name` albo CLI `--combat-plan`
+- mozna tez opisac plan per runda przez `combat_plan_rounds`, np. `[['1', 'space'], ['2']]`
+- to jest fundament pod przyszla konfiguracje "co klikac", w jakiej kolejnosci i w ktorej rundzie
 
-### decision engine
-`DecisionEngine` logika wyboru następnego stanu w FSM zależnie od:
-- obecny stan,
-- temporal_state (okna),
-- obserwacja sygnału,
-- wynik weryfikacji,
-- snapshot walki (hp),
-- timeouty.
+## Najwazniejsze moduly
 
-### FSM
-`CycleFSM` przyjmuje `Decision`, przechowuje aktualny stan, wysyła historię przejść i stan końcowy.
+- `src/botlab/config.py`
+  wczytywanie i walidacja konfiguracji YAML
+- `src/botlab/types.py`
+  wspolne typy domenowe i `TelemetryRecord`
+- `src/botlab/main.py`
+  CLI
+- `src/botlab/application/orchestrator.py`
+  kanoniczny use-case cyklu
+- `src/botlab/application/targeting.py`
+  acquire / approach / interaction / engagement services
+- `src/botlab/adapters/simulation/runner.py`
+  composition root dla symulacji
+- `src/botlab/adapters/simulation/replay.py`
+  powtarzalne replaye, presety scenariuszy i loader YAML dla scenario runnera
 
-### recovery
-`RecoveryManager` wykrywa stuck w `PREPARE_WINDOW`, `READY_WINDOW`, `ATTEMPT`, `VERIFY`, `COMBAT`, `REST`, `RECOVER` i buduje plan wyjścia do `RECOVER` + `WAIT_NEXT_CYCLE`.
+## Uruchomienie
 
-### simulation runner
-`SimulationRunner` integruje scheduler, FSM, spawner, world, battle, rest, recovery, logging i storage w jednym przebiegu cykli.
-
-### telemetry logger
-`configure_telemetry_logger()` (plik + opcjonalnie konsola) i `log_telemetry_record()` (JSON manifest) w `botlab.adapters.telemetry.logger`.
-
-### SQLite storage
-`SQLiteTelemetryStorage` inicjalizuje schemat i zapisuje w tabelach:
-- `cycles`,
-- `state_transitions`,
-- `attempts`.
-
-## 5. Uruchomienie z CLI
+Standardowy przebieg:
 
 ```bash
-python -m botlab.main --cycles 20 --config config/default.yaml --anchor-spawn-ts 100.0 --anchor-cycle-id 0 --console-log
+python -m botlab.main --config config/default.yaml --cycles 10 --anchor-spawn-ts 100.0 --anchor-cycle-id 0
 ```
 
-albo
+albo:
 
 ```bash
-python -m botlab.main
+python run.py
 ```
 
-Domyślnie używa `config/default.yaml`:
+Replay z wbudowanego presetu:
+
+```bash
+python -m botlab.main --config config/default.yaml --scenario-preset baseline_mixed_cycle
+```
+
+Lista dostepnych presetow:
+
+```bash
+python -m botlab.main --list-scenario-presets
+```
+
+Lista dostepnych planow walki:
+
+```bash
+python -m botlab.main --list-combat-plans
+```
+
+Lista dostepnych profili walki:
+
+```bash
+python -m botlab.main --list-combat-profiles
+```
+
+Standardowy run z nazwanym planem walki:
+
+```bash
+python -m botlab.main --config config/default.yaml --cycles 5 --combat-plan spam_1_space
+```
+
+Standardowy run z profilem walki:
+
+```bash
+python -m botlab.main --config config/default.yaml --cycles 5 --combat-profile fast_farmer
+```
+
+Na koncu przebiegu CLI wypisuje tez agregaty telemetry per `combat_plan_name` i `combat_profile_name`, z liczba sukcesow, restow i srednim koncowym HP.
+
+Replay z pliku YAML:
+
+```bash
+python -m botlab.main --config config/default.yaml --scenario-file scenarios/custom.yaml
+```
+
+Domyslna konfiguracja zapisuje telemetry do:
+
 - `data/telemetry/botlab.sqlite3`
 - `logs/botlab.log`
 
-## 6. Uruchomienie testów
+## Testy
+
+Najwazniejsze grupy testow:
+
+- `tests/test_orchestrator.py`
+- `tests/test_orchestrator_scenarios.py`
+- `tests/test_simulation_runner.py`
+- `tests/test_scenario_replay.py`
+- `tests/test_telemetry.py`
+- `tests/test_architecture_regression.py`
+
+Standardowe uruchomienie:
 
 ```bash
 pytest -q
 ```
-
-lub
-
-```bash
-python -m pytest -q
-```
-
-Uwaga: testsy sprawdzają import pakietu i istniejące ścieżki oraz poprawność konfiguracji.
-
-## 7. Aktualny następny etap rozwoju
-
-Priorytety kolejnego kroku:
-- dodać wieloźródłowe przypadki testowe dla `SpawnPredictor` i `CycleScheduler` w różnych scenariuszach driftem,
-- pełna implementacja modelu walki w `SimulatedBattle` (efektywny decline HP, prawdziwe stany zagrożenia),
-- lepsza adaptacja predictora do niestacjonarnego interwału oraz outlierów,
-- debugowalny interfejs eksportu wyników symulacji z SQLite w CSV/JSON,
-- integracja plug-inów obserwacji (np. vision/kamera/zbior danych rzeczywistego sygnału),
-- dodatnie symulacji wielowątkowej/async dla równoległych agentów.

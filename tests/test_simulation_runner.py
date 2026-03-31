@@ -4,7 +4,7 @@ from pathlib import Path
 
 from botlab.config import Settings, TelemetryConfig, load_default_config
 from botlab.adapters.simulation.runner import SimulationRunner
-from botlab.adapters.simulation.spawner import CycleScenario, SimulatedSpawner
+from botlab.adapters.simulation.spawner import CycleScenario, SimulatedGroupState, SimulatedSpawner
 from botlab.types import BotState
 
 
@@ -258,6 +258,14 @@ def test_runner_executes_combat_then_rest_then_wait_next_cycle(tmp_path: Path) -
     cycles = runner.storage.fetch_cycles()
     assert cycles[0]["result"] == "success"
     assert cycles[0]["final_state"] == "WAIT_NEXT_CYCLE"
+    assert cycles[0]["metadata"]["combat_completed"] is True
+    assert cycles[0]["metadata"]["combat_turn_count"] == 3
+    assert cycles[0]["metadata"]["combat_final_hp_ratio"] == 0.40
+    assert cycles[0]["metadata"]["combat_finished_with_rest"] is True
+    assert cycles[0]["metadata"]["rest_tick_count"] >= 1
+    assert cycles[0]["metadata"]["combat_plan_name"] == "basic_1_space"
+    assert cycles[0]["metadata"]["combat_plan_source"] == "default_catalog_plan"
+    assert cycles[0]["metadata"]["combat_profile_name"] is None
 
 
 def test_runner_executes_combat_without_rest_when_hp_is_high_enough(tmp_path: Path) -> None:
@@ -301,6 +309,11 @@ def test_runner_executes_combat_without_rest_when_hp_is_high_enough(tmp_path: Pa
         for item in transitions
     )
     assert not any(item["state_exit"] == "REST" for item in transitions)
+
+    cycles = runner.storage.fetch_cycles()
+    assert cycles[0]["metadata"]["combat_completed"] is True
+    assert cycles[0]["metadata"]["combat_finished_with_rest"] is False
+    assert cycles[0]["metadata"]["rest_tick_count"] == 0
 
 
 def test_runner_handles_force_battle_error(tmp_path: Path) -> None:
@@ -392,3 +405,414 @@ def test_runner_recovers_from_rest_exception_and_resets_to_wait_next_cycle(tmp_p
         and item["reason"] == "execution_error_RuntimeError_reset_complete"
         for item in transitions
     )
+
+
+def test_runner_reports_observation_preparation_and_nearest_free_target(tmp_path: Path) -> None:
+    settings = _build_settings(tmp_path)
+
+    spawner = SimulatedSpawner(
+        overrides={
+            1: CycleScenario(
+                has_event=True,
+                spawn_zone_visible=True,
+                bot_position_xy=(0.0, 0.0),
+                groups=(
+                    SimulatedGroupState(
+                        group_id="busy-near",
+                        position_xy=(1.0, 0.0),
+                        engaged_by_other=True,
+                    ),
+                    SimulatedGroupState(
+                        group_id="free-far",
+                        position_xy=(5.0, 0.0),
+                    ),
+                    SimulatedGroupState(
+                        group_id="free-near",
+                        position_xy=(2.0, 0.0),
+                    ),
+                ),
+                note="pick-nearest-free",
+            ),
+            2: CycleScenario(
+                has_event=True,
+                spawn_zone_visible=False,
+                bot_position_xy=(10.0, 10.0),
+                groups=(
+                    SimulatedGroupState(
+                        group_id="hidden-group",
+                        position_xy=(11.0, 10.0),
+                    ),
+                ),
+                note="spawn-zone-hidden",
+            ),
+        }
+    )
+
+    runner = SimulationRunner.from_settings(
+        settings,
+        spawner=spawner,
+        initial_anchor_spawn_ts=100.0,
+        enable_console=False,
+    )
+
+    report = runner.run_cycles(2)
+
+    assert [item.cycle_id for item in report.observation_preparations] == [1, 2]
+    assert report.observation_preparations[0].ready_for_observation is True
+    assert report.observation_preparations[1].ready_for_observation is False
+
+    assert [item.cycle_id for item in report.target_resolutions] == [1, 2]
+    assert report.target_resolutions[0].selected_target_id == "free-near"
+    assert report.target_resolutions[0].decision.reason == "selected_initial_target"
+    assert report.target_resolutions[1].selected_target_id is None
+    assert report.target_resolutions[1].decision.reason == "no_target_available"
+    assert [item.cycle_id for item in report.approach_results] == [1, 2]
+    assert report.approach_results[0].target_id == "free-near"
+    assert report.approach_results[0].arrived is True
+    assert report.approach_results[0].travel_s == 0.375
+    assert report.approach_results[1].target_id is None
+    assert report.approach_results[1].reason == "no_target_selected"
+    assert [item.cycle_id for item in report.interaction_results] == [1, 2]
+    assert report.interaction_results[0].target_id == "free-near"
+    assert report.interaction_results[0].ready is True
+    assert report.interaction_results[1].target_id is None
+    assert report.interaction_results[1].ready is False
+    assert report.cycle_results[0].result == "success"
+    assert report.cycle_results[1].result == "no_event"
+
+    attempts = runner.storage.fetch_attempts()
+    assert len(attempts) == 1
+    assert attempts[0]["metadata"]["initial_target_id"] == "free-near"
+    assert attempts[0]["metadata"]["selected_target_id"] == "free-near"
+    assert attempts[0]["metadata"]["target_decision_reason"] == "selected_initial_target"
+    assert attempts[0]["metadata"]["approach_travel_s"] == 0.375
+    assert attempts[0]["metadata"]["retarget_count"] == 0
+    assert attempts[0]["metadata"]["target_loss_count"] == 0
+    assert attempts[0]["metadata"]["interaction_ready"] is True
+    assert attempts[0]["metadata"]["combat_plan_name"] == "basic_1_space"
+    assert attempts[0]["metadata"]["combat_plan_source"] == "default_catalog_plan"
+    assert attempts[0]["metadata"]["combat_profile_name"] is None
+    assert attempts[0]["metadata"]["combat_strategy"] == "default"
+
+
+def test_runner_records_combat_profile_and_named_plan_in_telemetry(tmp_path: Path) -> None:
+    settings = _build_settings(tmp_path)
+
+    spawner = SimulatedSpawner(
+        overrides={
+            1: CycleScenario(
+                has_event=True,
+                drift_s=0.0,
+                verify_result="success",
+                combat_turns=3,
+                combat_profile_name="fast_farmer",
+                note="combat-profile-telemetry",
+            ),
+        }
+    )
+
+    runner = SimulationRunner.from_settings(
+        settings,
+        spawner=spawner,
+        initial_anchor_spawn_ts=100.0,
+        enable_console=False,
+    )
+
+    report = runner.run_cycles(1)
+
+    assert report.cycle_results[0].result == "success"
+
+    attempts = runner.storage.fetch_attempts()
+    assert attempts[0]["metadata"]["combat_profile_name"] == "fast_farmer"
+    assert attempts[0]["metadata"]["combat_plan_name"] == "spam_1_space"
+    assert attempts[0]["metadata"]["combat_plan_source"] == "combat_profile"
+    assert attempts[0]["metadata"]["combat_input_sequence"] == ["1", "1", "space"]
+
+    cycles = runner.storage.fetch_cycles()
+    assert cycles[0]["metadata"]["combat_profile_name"] == "fast_farmer"
+    assert cycles[0]["metadata"]["combat_plan_name"] == "spam_1_space"
+    assert cycles[0]["metadata"]["combat_plan_source"] == "combat_profile"
+    assert cycles[0]["metadata"]["combat_turn_count"] == 3
+
+
+def test_runner_reports_no_target_available_when_visible_groups_are_not_targetable(
+    tmp_path: Path,
+) -> None:
+    settings = _build_settings(tmp_path)
+
+    spawner = SimulatedSpawner(
+        overrides={
+            1: CycleScenario(
+                has_event=True,
+                spawn_zone_visible=True,
+                bot_position_xy=(0.0, 0.0),
+                groups=(
+                    SimulatedGroupState(
+                        group_id="busy-near",
+                        position_xy=(1.0, 0.0),
+                        engaged_by_other=True,
+                    ),
+                    SimulatedGroupState(
+                        group_id="blocked-far",
+                        position_xy=(4.0, 0.0),
+                        reachable=False,
+                    ),
+                ),
+                note="visible-no-free-target",
+            ),
+        }
+    )
+
+    runner = SimulationRunner.from_settings(
+        settings,
+        spawner=spawner,
+        initial_anchor_spawn_ts=100.0,
+        enable_console=False,
+    )
+
+    report = runner.run_cycles(1)
+
+    assert report.total_cycles == 1
+    assert report.target_resolutions[0].selected_target_id is None
+    assert report.target_resolutions[0].decision.reason == "no_target_available"
+    assert report.approach_results[0].target_id is None
+    assert report.approach_results[0].reason == "no_target_selected"
+    assert report.interaction_results[0].target_id is None
+    assert report.interaction_results[0].ready is False
+    assert report.cycle_results[0].result == "no_target_available"
+    assert report.cycle_results[0].observation_used is True
+
+    attempts = runner.storage.fetch_attempts()
+    assert attempts == []
+
+    cycles = runner.storage.fetch_cycles()
+    assert cycles[0]["result"] == "no_target_available"
+    assert cycles[0]["metadata"]["initial_target_id"] is None
+    assert cycles[0]["metadata"]["selected_target_id"] is None
+    assert cycles[0]["metadata"]["target_decision_reason"] == "no_target_available"
+    assert cycles[0]["metadata"]["retarget_count"] == 0
+    assert cycles[0]["metadata"]["target_loss_count"] == 0
+    assert cycles[0]["metadata"]["interaction_ready"] is False
+
+
+def test_runner_retargets_immediately_when_target_becomes_unavailable_during_approach(
+    tmp_path: Path,
+) -> None:
+    settings = _build_settings(tmp_path)
+
+    spawner = SimulatedSpawner(
+        overrides={
+            1: CycleScenario(
+                has_event=True,
+                spawn_zone_visible=True,
+                bot_position_xy=(0.0, 0.0),
+                groups=(
+                    SimulatedGroupState(group_id="current", position_xy=(2.0, 0.0)),
+                    SimulatedGroupState(group_id="replacement", position_xy=(6.0, 0.0)),
+                ),
+                approach_revalidation_delay_s=0.3,
+                approach_bot_position_xy=(1.0, 0.0),
+                approach_groups=(
+                    SimulatedGroupState(
+                        group_id="current",
+                        position_xy=(2.0, 0.0),
+                        engaged_by_other=True,
+                    ),
+                    SimulatedGroupState(group_id="replacement", position_xy=(4.0, 0.0)),
+                ),
+                note="retarget-during-approach",
+            ),
+        }
+    )
+
+    runner = SimulationRunner.from_settings(
+        settings,
+        spawner=spawner,
+        initial_anchor_spawn_ts=100.0,
+        enable_console=False,
+    )
+
+    report = runner.run_cycles(1)
+
+    assert report.target_resolutions[0].selected_target_id == "current"
+    assert report.approach_results[0].initial_target_id == "current"
+    assert report.approach_results[0].target_id == "replacement"
+    assert report.approach_results[0].retargeted is True
+    assert report.approach_results[0].metadata["revalidation_reason"] == (
+        "current_target_invalid_retargeted"
+    )
+    assert report.interaction_results[0].target_id == "replacement"
+    assert report.interaction_results[0].ready is True
+    assert report.cycle_results[0].result == "success"
+
+    attempts = runner.storage.fetch_attempts()
+    assert len(attempts) == 1
+    assert attempts[0]["metadata"]["initial_target_id"] == "current"
+    assert attempts[0]["metadata"]["selected_target_id"] == "replacement"
+    assert attempts[0]["metadata"]["approach_reason"] == "target_reached_in_simulation"
+    assert attempts[0]["metadata"]["retargeted_during_approach"] is True
+    assert attempts[0]["metadata"]["retarget_count"] == 1
+    assert attempts[0]["metadata"]["target_loss_count"] == 1
+
+
+def test_runner_stops_immediately_when_target_is_lost_during_approach_without_replacement(
+    tmp_path: Path,
+) -> None:
+    settings = _build_settings(tmp_path)
+
+    spawner = SimulatedSpawner(
+        overrides={
+            1: CycleScenario(
+                has_event=True,
+                spawn_zone_visible=True,
+                bot_position_xy=(0.0, 0.0),
+                groups=(SimulatedGroupState(group_id="current", position_xy=(2.0, 0.0)),),
+                approach_revalidation_delay_s=0.3,
+                approach_bot_position_xy=(1.0, 0.0),
+                approach_groups=(
+                    SimulatedGroupState(
+                        group_id="current",
+                        position_xy=(2.0, 0.0),
+                        reachable=False,
+                    ),
+                ),
+                note="lost-during-approach",
+            ),
+        }
+    )
+
+    runner = SimulationRunner.from_settings(
+        settings,
+        spawner=spawner,
+        initial_anchor_spawn_ts=100.0,
+        enable_console=False,
+    )
+
+    report = runner.run_cycles(1)
+
+    assert report.target_resolutions[0].selected_target_id == "current"
+    assert report.approach_results[0].target_id is None
+    assert report.approach_results[0].initial_target_id == "current"
+    assert report.approach_results[0].reason == "target_lost_during_approach_no_replacement"
+    assert report.interaction_results[0].target_id is None
+    assert report.interaction_results[0].ready is False
+    assert report.cycle_results[0].result == "no_target_available"
+
+    attempts = runner.storage.fetch_attempts()
+    assert attempts == []
+
+    cycles = runner.storage.fetch_cycles()
+    assert cycles[0]["result"] == "no_target_available"
+    assert cycles[0]["metadata"]["selected_target_id"] is None
+    assert cycles[0]["metadata"]["approach_reason"] == "target_lost_during_approach_no_replacement"
+    assert cycles[0]["metadata"]["initial_target_id"] == "current"
+    assert cycles[0]["metadata"]["retarget_count"] == 0
+    assert cycles[0]["metadata"]["target_loss_count"] == 1
+
+
+def test_runner_retargets_again_if_target_is_lost_right_before_interaction(
+    tmp_path: Path,
+) -> None:
+    settings = _build_settings(tmp_path)
+
+    spawner = SimulatedSpawner(
+        overrides={
+            1: CycleScenario(
+                has_event=True,
+                spawn_zone_visible=True,
+                bot_position_xy=(0.0, 0.0),
+                groups=(
+                    SimulatedGroupState(group_id="current", position_xy=(2.0, 0.0)),
+                    SimulatedGroupState(group_id="replacement", position_xy=(6.0, 0.0)),
+                ),
+                interaction_revalidation_delay_s=0.6,
+                interaction_bot_position_xy=(2.0, 0.0),
+                interaction_groups=(
+                    SimulatedGroupState(
+                        group_id="current",
+                        position_xy=(2.0, 0.0),
+                        engaged_by_other=True,
+                    ),
+                    SimulatedGroupState(group_id="replacement", position_xy=(3.0, 0.0)),
+                ),
+                note="retarget-before-interaction",
+            ),
+        }
+    )
+
+    runner = SimulationRunner.from_settings(
+        settings,
+        spawner=spawner,
+        initial_anchor_spawn_ts=100.0,
+        enable_console=False,
+    )
+
+    report = runner.run_cycles(1)
+
+    assert report.target_resolutions[0].selected_target_id == "replacement"
+    assert report.approach_results[0].target_id == "replacement"
+    assert report.approach_results[0].initial_target_id == "replacement"
+    assert report.interaction_results[0].target_id == "replacement"
+    assert report.interaction_results[0].retargeted is True
+    assert report.interaction_results[0].metadata["revalidation_reason"] == (
+        "current_target_still_valid"
+    )
+    assert report.cycle_results[0].result == "success"
+
+    attempts = runner.storage.fetch_attempts()
+    assert attempts[0]["metadata"]["initial_target_id"] == "current"
+    assert attempts[0]["metadata"]["selected_target_id"] == "replacement"
+    assert attempts[0]["metadata"]["interaction_reason"] == "interaction_ready"
+    assert attempts[0]["metadata"]["retargeted_before_interaction"] is True
+    assert attempts[0]["metadata"]["retarget_count"] == 1
+    assert attempts[0]["metadata"]["target_loss_count"] == 1
+
+
+def test_runner_stops_when_target_is_lost_right_before_interaction_without_replacement(
+    tmp_path: Path,
+) -> None:
+    settings = _build_settings(tmp_path)
+
+    spawner = SimulatedSpawner(
+        overrides={
+            1: CycleScenario(
+                has_event=True,
+                spawn_zone_visible=True,
+                bot_position_xy=(0.0, 0.0),
+                groups=(SimulatedGroupState(group_id="current", position_xy=(2.0, 0.0)),),
+                interaction_revalidation_delay_s=0.6,
+                interaction_bot_position_xy=(2.0, 0.0),
+                interaction_groups=(
+                    SimulatedGroupState(
+                        group_id="current",
+                        position_xy=(2.0, 0.0),
+                        reachable=False,
+                    ),
+                ),
+                note="lost-before-interaction",
+            ),
+        }
+    )
+
+    runner = SimulationRunner.from_settings(
+        settings,
+        spawner=spawner,
+        initial_anchor_spawn_ts=100.0,
+        enable_console=False,
+    )
+
+    report = runner.run_cycles(1)
+
+    assert report.interaction_results[0].target_id is None
+    assert report.interaction_results[0].ready is False
+    assert report.interaction_results[0].reason == "target_lost_before_interaction_no_replacement"
+    assert report.cycle_results[0].result == "no_target_available"
+
+    attempts = runner.storage.fetch_attempts()
+    assert attempts == []
+
+    cycles = runner.storage.fetch_cycles()
+    assert cycles[0]["metadata"]["interaction_reason"] == "target_lost_before_interaction_no_replacement"
+    assert cycles[0]["metadata"]["initial_target_id"] == "current"
+    assert cycles[0]["metadata"]["retarget_count"] == 0
+    assert cycles[0]["metadata"]["target_loss_count"] == 1

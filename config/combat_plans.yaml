@@ -1,0 +1,22 @@
+plans:
+  basic_1_space:
+    description: "Prosty plan startowy: 1 potem space."
+    inputs:
+      - "1"
+      - "space"
+  spam_1_space:
+    description: "Agresywniejszy wariant: dwa razy 1 i na koniec space."
+    inputs:
+      - "1"
+      - "1"
+      - "space"
+  opener_2_then_space:
+    description: "Przyklad planu z innym openerem."
+    inputs:
+      - "2"
+      - "space"
+  round_combo_demo:
+    description: "Przyklad formatu per runda."
+    rounds:
+      - ["1", "space"]
+      - ["2"]

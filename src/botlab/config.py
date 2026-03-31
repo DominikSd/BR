@@ -41,6 +41,7 @@ class CombatConfig:
     low_hp_threshold: float
     rest_start_threshold: float
     rest_stop_threshold: float
+    default_profile_name: str | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -103,13 +104,16 @@ def load_config(config_path: str | Path) -> Settings:
         low_hp_threshold=_require_ratio_float(combat_section, "low_hp_threshold"),
         rest_start_threshold=_require_ratio_float(combat_section, "rest_start_threshold"),
         rest_stop_threshold=_require_ratio_float(combat_section, "rest_stop_threshold"),
+        default_profile_name=_optional_nullable_str(combat_section, "default_profile_name", None),
     )
     _validate_combat_config(combat_config)
 
     telemetry_config = TelemetryConfig(
         sqlite_path=_resolve_project_relative_path(_require_str(telemetry_section, "sqlite_path")),
         log_path=_resolve_project_relative_path(_require_str(telemetry_section, "log_path")),
-        log_level=_normalize_log_level(_optional_str(telemetry_section, "log_level", DEFAULT_LOG_LEVEL)),
+        log_level=_normalize_log_level(
+            _optional_str(telemetry_section, "log_level", DEFAULT_LOG_LEVEL)
+        ),
     )
 
     vision_config = VisionConfig(
@@ -135,7 +139,7 @@ def _read_yaml(config_path: Path) -> dict[str, Any]:
 
     if not isinstance(data, dict):
         raise ConfigError(
-            f"Nieprawidłowy format YAML w pliku {config_path}. Oczekiwano mapy klucz-wartość."
+            f"Nieprawidlowy format YAML w pliku {config_path}. Oczekiwano mapy klucz-wartosc."
         )
 
     return data
@@ -151,56 +155,69 @@ def _validate_required_sections(data: Mapping[str, Any]) -> None:
 def _require_mapping(data: Mapping[str, Any], key: str) -> Mapping[str, Any]:
     value = data.get(key)
     if not isinstance(value, Mapping):
-        raise ConfigError(f"Sekcja '{key}' musi być mapą.")
+        raise ConfigError(f"Sekcja '{key}' musi byc mapa.")
     return value
 
 
 def _require_str(data: Mapping[str, Any], key: str) -> str:
     value = data.get(key)
     if not isinstance(value, str) or not value.strip():
-        raise ConfigError(f"Pole '{key}' musi być niepustym napisem.")
+        raise ConfigError(f"Pole '{key}' musi byc niepustym napisem.")
     return value.strip()
 
 
 def _optional_str(data: Mapping[str, Any], key: str, default: str) -> str:
     value = data.get(key, default)
     if not isinstance(value, str) or not value.strip():
-        raise ConfigError(f"Pole '{key}' musi być niepustym napisem.")
+        raise ConfigError(f"Pole '{key}' musi byc niepustym napisem.")
+    return value.strip()
+
+
+def _optional_nullable_str(
+    data: Mapping[str, Any],
+    key: str,
+    default: str | None,
+) -> str | None:
+    value = data.get(key, default)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigError(f"Pole '{key}' musi byc niepustym napisem albo null.")
     return value.strip()
 
 
 def _require_bool(data: Mapping[str, Any], key: str) -> bool:
     value = data.get(key)
     if not isinstance(value, bool):
-        raise ConfigError(f"Pole '{key}' musi być typu bool.")
+        raise ConfigError(f"Pole '{key}' musi byc typu bool.")
     return value
 
 
 def _require_positive_float(data: Mapping[str, Any], key: str) -> float:
     value = _coerce_float(data, key)
     if value <= 0.0:
-        raise ConfigError(f"Pole '{key}' musi być większe od 0.")
+        raise ConfigError(f"Pole '{key}' musi byc wieksze od 0.")
     return value
 
 
 def _require_non_negative_float(data: Mapping[str, Any], key: str) -> float:
     value = _coerce_float(data, key)
     if value < 0.0:
-        raise ConfigError(f"Pole '{key}' nie może być ujemne.")
+        raise ConfigError(f"Pole '{key}' nie moze byc ujemne.")
     return value
 
 
 def _require_ratio_float(data: Mapping[str, Any], key: str) -> float:
     value = _coerce_float(data, key)
     if not 0.0 <= value <= 1.0:
-        raise ConfigError(f"Pole '{key}' musi być w zakresie od 0.0 do 1.0.")
+        raise ConfigError(f"Pole '{key}' musi byc w zakresie od 0.0 do 1.0.")
     return value
 
 
 def _coerce_float(data: Mapping[str, Any], key: str) -> float:
     value = data.get(key)
     if not isinstance(value, (int, float)):
-        raise ConfigError(f"Pole '{key}' musi być liczbą.")
+        raise ConfigError(f"Pole '{key}' musi byc liczba.")
     return float(value)
 
 
@@ -209,7 +226,7 @@ def _normalize_log_level(value: str) -> str:
     if normalized not in VALID_LOG_LEVELS:
         allowed = ", ".join(VALID_LOG_LEVELS)
         raise ConfigError(
-            f"Nieprawidłowy poziom logowania '{value}'. Dozwolone wartości: {allowed}."
+            f"Nieprawidlowy poziom logowania '{value}'. Dozwolone wartosci: {allowed}."
         )
     return normalized
 
@@ -223,27 +240,27 @@ def _resolve_project_relative_path(path_value: str) -> Path:
 
 def _validate_cycle_config(config: CycleConfig) -> None:
     if config.prepare_before_s >= config.interval_s:
-        raise ConfigError("cycle.prepare_before_s musi być mniejsze niż cycle.interval_s.")
+        raise ConfigError("cycle.prepare_before_s musi byc mniejsze niz cycle.interval_s.")
 
     if config.ready_before_s > config.prepare_before_s:
         raise ConfigError(
-            "cycle.ready_before_s nie może być większe niż cycle.prepare_before_s."
+            "cycle.ready_before_s nie moze byc wieksze niz cycle.prepare_before_s."
         )
 
     ready_window_size = config.ready_before_s + config.ready_after_s
     if ready_window_size >= config.interval_s:
         raise ConfigError(
-            "Suma cycle.ready_before_s i cycle.ready_after_s musi być mniejsza niż interval_s."
+            "Suma cycle.ready_before_s i cycle.ready_after_s musi byc mniejsza niz interval_s."
         )
 
 
 def _validate_combat_config(config: CombatConfig) -> None:
     if config.rest_start_threshold < config.low_hp_threshold:
         raise ConfigError(
-            "combat.rest_start_threshold nie może być mniejsze niż combat.low_hp_threshold."
+            "combat.rest_start_threshold nie moze byc mniejsze niz combat.low_hp_threshold."
         )
 
     if config.rest_stop_threshold < config.rest_start_threshold:
         raise ConfigError(
-            "combat.rest_stop_threshold nie może być mniejsze niż combat.rest_start_threshold."
+            "combat.rest_stop_threshold nie moze byc mniejsze niz combat.rest_start_threshold."
         )

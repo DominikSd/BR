@@ -1,0 +1,10 @@
+profiles:
+  basic_farmer:
+    description: "Domyslny profil farmienia."
+    combat_plan_name: "basic_1_space"
+  fast_farmer:
+    description: "Szybszy profil z mocniejszym openerem."
+    combat_plan_name: "spam_1_space"
+  combo_demo:
+    description: "Profil pokazujacy plan per runda z katalogu."
+    combat_plan_name: "round_combo_demo"

@@ -33,8 +33,11 @@ def test_load_default_config_returns_settings() -> None:
     assert settings.combat.low_hp_threshold == 0.35
     assert settings.combat.rest_start_threshold == 0.50
     assert settings.combat.rest_stop_threshold == 0.90
+    assert settings.combat.default_profile_name == "basic_farmer"
 
-    assert settings.telemetry.sqlite_path == (PROJECT_ROOT / "data/telemetry/botlab.sqlite3").resolve()
+    assert settings.telemetry.sqlite_path == (
+        PROJECT_ROOT / "data/telemetry/botlab.sqlite3"
+    ).resolve()
     assert settings.telemetry.log_path == (PROJECT_ROOT / "logs/botlab.log").resolve()
     assert settings.telemetry.log_level == "INFO"
 
@@ -210,5 +213,41 @@ def test_invalid_log_level_raises_config_error(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    with pytest.raises(ConfigError, match="Nieprawidłowy poziom logowania"):
+    with pytest.raises(ConfigError, match="Nieprawidlowy poziom logowania"):
         load_config(invalid_config)
+
+
+def test_combat_default_profile_name_can_be_loaded_from_config(tmp_path: Path) -> None:
+    config_path = tmp_path / "combat-profile.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "app:",
+                '  name: "botlab"',
+                '  mode: "simulation"',
+                "cycle:",
+                "  interval_s: 45.0",
+                "  prepare_before_s: 5.0",
+                "  ready_before_s: 1.0",
+                "  ready_after_s: 1.0",
+                "  verify_timeout_s: 0.5",
+                "  recover_timeout_s: 2.0",
+                "combat:",
+                "  low_hp_threshold: 0.35",
+                "  rest_start_threshold: 0.50",
+                "  rest_stop_threshold: 0.90",
+                '  default_profile_name: "fast_farmer"',
+                "telemetry:",
+                '  sqlite_path: "data/telemetry/test.sqlite3"',
+                '  log_path: "logs/test.log"',
+                '  log_level: "INFO"',
+                "vision:",
+                "  enabled: false",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    settings = load_config(config_path)
+
+    assert settings.combat.default_profile_name == "fast_farmer"

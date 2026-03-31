@@ -2,15 +2,14 @@ from __future__ import annotations
 
 from botlab.application.dto import (
     ActionContext,
-    ActionResult,
-    CombatOutcome,
     CycleRunResult,
-    RestOutcome,
+    ObservationWindow,
+    TimedCombatSnapshot,
     VerificationOutcome,
+    VerificationResult,
 )
 from botlab.application.ports import (
     ActionExecutor,
-    Clock,
     CombatResolver,
     ObservationProvider,
     RestProvider,
@@ -18,7 +17,6 @@ from botlab.application.ports import (
     VerificationProvider,
 )
 from botlab.config import CycleConfig
-from botlab.domain.decision_engine import DecisionEngine
 from botlab.domain.fsm import CycleFSM, StateTransition
 from botlab.domain.recovery import RecoveryManager
 from botlab.domain.scheduler import CycleScheduler
@@ -31,22 +29,19 @@ class CycleOrchestrator:
 
     Orkiestruje przebieg cyklu używając:
     - scheduler dla predykcji,
-    - decision_engine dla decyzji,
     - FSM dla stanów,
     - recovery dla odzysku,
     - portów application dla zewnętrznych zależności.
 
-    Nie zależy od konkretnych implementacji symulacji.
+    Logika application nie zna szczegółów symulacyjnych opóźnień ani timeline.
     """
 
     def __init__(
         self,
         *,
         scheduler: CycleScheduler,
-        decision_engine: DecisionEngine,
         fsm: CycleFSM,
         recovery: RecoveryManager,
-        clock: Clock,
         observation_provider: ObservationProvider,
         action_executor: ActionExecutor,
         verification_provider: VerificationProvider,
@@ -56,10 +51,8 @@ class CycleOrchestrator:
         cycle_config: CycleConfig,
     ) -> None:
         self._scheduler = scheduler
-        self._decision_engine = decision_engine
         self._fsm = fsm
         self._recovery = recovery
-        self._clock = clock
         self._observation_provider = observation_provider
         self._action_executor = action_executor
         self._verification_provider = verification_provider
@@ -83,55 +76,67 @@ class CycleOrchestrator:
     def _run_single_cycle(self, cycle_id: int) -> CycleRunResult:
         prediction = self._scheduler.prediction_for_cycle(cycle_id)
 
-        # Symulacja prepare window
         self._tick_and_record_transition(
             now_ts=prediction.prepare_window_start_ts,
             prediction=prediction,
+            actual_spawn_ts=None,
             observation=None,
             verify_result=None,
             combat_snapshot=None,
         )
-
-        # Symulacja ready window
         self._tick_and_record_transition(
             now_ts=prediction.ready_window_start_ts,
             prediction=prediction,
+            actual_spawn_ts=None,
             observation=None,
             verify_result=None,
             combat_snapshot=None,
         )
 
-        observation = self._observation_provider.get_latest_observation(cycle_id)
+        observation_window = self._observation_provider.get_observation_window(cycle_id)
 
-        if observation is None:
+        if observation_window.observation is None:
             return self._complete_cycle_without_observation(
-                prediction_cycle_id=cycle_id,
+                cycle_id=cycle_id,
                 prediction=prediction,
+                observation_window=observation_window,
             )
 
         return self._complete_cycle_with_observation(
-            prediction_cycle_id=cycle_id,
+            cycle_id=cycle_id,
             prediction=prediction,
-            observation=observation,
+            observation_window=observation_window,
         )
 
     def _complete_cycle_without_observation(
         self,
         *,
-        prediction_cycle_id: int,
+        cycle_id: int,
         prediction,
+        observation_window: ObservationWindow,
     ) -> CycleRunResult:
         decision = self._tick_and_record_transition(
-            now_ts=prediction.ready_window_end_ts,
+            now_ts=observation_window.window_closed_ts,
             prediction=prediction,
+            actual_spawn_ts=observation_window.actual_spawn_ts,
             observation=None,
             verify_result=None,
             combat_snapshot=None,
         )
 
-        if prediction.predicted_spawn_ts is None:
+        event_in_ready_window = (
+            observation_window.actual_spawn_ts is not None
+            and prediction.ready_window_start_ts
+            <= observation_window.actual_spawn_ts
+            <= prediction.ready_window_end_ts
+        )
+
+        if observation_window.actual_spawn_ts is None:
             result = "no_event"
             reason = decision.reason
+        elif event_in_ready_window:
+            result = "no_event"
+            reason = "event_not_observable_in_ready_window"
         else:
             result = "late_event_missed"
             reason = "actual_event_outside_ready_window"
@@ -139,365 +144,578 @@ class CycleOrchestrator:
         final_state = self._fsm.current_state
         drift_s = self._compute_drift_s(
             predicted_spawn_ts=prediction.predicted_spawn_ts,
-            actual_spawn_ts=None,
+            actual_spawn_ts=observation_window.actual_spawn_ts,
         )
 
-        self._telemetry_sink.record_cycle({
-            "cycle_id": prediction_cycle_id,
-            "event_ts": prediction.ready_window_end_ts,
-            "state": final_state.value,
-            "expected_spawn_ts": prediction.predicted_spawn_ts,
-            "actual_spawn_ts": None,
-            "drift_s": drift_s,
-            "reason": reason,
-            "reaction_ms": None,
-            "verification_ms": None,
-            "result": result,
-            "final_state": final_state.value,
-            "metadata": {"scenario_note": "", "observation_used": False},
-        })
+        self._telemetry_sink.record_cycle(
+            TelemetryRecord(
+                cycle_id=cycle_id,
+                event_ts=observation_window.window_closed_ts,
+                state=final_state,
+                expected_spawn_ts=prediction.predicted_spawn_ts,
+                actual_spawn_ts=observation_window.actual_spawn_ts,
+                drift_s=drift_s,
+                reason=reason,
+                reaction_ms=None,
+                verification_ms=None,
+                result=result,
+                final_state=final_state,
+                metadata={
+                    "note": observation_window.note,
+                    "observation_used": False,
+                    **observation_window.metadata,
+                },
+            )
+        )
 
         return CycleRunResult(
-            cycle_id=prediction_cycle_id,
+            cycle_id=cycle_id,
             predicted_spawn_ts=prediction.predicted_spawn_ts,
-            actual_spawn_ts=None,
+            actual_spawn_ts=observation_window.actual_spawn_ts,
             drift_s=drift_s,
             result=result,
             final_state=final_state,
             reaction_ms=None,
             verification_ms=None,
             observation_used=False,
-            note="",
+            note=observation_window.note,
         )
 
     def _complete_cycle_with_observation(
         self,
         *,
-        prediction_cycle_id: int,
+        cycle_id: int,
         prediction,
-        observation: Observation,
+        observation_window: ObservationWindow,
     ) -> CycleRunResult:
+        observation = observation_window.observation
+        assert observation is not None
+
         self._scheduler.register_observation(observation)
 
-        # Attempt
         action_context = ActionContext(
-            cycle_id=prediction_cycle_id,
+            cycle_id=cycle_id,
             now_ts=observation.observed_at_ts,
             predicted_spawn_ts=prediction.predicted_spawn_ts,
             observation=observation,
-            metadata={},
+            metadata=dict(observation_window.metadata),
         )
         action_result = self._action_executor.execute_action(action_context)
+        action_metadata = dict(action_result.metadata)
+        if not action_result.success:
+            if action_result.reason == "no_target_available":
+                return self._complete_cycle_without_target(
+                    cycle_id=cycle_id,
+                    prediction=prediction,
+                    observation_window=observation_window,
+                    completed_at_ts=observation_window.window_closed_ts,
+                    action_metadata=action_metadata,
+                )
+            raise RuntimeError(f"action_execution_failed: {action_result.reason}")
 
         attempt_decision = self._tick_and_record_transition(
-            now_ts=observation.observed_at_ts,
+            now_ts=action_result.executed_at_ts,
             prediction=prediction,
+            actual_spawn_ts=observation_window.actual_spawn_ts,
             observation=observation,
             verify_result=None,
             combat_snapshot=None,
         )
 
-        # Verify start
-        verify_start_ts = observation.observed_at_ts + 0.020  # Placeholder latency
+        verification_result = self._verification_provider.verify(cycle_id, observation)
         self._tick_and_record_transition(
-            now_ts=verify_start_ts,
+            now_ts=verification_result.started_at_ts,
             prediction=prediction,
+            actual_spawn_ts=observation_window.actual_spawn_ts,
             observation=None,
             verify_result=None,
             combat_snapshot=None,
         )
 
-        # Verify resolution
-        verify_result = self._verification_provider.verify(prediction_cycle_id, observation)
-        verify_resolution_ts = verify_start_ts + 0.100  # Placeholder latency
+        reaction_ms = (action_result.executed_at_ts - observation.observed_at_ts) * 1000.0
+        verification_ms = (
+            verification_result.completed_at_ts - verification_result.started_at_ts
+        ) * 1000.0
+        drift_s = self._compute_drift_s(
+            predicted_spawn_ts=prediction.predicted_spawn_ts,
+            actual_spawn_ts=observation_window.actual_spawn_ts,
+        )
 
-        if verify_result == VerificationOutcome.TIMEOUT:
-            # Handle timeout with recovery
-            recover_ts = verify_resolution_ts + self._cycle_config.recover_timeout_s
-            self._tick_and_record_transition(
-                now_ts=verify_resolution_ts,
+        if verification_result.outcome == VerificationOutcome.TIMEOUT:
+            self._handle_verify_timeout_transition(
                 prediction=prediction,
-                observation=None,
-                verify_result=verify_result.value,
-                combat_snapshot=None,
-            )
-            self._tick_and_record_transition(
-                now_ts=recover_ts,
-                prediction=prediction,
-                observation=None,
-                verify_result=None,
-                combat_snapshot=None,
+                observation_window=observation_window,
+                verification_result=verification_result,
             )
 
             final_state = self._fsm.current_state
-            reaction_ms = (observation.observed_at_ts - prediction.predicted_spawn_ts) * 1000.0
-            verification_ms = (verify_resolution_ts - verify_start_ts) * 1000.0
-            drift_s = self._compute_drift_s(
-                predicted_spawn_ts=prediction.predicted_spawn_ts,
-                actual_spawn_ts=observation.observed_at_ts,
+            self._telemetry_sink.record_attempt(
+                TelemetryRecord(
+                    cycle_id=cycle_id,
+                    event_ts=verification_result.completed_at_ts,
+                    state=BotState.ATTEMPT,
+                    expected_spawn_ts=prediction.predicted_spawn_ts,
+                    actual_spawn_ts=observation_window.actual_spawn_ts,
+                    drift_s=drift_s,
+                    reason=verification_result.reason or "verify_timeout",
+                    reaction_ms=reaction_ms,
+                    verification_ms=verification_ms,
+                    result="verify_timeout",
+                    final_state=final_state,
+                    metadata={
+                        "note": observation_window.note,
+                        "attempt_action": attempt_decision.action,
+                        **action_metadata,
+                        **verification_result.metadata,
+                    },
+                )
+            )
+            self._telemetry_sink.record_cycle(
+                TelemetryRecord(
+                    cycle_id=cycle_id,
+                    event_ts=verification_result.completed_at_ts
+                    + self._cycle_config.recover_timeout_s,
+                    state=final_state,
+                    expected_spawn_ts=prediction.predicted_spawn_ts,
+                    actual_spawn_ts=observation_window.actual_spawn_ts,
+                    drift_s=drift_s,
+                    reason=verification_result.reason or "verify_timeout",
+                    reaction_ms=reaction_ms,
+                    verification_ms=verification_ms,
+                    result="verify_timeout",
+                    final_state=final_state,
+                    metadata={
+                        "note": observation_window.note,
+                        "observation_used": True,
+                        **action_metadata,
+                        **observation_window.metadata,
+                    },
+                )
             )
 
-            self._telemetry_sink.record_attempt({
-                "cycle_id": prediction_cycle_id,
-                "event_ts": verify_resolution_ts,
-                "state": "ATTEMPT",
-                "expected_spawn_ts": prediction.predicted_spawn_ts,
-                "actual_spawn_ts": observation.observed_at_ts,
-                "drift_s": drift_s,
-                "reaction_ms": reaction_ms,
-                "verification_ms": verification_ms,
-                "result": "verify_timeout",
-                "reason": "verify_timeout",
-                "metadata": {"attempt_action": attempt_decision.action},
-            })
-            self._telemetry_sink.record_cycle({
-                "cycle_id": prediction_cycle_id,
-                "event_ts": recover_ts,
-                "state": final_state.value,
-                "expected_spawn_ts": prediction.predicted_spawn_ts,
-                "actual_spawn_ts": observation.observed_at_ts,
-                "drift_s": drift_s,
-                "reason": "verify_timeout",
-                "reaction_ms": reaction_ms,
-                "verification_ms": verification_ms,
-                "result": "verify_timeout",
-                "final_state": final_state.value,
-                "metadata": {"observation_used": True},
-            })
-
             return CycleRunResult(
-                cycle_id=prediction_cycle_id,
+                cycle_id=cycle_id,
                 predicted_spawn_ts=prediction.predicted_spawn_ts,
-                actual_spawn_ts=observation.observed_at_ts,
+                actual_spawn_ts=observation_window.actual_spawn_ts,
                 drift_s=drift_s,
                 result="verify_timeout",
                 final_state=final_state,
                 reaction_ms=reaction_ms,
                 verification_ms=verification_ms,
                 observation_used=True,
-                note="",
+                note=observation_window.note,
             )
 
         verify_decision = self._tick_and_record_transition(
-            now_ts=verify_resolution_ts,
+            now_ts=verification_result.completed_at_ts,
             prediction=prediction,
+            actual_spawn_ts=observation_window.actual_spawn_ts,
             observation=None,
-            verify_result=verify_result.value,
+            verify_result=verification_result.outcome.value,
             combat_snapshot=None,
         )
 
-        if verify_result == VerificationOutcome.FAILURE:
+        result = (
+            "success"
+            if verification_result.outcome == VerificationOutcome.SUCCESS
+            else "failure"
+        )
+        self._telemetry_sink.record_attempt(
+            TelemetryRecord(
+                cycle_id=cycle_id,
+                event_ts=verification_result.completed_at_ts,
+                state=BotState.ATTEMPT,
+                expected_spawn_ts=prediction.predicted_spawn_ts,
+                actual_spawn_ts=observation_window.actual_spawn_ts,
+                drift_s=drift_s,
+                reason=verify_decision.reason,
+                reaction_ms=reaction_ms,
+                verification_ms=verification_ms,
+                result=result,
+                final_state=self._fsm.current_state,
+                metadata={
+                    "note": observation_window.note,
+                    "attempt_action": attempt_decision.action,
+                    **action_metadata,
+                    **verification_result.metadata,
+                },
+            )
+        )
+
+        if result == "failure":
             final_state = self._fsm.current_state
-            reaction_ms = (observation.observed_at_ts - prediction.predicted_spawn_ts) * 1000.0
-            verification_ms = (verify_resolution_ts - verify_start_ts) * 1000.0
-            drift_s = self._compute_drift_s(
-                predicted_spawn_ts=prediction.predicted_spawn_ts,
-                actual_spawn_ts=observation.observed_at_ts,
+            self._telemetry_sink.record_cycle(
+                TelemetryRecord(
+                    cycle_id=cycle_id,
+                    event_ts=verification_result.completed_at_ts,
+                    state=final_state,
+                    expected_spawn_ts=prediction.predicted_spawn_ts,
+                    actual_spawn_ts=observation_window.actual_spawn_ts,
+                    drift_s=drift_s,
+                    reason=verify_decision.reason,
+                    reaction_ms=reaction_ms,
+                    verification_ms=verification_ms,
+                    result="failure",
+                    final_state=final_state,
+                    metadata={
+                        "note": observation_window.note,
+                        "observation_used": True,
+                        **action_metadata,
+                        **observation_window.metadata,
+                    },
+                )
             )
 
-            self._telemetry_sink.record_attempt({
-                "cycle_id": prediction_cycle_id,
-                "event_ts": verify_resolution_ts,
-                "state": "ATTEMPT",
-                "expected_spawn_ts": prediction.predicted_spawn_ts,
-                "actual_spawn_ts": observation.observed_at_ts,
-                "drift_s": drift_s,
-                "reaction_ms": reaction_ms,
-                "verification_ms": verification_ms,
-                "result": "failure",
-                "reason": verify_decision.reason,
-                "metadata": {"attempt_action": attempt_decision.action},
-            })
-            self._telemetry_sink.record_cycle({
-                "cycle_id": prediction_cycle_id,
-                "event_ts": verify_resolution_ts,
-                "state": final_state.value,
-                "expected_spawn_ts": prediction.predicted_spawn_ts,
-                "actual_spawn_ts": observation.observed_at_ts,
-                "drift_s": drift_s,
-                "reason": verify_decision.reason,
-                "reaction_ms": reaction_ms,
-                "verification_ms": verification_ms,
-                "result": "failure",
-                "final_state": final_state.value,
-                "metadata": {"observation_used": True},
-            })
-
             return CycleRunResult(
-                cycle_id=prediction_cycle_id,
+                cycle_id=cycle_id,
                 predicted_spawn_ts=prediction.predicted_spawn_ts,
-                actual_spawn_ts=observation.observed_at_ts,
+                actual_spawn_ts=observation_window.actual_spawn_ts,
                 drift_s=drift_s,
                 result="failure",
                 final_state=final_state,
                 reaction_ms=reaction_ms,
                 verification_ms=verification_ms,
                 observation_used=True,
-                note="",
+                note=observation_window.note,
             )
 
-        # Success path
         try:
-            final_state, completed_ts, completed_reason = self._run_success_path(
+            final_state, completed_ts, completed_reason, combat_metadata = self._run_success_path(
+                cycle_id=cycle_id,
                 prediction=prediction,
-                combat_started_ts=verify_resolution_ts,
-                cycle_id=prediction_cycle_id,
+                observation_window=observation_window,
+                combat_started_ts=verification_result.completed_at_ts,
+            )
+        except Exception as exc:
+            return self._complete_cycle_with_execution_error(
+                cycle_id=cycle_id,
+                prediction=prediction,
+                observation_window=observation_window,
                 observation=observation,
-            )
-        except Exception as e:
-            # Handle exception with recovery
-            recovery_plan = self._recovery.build_exception_recovery_plan(
-                now_ts=verify_resolution_ts,
-                current_state=self._fsm.current_state,
-                cycle_id=prediction_cycle_id,
-                exception=e,
-            )
-            if recovery_plan is None:
-                raise
-
-            last_event_ts = verify_resolution_ts
-            for recovery_step in recovery_plan:
-                self._fsm.force_state(
-                    new_state=recovery_step.target_state,
-                    now_ts=recovery_step.at_ts,
-                    reason=recovery_step.reason,
-                    cycle_id=recovery_step.cycle_id,
-                )
-                self._telemetry_sink.record_state_transition({
-                    "cycle_id": recovery_step.cycle_id,
-                    "event_ts": recovery_step.at_ts,
-                    "state_enter": recovery_step.from_state.value if recovery_step.from_state else None,
-                    "state_exit": recovery_step.target_state.value,
-                    "reason": recovery_step.reason,
-                    "final_state": recovery_step.target_state.value,
-                    "metadata": {"action": "recovery"},
-                })
-                last_event_ts = recovery_step.at_ts
-
-            final_state = self._fsm.current_state
-            completed_ts = last_event_ts
-            completed_reason = recovery_plan[-1].reason if recovery_plan else "execution_error_unknown"
-
-            reaction_ms = (observation.observed_at_ts - prediction.predicted_spawn_ts) * 1000.0
-            verification_ms = (verify_resolution_ts - verify_start_ts) * 1000.0
-            drift_s = self._compute_drift_s(
-                predicted_spawn_ts=prediction.predicted_spawn_ts,
-                actual_spawn_ts=observation.observed_at_ts,
-            )
-
-            self._telemetry_sink.record_attempt({
-                "cycle_id": prediction_cycle_id,
-                "event_ts": verify_resolution_ts,
-                "state": "ATTEMPT",
-                "expected_spawn_ts": prediction.predicted_spawn_ts,
-                "actual_spawn_ts": observation.observed_at_ts,
-                "drift_s": drift_s,
-                "reaction_ms": reaction_ms,
-                "verification_ms": verification_ms,
-                "result": "execution_error",
-                "reason": "execution_error",
-                "metadata": {"attempt_action": attempt_decision.action},
-            })
-            self._telemetry_sink.record_cycle({
-                "cycle_id": prediction_cycle_id,
-                "event_ts": completed_ts,
-                "state": final_state.value,
-                "expected_spawn_ts": prediction.predicted_spawn_ts,
-                "actual_spawn_ts": observation.observed_at_ts,
-                "drift_s": drift_s,
-                "reason": completed_reason,
-                "reaction_ms": reaction_ms,
-                "verification_ms": verification_ms,
-                "result": "execution_error",
-                "final_state": final_state.value,
-                "metadata": {"observation_used": True, "exception_type": type(e).__name__, "exception_message": str(e)},
-            })
-
-            return CycleRunResult(
-                cycle_id=prediction_cycle_id,
-                predicted_spawn_ts=prediction.predicted_spawn_ts,
-                actual_spawn_ts=observation.observed_at_ts,
-                drift_s=drift_s,
-                result="execution_error",
-                final_state=final_state,
+                exception=exc,
+                completed_from_ts=verification_result.completed_at_ts,
                 reaction_ms=reaction_ms,
                 verification_ms=verification_ms,
-                observation_used=True,
-                note="",
+                drift_s=drift_s,
+                attempt_action=attempt_decision.action,
+                action_metadata=action_metadata,
             )
 
-        reaction_ms = (observation.observed_at_ts - prediction.predicted_spawn_ts) * 1000.0
-        verification_ms = (verify_resolution_ts - verify_start_ts) * 1000.0
-        drift_s = self._compute_drift_s(
-            predicted_spawn_ts=prediction.predicted_spawn_ts,
-            actual_spawn_ts=observation.observed_at_ts,
+        self._telemetry_sink.record_cycle(
+            TelemetryRecord(
+                cycle_id=cycle_id,
+                event_ts=completed_ts,
+                state=final_state,
+                expected_spawn_ts=prediction.predicted_spawn_ts,
+                actual_spawn_ts=observation_window.actual_spawn_ts,
+                drift_s=drift_s,
+                reason=completed_reason,
+                reaction_ms=reaction_ms,
+                verification_ms=verification_ms,
+                result="success",
+                final_state=final_state,
+                metadata={
+                    "note": observation_window.note,
+                    "observation_used": True,
+                    **action_metadata,
+                    **combat_metadata,
+                    **observation_window.metadata,
+                },
+            )
         )
 
-        self._telemetry_sink.record_attempt({
-            "cycle_id": prediction_cycle_id,
-            "event_ts": verify_resolution_ts,
-            "state": "ATTEMPT",
-            "expected_spawn_ts": prediction.predicted_spawn_ts,
-            "actual_spawn_ts": observation.observed_at_ts,
-            "drift_s": drift_s,
-            "reaction_ms": reaction_ms,
-            "verification_ms": verification_ms,
-            "result": "success",
-            "reason": verify_decision.reason,
-            "metadata": {"attempt_action": attempt_decision.action},
-        })
-        self._telemetry_sink.record_cycle({
-            "cycle_id": prediction_cycle_id,
-            "event_ts": completed_ts,
-            "state": final_state.value,
-            "expected_spawn_ts": prediction.predicted_spawn_ts,
-            "actual_spawn_ts": observation.observed_at_ts,
-            "drift_s": drift_s,
-            "reason": completed_reason,
-            "reaction_ms": reaction_ms,
-            "verification_ms": verification_ms,
-            "result": "success",
-            "final_state": final_state.value,
-            "metadata": {"observation_used": True},
-        })
-
         return CycleRunResult(
-            cycle_id=prediction_cycle_id,
+            cycle_id=cycle_id,
             predicted_spawn_ts=prediction.predicted_spawn_ts,
-            actual_spawn_ts=observation.observed_at_ts,
+            actual_spawn_ts=observation_window.actual_spawn_ts,
             drift_s=drift_s,
             result="success",
             final_state=final_state,
             reaction_ms=reaction_ms,
             verification_ms=verification_ms,
             observation_used=True,
-            note="",
+            note=observation_window.note,
+        )
+
+    def _complete_cycle_without_target(
+        self,
+        *,
+        cycle_id: int,
+        prediction,
+        observation_window: ObservationWindow,
+        completed_at_ts: float,
+        action_metadata: dict[str, object],
+    ) -> CycleRunResult:
+        self._tick_and_record_transition(
+            now_ts=completed_at_ts,
+            prediction=prediction,
+            actual_spawn_ts=observation_window.actual_spawn_ts,
+            observation=None,
+            verify_result=None,
+            combat_snapshot=None,
+        )
+
+        final_state = self._fsm.current_state
+        drift_s = self._compute_drift_s(
+            predicted_spawn_ts=prediction.predicted_spawn_ts,
+            actual_spawn_ts=observation_window.actual_spawn_ts,
+        )
+
+        self._telemetry_sink.record_cycle(
+            TelemetryRecord(
+                cycle_id=cycle_id,
+                event_ts=completed_at_ts,
+                state=final_state,
+                expected_spawn_ts=prediction.predicted_spawn_ts,
+                actual_spawn_ts=observation_window.actual_spawn_ts,
+                drift_s=drift_s,
+                reason="no_target_available",
+                reaction_ms=None,
+                verification_ms=None,
+                result="no_target_available",
+                final_state=final_state,
+                metadata={
+                    "note": observation_window.note,
+                    "observation_used": True,
+                    **action_metadata,
+                    **observation_window.metadata,
+                },
+            )
+        )
+
+        return CycleRunResult(
+            cycle_id=cycle_id,
+            predicted_spawn_ts=prediction.predicted_spawn_ts,
+            actual_spawn_ts=observation_window.actual_spawn_ts,
+            drift_s=drift_s,
+            result="no_target_available",
+            final_state=final_state,
+            reaction_ms=None,
+            verification_ms=None,
+            observation_used=True,
+            note=observation_window.note,
+        )
+
+    def _handle_verify_timeout_transition(
+        self,
+        *,
+        prediction,
+        observation_window: ObservationWindow,
+        verification_result: VerificationResult,
+    ) -> None:
+        self._tick_and_record_transition(
+            now_ts=verification_result.completed_at_ts,
+            prediction=prediction,
+            actual_spawn_ts=observation_window.actual_spawn_ts,
+            observation=None,
+            verify_result=None,
+            combat_snapshot=None,
+        )
+        self._tick_and_record_transition(
+            now_ts=verification_result.completed_at_ts + self._cycle_config.recover_timeout_s,
+            prediction=prediction,
+            actual_spawn_ts=observation_window.actual_spawn_ts,
+            observation=None,
+            verify_result=None,
+            combat_snapshot=None,
         )
 
     def _run_success_path(
         self,
         *,
-        prediction,
-        combat_started_ts: float,
         cycle_id: int,
+        prediction,
+        observation_window: ObservationWindow,
+        combat_started_ts: float,
+    ) -> tuple[BotState, float, str, dict[str, object]]:
+        observation = observation_window.observation
+        assert observation is not None
+
+        combat_timeline = self._combat_resolver.resolve_combat(
+            cycle_id,
+            combat_started_ts=combat_started_ts,
+            observation=observation,
+        )
+
+        last_reason = "verification_success"
+        last_event_ts = combat_started_ts
+        last_snapshot: TimedCombatSnapshot | None = None
+        combat_metadata: dict[str, object] = {
+            "combat_completed": False,
+            "combat_turn_count": 0,
+            "combat_final_hp_ratio": None,
+            "combat_finished_with_rest": False,
+            "rest_tick_count": 0,
+        }
+
+        for timed_snapshot in combat_timeline.snapshots:
+            decision = self._tick_and_record_transition(
+                now_ts=timed_snapshot.event_ts,
+                prediction=prediction,
+                actual_spawn_ts=observation_window.actual_spawn_ts,
+                observation=None,
+                verify_result=None,
+                combat_snapshot=timed_snapshot.snapshot,
+            )
+            last_reason = decision.reason
+            last_event_ts = timed_snapshot.event_ts
+            last_snapshot = timed_snapshot
+            combat_metadata.update(
+                {
+                    "combat_completed": True,
+                    "combat_turn_count": len(combat_timeline.snapshots),
+                    "combat_final_hp_ratio": timed_snapshot.snapshot.hp_ratio,
+                    "combat_strategy": timed_snapshot.snapshot.strategy,
+                    **timed_snapshot.snapshot.metadata,
+                }
+            )
+
+        if self._fsm.current_state is BotState.WAIT_NEXT_CYCLE:
+            return self._fsm.current_state, last_event_ts, last_reason, combat_metadata
+
+        if self._fsm.current_state is not BotState.REST:
+            raise RuntimeError(f"Nieoczekiwany stan po walce: {self._fsm.current_state}")
+
+        if last_snapshot is None:
+            raise RuntimeError("Brak końcowego snapshotu walki dla ścieżki REST.")
+
+        rest_timeline = self._rest_provider.apply_rest(
+            cycle_id,
+            rest_started_ts=last_event_ts,
+            starting_hp_ratio=last_snapshot.snapshot.hp_ratio,
+            observation=observation,
+        )
+
+        for timed_snapshot in rest_timeline.snapshots:
+            decision = self._tick_and_record_transition(
+                now_ts=timed_snapshot.event_ts,
+                prediction=prediction,
+                actual_spawn_ts=observation_window.actual_spawn_ts,
+                observation=None,
+                verify_result=None,
+                combat_snapshot=timed_snapshot.snapshot,
+            )
+            last_reason = decision.reason
+            last_event_ts = timed_snapshot.event_ts
+            combat_metadata["combat_finished_with_rest"] = True
+            combat_metadata["rest_tick_count"] = len(rest_timeline.snapshots)
+            combat_metadata["rest_final_hp_ratio"] = timed_snapshot.snapshot.hp_ratio
+
+        if self._fsm.current_state is not BotState.WAIT_NEXT_CYCLE:
+            raise RuntimeError("REST nie zakończył się przejściem do WAIT_NEXT_CYCLE.")
+
+        return self._fsm.current_state, last_event_ts, last_reason, combat_metadata
+
+    def _complete_cycle_with_execution_error(
+        self,
+        *,
+        cycle_id: int,
+        prediction,
+        observation_window: ObservationWindow,
         observation: Observation,
-    ) -> tuple[BotState, float, str]:
-        # Placeholder for combat and rest
-        combat_outcome = self._combat_resolver.resolve_combat(cycle_id, observation)
-        rest_outcome = self._rest_provider.apply_rest(cycle_id, observation)
+        exception: Exception,
+        completed_from_ts: float,
+        reaction_ms: float,
+        verification_ms: float,
+        drift_s: float | None,
+        attempt_action: str,
+        action_metadata: dict[str, object],
+    ) -> CycleRunResult:
+        recovery_plan = self._recovery.build_exception_recovery_plan(
+            now_ts=completed_from_ts,
+            current_state=self._fsm.current_state,
+            cycle_id=cycle_id,
+            exception=exception,
+        )
 
-        # Simplified: assume combat and rest complete immediately
-        completed_ts = combat_started_ts + 1.0  # Placeholder
-        completed_reason = "combat_and_rest_completed"
-        final_state = BotState.WAIT_NEXT_CYCLE
+        last_event_ts = completed_from_ts
+        for recovery_step in recovery_plan:
+            self._fsm.force_state(
+                new_state=recovery_step.target_state,
+                now_ts=recovery_step.at_ts,
+                reason=recovery_step.reason,
+                cycle_id=recovery_step.cycle_id,
+            )
+            self._telemetry_sink.record_state_transition(
+                TelemetryRecord(
+                    cycle_id=recovery_step.cycle_id,
+                    event_ts=recovery_step.at_ts,
+                    state=recovery_step.target_state,
+                    expected_spawn_ts=prediction.predicted_spawn_ts,
+                    actual_spawn_ts=observation_window.actual_spawn_ts,
+                    drift_s=drift_s,
+                    state_enter=recovery_step.from_state,
+                    state_exit=recovery_step.target_state,
+                    reason=recovery_step.reason,
+                    final_state=recovery_step.target_state,
+                    metadata={"action": "recovery"},
+                )
+            )
+            last_event_ts = recovery_step.at_ts
 
-        return final_state, completed_ts, completed_reason
+        final_state = self._fsm.current_state
+
+        self._telemetry_sink.record_attempt(
+            TelemetryRecord(
+                cycle_id=cycle_id,
+                event_ts=completed_from_ts,
+                state=BotState.ATTEMPT,
+                expected_spawn_ts=prediction.predicted_spawn_ts,
+                actual_spawn_ts=observation_window.actual_spawn_ts,
+                drift_s=drift_s,
+                reason="execution_error",
+                reaction_ms=reaction_ms,
+                verification_ms=verification_ms,
+                result="execution_error",
+                final_state=final_state,
+                metadata={
+                    "note": observation_window.note,
+                    "attempt_action": attempt_action,
+                    **action_metadata,
+                },
+            )
+        )
+        self._telemetry_sink.record_cycle(
+            TelemetryRecord(
+                cycle_id=cycle_id,
+                event_ts=last_event_ts,
+                state=final_state,
+                expected_spawn_ts=prediction.predicted_spawn_ts,
+                actual_spawn_ts=observation_window.actual_spawn_ts,
+                drift_s=drift_s,
+                reason=recovery_plan[-1].reason if recovery_plan else "execution_error_unknown",
+                reaction_ms=reaction_ms,
+                verification_ms=verification_ms,
+                result="execution_error",
+                final_state=final_state,
+                metadata={
+                    "note": observation_window.note,
+                    "observation_used": True,
+                    "exception_type": type(exception).__name__,
+                    "exception_message": str(exception),
+                },
+            )
+        )
+
+        return CycleRunResult(
+            cycle_id=cycle_id,
+            predicted_spawn_ts=prediction.predicted_spawn_ts,
+            actual_spawn_ts=observation.actual_spawn_ts,
+            drift_s=drift_s,
+            result="execution_error",
+            final_state=final_state,
+            reaction_ms=reaction_ms,
+            verification_ms=verification_ms,
+            observation_used=True,
+            note=observation_window.note,
+        )
 
     def _tick_and_record_transition(
         self,
         *,
         now_ts: float,
         prediction,
+        actual_spawn_ts: float | None,
         observation,
         verify_result,
         combat_snapshot,
@@ -519,6 +737,7 @@ class CycleOrchestrator:
                 transition=transition,
                 decision=decision,
                 prediction=prediction,
+                actual_spawn_ts=actual_spawn_ts,
             )
 
         return decision
@@ -529,21 +748,28 @@ class CycleOrchestrator:
         transition: StateTransition,
         decision: Decision,
         prediction,
+        actual_spawn_ts: float | None,
     ) -> None:
         drift_s = self._compute_drift_s(
             predicted_spawn_ts=prediction.predicted_spawn_ts,
-            actual_spawn_ts=None,  # Simplified
+            actual_spawn_ts=actual_spawn_ts,
         )
 
-        self._telemetry_sink.record_state_transition({
-            "cycle_id": transition.cycle_id,
-            "event_ts": transition.at_ts,
-            "state_enter": transition.from_state.value,
-            "state_exit": transition.to_state.value,
-            "reason": transition.reason,
-            "final_state": transition.to_state.value,
-            "metadata": {"action": decision.action},
-        })
+        self._telemetry_sink.record_state_transition(
+            TelemetryRecord(
+                cycle_id=transition.cycle_id,
+                event_ts=transition.at_ts,
+                state=transition.to_state,
+                expected_spawn_ts=prediction.predicted_spawn_ts,
+                actual_spawn_ts=actual_spawn_ts,
+                drift_s=drift_s,
+                state_enter=transition.from_state,
+                state_exit=transition.to_state,
+                reason=transition.reason,
+                final_state=transition.to_state,
+                metadata={"action": decision.action},
+            )
+        )
 
     def _compute_drift_s(
         self,

@@ -14,6 +14,7 @@ combat:
   low_hp_threshold: 0.35
   rest_start_threshold: 0.50
   rest_stop_threshold: 0.90
+  default_profile_name: "basic_farmer"
 
 telemetry:
   sqlite_path: "data/telemetry/botlab.sqlite3"

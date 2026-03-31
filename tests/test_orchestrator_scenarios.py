@@ -1,872 +1,521 @@
-"""
-Focused tests for CycleOrchestrator covering all 6 core cycle scenarios.
+from __future__ import annotations
 
-Each test focuses on ONE scenario flow and uses simple stubs for clarity:
-- Stubs return minimal, controlled data
-- No integration with simulation (that's test_simulation_runner.py)
-- Tests verify orchestrator state transitions and telemetry recording
-"""
+from dataclasses import dataclass, field, replace
 
-from unittest.mock import Mock, call
 import pytest
 
-from botlab.application import CycleOrchestrator
-from botlab.application.ports import VerificationOutcome
-from botlab.config import CycleConfig
+from botlab.application import (
+    ActionContext,
+    ActionResult,
+    CombatTimeline,
+    CycleOrchestrator,
+    ObservationWindow,
+    RestTimeline,
+    TimedCombatSnapshot,
+    VerificationOutcome,
+    VerificationResult,
+)
+from botlab.config import CombatConfig, CycleConfig
 from botlab.domain.decision_engine import DecisionEngine
-from botlab.domain.fsm import CycleFSM, StateTransition
-from botlab.domain.recovery import RecoveryManager, RecoveryStep
+from botlab.domain.fsm import CycleFSM
+from botlab.domain.recovery import RecoveryManager
 from botlab.domain.scheduler import CycleScheduler
-from botlab.types import BotState, Decision, Observation
+from botlab.types import BotState, CombatSnapshot, Observation, TelemetryRecord
 
 
-# ============================================================================
-# Shared Fixtures
-# ============================================================================
-
-@pytest.fixture
-def cycle_config() -> CycleConfig:
-    """Standard cycle config for all tests."""
-    return CycleConfig(
-        cycle_length_s=60.0,
-        prepare_window_s=10.0,
-        ready_window_s=10.0,
-        recover_timeout_s=30.0,
-    )
-
-
-@pytest.fixture
-def observation() -> Observation:
-    """Standard observation: event at predicted spawn time."""
-    return Observation(
-        cycle_id=0,
-        observed_at_ts=115.0,
-        signal_detected=True,
-        actual_spawn_ts=115.0,
-    )
-
-
-def _make_prediction():
-    """Create a mock prediction with standard timestamps."""
-    prediction = Mock()
-    prediction.prepare_window_start_ts = 100.0
-    prediction.ready_window_start_ts = 110.0
-    prediction.ready_window_end_ts = 120.0
-    prediction.predicted_spawn_ts = 115.0
-    return prediction
-
-
-def _make_fsm_with_transitions() -> Mock:
-    """Create FSM that tracks transitions for verification."""
-    fsm = Mock(spec=CycleFSM)
-    fsm.current_state = BotState.IDLE
-    fsm.transition_count.side_effect = [0, 1, 2, 3]  # Increments each call
-    
-    transition = Mock(spec=StateTransition)
-    transition.cycle_id = 0
-    transition.at_ts = 100.0
-    transition.from_state = BotState.IDLE
-    transition.to_state = BotState.PREPARE_WINDOW
-    transition.reason = "cycle_start"
-    
-    fsm.transition_history.return_value = [transition]
-    return fsm
-
-
-def _make_scheduler() -> Mock:
-    """Create scheduler with standard prediction."""
-    scheduler = Mock(spec=CycleScheduler)
-    scheduler.prediction_for_cycle.return_value = _make_prediction()
-    scheduler.state_for_time.return_value = "PREPARE"
-    return scheduler
-
-
-def _make_clock() -> Mock:
-    """Create simple clock."""
-    clock = Mock()
-    clock.now.return_value = 100.0
-    return clock
-
-
-def _make_decision_engine() -> Mock:
-    """Create simple decision engine."""
-    engine = Mock(spec=DecisionEngine)
-    decision = Mock(spec=Decision)
-    decision.action = "ATTEMPT"
-    decision.reason = "ready"
-    return engine
-
-
-def _make_recovery() -> Mock:
-    """Create recovery manager with no recovery plans by default."""
-    return Mock(spec=RecoveryManager)
-
-
-def _make_cycle_config() -> CycleConfig:
-    """Create standard CycleConfig for tests."""
+def _cycle_config() -> CycleConfig:
     return CycleConfig(
         interval_s=60.0,
         prepare_before_s=10.0,
-        ready_before_s=10.0,
-        ready_after_s=10.0,
-        verify_timeout_s=30.0,
-        recover_timeout_s=30.0,
+        ready_before_s=5.0,
+        ready_after_s=5.0,
+        verify_timeout_s=0.5,
+        recover_timeout_s=2.0,
     )
 
 
-# ============================================================================
-# Scenario 1: SUCCESS -> COMBAT -> REST -> WAIT_NEXT_CYCLE
-# ============================================================================
+def _combat_config() -> CombatConfig:
+    return CombatConfig(
+        low_hp_threshold=0.35,
+        rest_start_threshold=0.50,
+        rest_stop_threshold=0.90,
+    )
 
-class TestScenario1_SuccessWithRestRequired:
-    """
-    Cycle succeeds, combat kills enemy (hp < 0.70), rest is applied.
-    
-    Flow: observe event → verify success → resolve combat → apply rest → WAIT_NEXT_CYCLE
-    """
 
-    def test_success_with_combat_rest_completes_with_wait_next_cycle_state(self):
-        """Results in WAIT_NEXT_CYCLE state after successful combat and rest."""
-        # Arrange
-        scheduler = _make_scheduler()
-        fsm = _make_fsm_with_transitions()
-        fsm.current_state = BotState.WAIT_NEXT_CYCLE  # FSM ends at this state after tick
-        
-        decision_engine = _make_decision_engine()
-        recovery = _make_recovery()
-        clock = _make_clock()
+def _build_scheduler() -> CycleScheduler:
+    scheduler = CycleScheduler.from_cycle_config(_cycle_config())
+    scheduler.bootstrap(anchor_spawn_ts=100.0, anchor_cycle_id=0)
+    return scheduler
 
-        observation = Observation(
-            cycle_id=0,
-            observed_at_ts=115.0,
-            signal_detected=True,
-            actual_spawn_ts=115.0,
-        )
 
-        observation_provider = Mock()
-        observation_provider.get_latest_observation.return_value = observation
+def _build_fsm() -> CycleFSM:
+    return CycleFSM(
+        decision_engine=DecisionEngine(_cycle_config(), _combat_config()),
+        initial_state=BotState.IDLE,
+        started_at_ts=0.0,
+        cycle_id=None,
+    )
 
-        action_executor = Mock()
-        action_executor.execute_action.return_value = Mock(
-            cycle_id=0,
-            success=True,
-            reason="action_executed",
-            metadata={},
-        )
 
-        verification_provider = Mock()
-        verification_provider.verify.return_value = VerificationOutcome.SUCCESS
+def _observation(*, cycle_id: int = 1, observed_at_ts: float, actual_spawn_ts: float) -> Observation:
+    return Observation(
+        cycle_id=cycle_id,
+        observed_at_ts=observed_at_ts,
+        signal_detected=True,
+        actual_spawn_ts=actual_spawn_ts,
+    )
 
-        combat_resolver = Mock()
-        combat_resolver.resolve_combat.return_value = Mock(
-            cycle_id=0,
-            won=True,
-            hp_ratio=0.65,  # Below 0.70 threshold -> rest required
-            metadata={},
-        )
 
-        rest_provider = Mock()
-        rest_provider.apply_rest.return_value = Mock(
-            cycle_id=0,
-            hp_ratio=0.95,
-            recovered=True,
-            metadata={},
-        )
+def _combat_snapshot(
+    *,
+    event_ts: float,
+    hp_ratio: float,
+    in_combat: bool,
+    turn_index: int = 1,
+) -> TimedCombatSnapshot:
+    return TimedCombatSnapshot(
+        event_ts=event_ts,
+        snapshot=CombatSnapshot(
+            hp_ratio=hp_ratio,
+            turn_index=turn_index,
+            enemy_count=1 if in_combat else 0,
+            strategy="default",
+            in_combat=in_combat,
+            combat_started_ts=event_ts - 0.3,
+            combat_finished_ts=None if in_combat else event_ts,
+        ),
+    )
 
-        telemetry_sink = Mock()
 
-        orchestrator = CycleOrchestrator(
-            scheduler=scheduler,
-            decision_engine=decision_engine,
-            fsm=fsm,
-            recovery=recovery,
-            clock=clock,
-            observation_provider=observation_provider,
-            action_executor=action_executor,
-            verification_provider=verification_provider,
-            combat_resolver=combat_resolver,
-            rest_provider=rest_provider,
-            telemetry_sink=telemetry_sink,
-            cycle_config=CycleConfig(
-                cycle_length_s=60.0,
-                prepare_window_s=10.0,
-                ready_window_s=10.0,
-                recover_timeout_s=30.0,
+def _rest_snapshot(*, event_ts: float, hp_ratio: float) -> TimedCombatSnapshot:
+    return TimedCombatSnapshot(
+        event_ts=event_ts,
+        snapshot=CombatSnapshot(
+            hp_ratio=hp_ratio,
+            turn_index=1,
+            enemy_count=0,
+            strategy="rest",
+            in_combat=False,
+        ),
+    )
+
+
+@dataclass
+class RecordingTelemetrySink:
+    cycles: list[TelemetryRecord] = field(default_factory=list)
+    attempts: list[TelemetryRecord] = field(default_factory=list)
+    transitions: list[TelemetryRecord] = field(default_factory=list)
+
+    def record_cycle(self, record: TelemetryRecord) -> None:
+        self.cycles.append(record)
+
+    def record_attempt(self, record: TelemetryRecord) -> None:
+        self.attempts.append(record)
+
+    def record_state_transition(self, record: TelemetryRecord) -> None:
+        self.transitions.append(record)
+
+
+@dataclass
+class ScenarioPorts:
+    observation_window: ObservationWindow
+    action_result: ActionResult | None = None
+    verification_result: VerificationResult | None = None
+    combat_timeline: CombatTimeline | None = None
+    rest_timeline: RestTimeline | None = None
+    combat_error: Exception | None = None
+    rest_error: Exception | None = None
+    action_calls: int = 0
+    verify_calls: int = 0
+    combat_calls: int = 0
+    rest_calls: int = 0
+
+    def get_observation_window(self, cycle_id: int) -> ObservationWindow:
+        observation = self.observation_window.observation
+        if observation is not None:
+            observation = replace(observation, cycle_id=cycle_id)
+        return replace(self.observation_window, cycle_id=cycle_id, observation=observation)
+
+    def execute_action(self, context: ActionContext) -> ActionResult:
+        self.action_calls += 1
+        if self.action_result is None:
+            raise AssertionError("Action should not be executed in this scenario.")
+        return replace(self.action_result, cycle_id=context.cycle_id)
+
+    def verify(self, cycle_id: int, observation: Observation) -> VerificationResult:
+        self.verify_calls += 1
+        if self.verification_result is None:
+            raise AssertionError("Verification should not run in this scenario.")
+        return replace(self.verification_result, cycle_id=cycle_id)
+
+    def resolve_combat(
+        self,
+        cycle_id: int,
+        *,
+        combat_started_ts: float,
+        observation: Observation,
+    ) -> CombatTimeline:
+        self.combat_calls += 1
+        if self.combat_error is not None:
+            raise self.combat_error
+        if self.combat_timeline is None:
+            raise AssertionError("Combat should not run in this scenario.")
+        return self.combat_timeline
+
+    def apply_rest(
+        self,
+        cycle_id: int,
+        *,
+        rest_started_ts: float,
+        starting_hp_ratio: float,
+        observation: Observation,
+    ) -> RestTimeline:
+        self.rest_calls += 1
+        if self.rest_error is not None:
+            raise self.rest_error
+        if self.rest_timeline is None:
+            raise AssertionError("Rest should not run in this scenario.")
+        return self.rest_timeline
+
+
+def _build_orchestrator(
+    ports: ScenarioPorts,
+    telemetry_sink: RecordingTelemetrySink | None = None,
+) -> tuple[CycleOrchestrator, RecordingTelemetrySink]:
+    telemetry = telemetry_sink or RecordingTelemetrySink()
+    orchestrator = CycleOrchestrator(
+        scheduler=_build_scheduler(),
+        fsm=_build_fsm(),
+        recovery=RecoveryManager(_cycle_config()),
+        observation_provider=ports,
+        action_executor=ports,
+        verification_provider=ports,
+        combat_resolver=ports,
+        rest_provider=ports,
+        telemetry_sink=telemetry,
+        cycle_config=_cycle_config(),
+    )
+    return orchestrator, telemetry
+
+
+class TestScenario1SuccessWithRestRequired:
+    def test_success_with_combat_rest_completes_with_wait_next_cycle_state(self) -> None:
+        observation = _observation(observed_at_ts=160.0, actual_spawn_ts=160.0)
+        ports = ScenarioPorts(
+            observation_window=ObservationWindow(
+                cycle_id=1,
+                observation=observation,
+                actual_spawn_ts=160.0,
+                window_closed_ts=165.01,
+                note="rest-required",
+            ),
+            action_result=ActionResult(
+                cycle_id=1,
+                success=True,
+                executed_at_ts=160.02,
+                reason="action_executed",
+            ),
+            verification_result=VerificationResult(
+                cycle_id=1,
+                outcome=VerificationOutcome.SUCCESS,
+                started_at_ts=160.03,
+                completed_at_ts=160.13,
+                reason="success",
+            ),
+            combat_timeline=CombatTimeline(
+                cycle_id=1,
+                snapshots=[_combat_snapshot(event_ts=160.60, hp_ratio=0.40, in_combat=False)],
+            ),
+            rest_timeline=RestTimeline(
+                cycle_id=1,
+                snapshots=[_rest_snapshot(event_ts=161.10, hp_ratio=0.95)],
             ),
         )
+        orchestrator, telemetry = _build_orchestrator(ports)
 
-        # Act
-        results = orchestrator.run_cycles(1)
+        results = orchestrator.run_cycles(1, initial_cycle_id=1)
 
-        # Assert
-        assert len(results) == 1
-        result = results[0]
-        assert result.cycle_id == 0
-        assert result.result == "success"
-        assert result.final_state == BotState.WAIT_NEXT_CYCLE
-        assert result.observation_used is True
-        assert result.drift_s == 0.0  # actual_spawn_ts == predicted_spawn_ts
-
-        # Verify combat and rest were called
-        combat_resolver.resolve_combat.assert_called_once()
-        rest_provider.apply_rest.assert_called_once()
-
-        # Verify telemetry recorded the cycle
-        assert telemetry_sink.record_cycle.called
+        assert results[0].result == "success"
+        assert results[0].final_state is BotState.WAIT_NEXT_CYCLE
+        assert ports.combat_calls == 1
+        assert ports.rest_calls == 1
+        assert any(item.state_exit == BotState.REST for item in telemetry.transitions)
+        assert any(item.reason == "rest_completed_hp_restored" for item in telemetry.transitions)
 
 
-# ============================================================================
-# Scenario 2: SUCCESS -> COMBAT -> NO REST -> WAIT_NEXT_CYCLE
-# ============================================================================
-
-class TestScenario2_SuccessWithoutRestRequired:
-    """
-    Cycle succeeds, combat leaves hp > 0.70, no rest applied.
-    
-    Flow: observe event → verify success → resolve combat (high HP) → NO rest → WAIT_NEXT_CYCLE
-    """
-
-    def test_success_with_high_hp_no_rest_required(self):
-        """High HP after combat means no rest, but still completes successfully."""
-        # Arrange
-        scheduler = _make_scheduler()
-        fsm = _make_fsm_with_transitions()
-        fsm.current_state = BotState.WAIT_NEXT_CYCLE
-
-        decision_engine = _make_decision_engine()
-        recovery = _make_recovery()
-        clock = _make_clock()
-
-        observation = Observation(
-            cycle_id=0,
-            observed_at_ts=115.0,
-            signal_detected=True,
-            actual_spawn_ts=115.0,
+class TestScenario2SuccessWithoutRestRequired:
+    def test_success_with_high_hp_no_rest_required(self) -> None:
+        observation = _observation(observed_at_ts=160.0, actual_spawn_ts=160.0)
+        ports = ScenarioPorts(
+            observation_window=ObservationWindow(
+                cycle_id=1,
+                observation=observation,
+                actual_spawn_ts=160.0,
+                window_closed_ts=165.01,
+                note="no-rest",
+            ),
+            action_result=ActionResult(
+                cycle_id=1,
+                success=True,
+                executed_at_ts=160.02,
+                reason="action_executed",
+            ),
+            verification_result=VerificationResult(
+                cycle_id=1,
+                outcome=VerificationOutcome.SUCCESS,
+                started_at_ts=160.03,
+                completed_at_ts=160.13,
+                reason="success",
+            ),
+            combat_timeline=CombatTimeline(
+                cycle_id=1,
+                snapshots=[_combat_snapshot(event_ts=160.60, hp_ratio=0.95, in_combat=False)],
+            ),
+            rest_timeline=RestTimeline(cycle_id=1, snapshots=[]),
         )
+        orchestrator, telemetry = _build_orchestrator(ports)
 
-        observation_provider = Mock()
-        observation_provider.get_latest_observation.return_value = observation
+        results = orchestrator.run_cycles(1, initial_cycle_id=1)
 
-        action_executor = Mock()
-        action_executor.execute_action.return_value = Mock(
-            cycle_id=0,
-            success=True,
-            reason="action_executed",
-            metadata={},
-        )
+        assert results[0].result == "success"
+        assert results[0].final_state is BotState.WAIT_NEXT_CYCLE
+        assert ports.combat_calls == 1
+        assert ports.rest_calls == 0
+        assert any(item.reason == "combat_finished_no_rest_needed" for item in telemetry.transitions)
 
-        verification_provider = Mock()
-        verification_provider.verify.return_value = VerificationOutcome.SUCCESS
 
-        combat_resolver = Mock()
-        combat_resolver.resolve_combat.return_value = Mock(
-            cycle_id=0,
-            won=True,
-            hp_ratio=0.85,  # Above 0.70 threshold -> no rest required
-            metadata={},
-        )
-
-        rest_provider = Mock()
-        rest_provider.apply_rest.return_value = Mock(
-            cycle_id=0,
-            hp_ratio=0.85,  # No change, no rest applied
-            recovered=False,
-            metadata={},
-        )
-
-        telemetry_sink = Mock()
-
-        orchestrator = CycleOrchestrator(
-            scheduler=scheduler,
-            decision_engine=decision_engine,
-            fsm=fsm,
-            recovery=recovery,
-            clock=clock,
-            observation_provider=observation_provider,
-            action_executor=action_executor,
-            verification_provider=verification_provider,
-            combat_resolver=combat_resolver,
-            rest_provider=rest_provider,
-            telemetry_sink=telemetry_sink,
-            cycle_config=CycleConfig(
-                cycle_length_s=60.0,
-                prepare_window_s=10.0,
-                ready_window_s=10.0,
-                recover_timeout_s=30.0,
+class TestScenario3VerifyTimeoutWithRecovery:
+    def test_verify_timeout_triggers_recovery_and_returns_to_wait_next_cycle(self) -> None:
+        observation = _observation(observed_at_ts=160.0, actual_spawn_ts=160.0)
+        ports = ScenarioPorts(
+            observation_window=ObservationWindow(
+                cycle_id=1,
+                observation=observation,
+                actual_spawn_ts=160.0,
+                window_closed_ts=165.01,
+                note="timeout",
+            ),
+            action_result=ActionResult(
+                cycle_id=1,
+                success=True,
+                executed_at_ts=160.02,
+                reason="action_executed",
+            ),
+            verification_result=VerificationResult(
+                cycle_id=1,
+                outcome=VerificationOutcome.TIMEOUT,
+                started_at_ts=160.03,
+                completed_at_ts=160.53,
+                reason="timeout",
             ),
         )
+        orchestrator, telemetry = _build_orchestrator(ports)
 
-        # Act
-        results = orchestrator.run_cycles(1)
+        results = orchestrator.run_cycles(1, initial_cycle_id=1)
 
-        # Assert
-        assert len(results) == 1
-        result = results[0]
-        assert result.cycle_id == 0
-        assert result.result == "success"
-        assert result.final_state == BotState.WAIT_NEXT_CYCLE
-        assert result.observation_used is True
-
-        # Both combat and rest are still called (via success path) but rest is no-op
-        combat_resolver.resolve_combat.assert_called_once()
-        rest_provider.apply_rest.assert_called_once()
+        assert results[0].result == "verify_timeout"
+        assert results[0].final_state is BotState.WAIT_NEXT_CYCLE
+        assert ports.combat_calls == 0
+        assert ports.rest_calls == 0
+        assert any(item.state_exit == BotState.RECOVER for item in telemetry.transitions)
+        assert any(item.reason == "recover_timeout_elapsed" for item in telemetry.transitions)
 
 
-# ============================================================================
-# Scenario 3: VERIFY_TIMEOUT -> RECOVER -> WAIT_NEXT_CYCLE
-# ============================================================================
+class TestScenario4ExecutionErrorWithRecovery:
+    def test_exception_during_success_path_triggers_recovery(self) -> None:
+        observation = _observation(observed_at_ts=160.0, actual_spawn_ts=160.0)
+        ports = ScenarioPorts(
+            observation_window=ObservationWindow(
+                cycle_id=1,
+                observation=observation,
+                actual_spawn_ts=160.0,
+                window_closed_ts=165.01,
+                note="execution-error",
+            ),
+            action_result=ActionResult(
+                cycle_id=1,
+                success=True,
+                executed_at_ts=160.02,
+                reason="action_executed",
+            ),
+            verification_result=VerificationResult(
+                cycle_id=1,
+                outcome=VerificationOutcome.SUCCESS,
+                started_at_ts=160.03,
+                completed_at_ts=160.13,
+                reason="success",
+            ),
+            combat_error=RuntimeError("Combat system malfunction"),
+        )
+        orchestrator, telemetry = _build_orchestrator(ports)
 
-class TestScenario3_VerifyTimeoutWithRecovery:
-    """
-    Cycle observes event, verification times out, recovery brings bot to safe state.
-    
-    Flow: observe event → verify timeout → apply recovery → WAIT_NEXT_CYCLE
-    """
+        results = orchestrator.run_cycles(1, initial_cycle_id=1)
 
-    def test_verify_timeout_triggers_recovery_and_returns_to_idle(self):
-        """Timeout during verification triggers recovery process."""
-        # Arrange
-        scheduler = _make_scheduler()
-        fsm = _make_fsm_with_transitions()
-        fsm.current_state = BotState.IDLE  # After recovery
-        fsm.transition_count.side_effect = [0, 1, 2, 3, 4]  # More transitions for recovery
-
-        decision_engine = _make_decision_engine()
-        
-        clock = _make_clock()
-
-        observation = Observation(
-            cycle_id=0,
-            observed_at_ts=115.0,
-            signal_detected=True,
-            actual_spawn_ts=115.0,
+        assert results[0].result == "execution_error"
+        assert results[0].final_state is BotState.WAIT_NEXT_CYCLE
+        assert ports.combat_calls == 1
+        assert ports.rest_calls == 0
+        assert any(item.state_exit == BotState.RECOVER for item in telemetry.transitions)
+        assert any(
+            item.reason == "execution_error_RuntimeError_reset_complete"
+            for item in telemetry.transitions
         )
 
-        observation_provider = Mock()
-        observation_provider.get_latest_observation.return_value = observation
 
-        action_executor = Mock()
-        action_executor.execute_action.return_value = Mock(
-            cycle_id=0,
-            success=True,
-            reason="action_executed",
-            metadata={},
-        )
-
-        verification_provider = Mock()
-        verification_provider.verify.return_value = VerificationOutcome.TIMEOUT
-
-        combat_resolver = Mock()  # Should NOT be called on timeout
-        rest_provider = Mock()  # Should NOT be called on timeout
-
-        telemetry_sink = Mock()
-
-        recovery = Mock(spec=RecoveryManager)
-        recovery_step = Mock(spec=RecoveryStep)
-        recovery_step.target_state = BotState.IDLE
-        recovery_step.at_ts = 146.0  # 115.0 + 0.020 + 0.100 + 30.0
-        recovery_step.from_state = BotState.ATTEMPT
-        recovery_step.reason = "recover_from_timeout"
-        recovery_step.cycle_id = 0
-
-        recovery.build_exception_recovery_plan.return_value = [recovery_step]
-
-        orchestrator = CycleOrchestrator(
-            scheduler=scheduler,
-            decision_engine=decision_engine,
-            fsm=fsm,
-            recovery=recovery,
-            clock=clock,
-            observation_provider=observation_provider,
-            action_executor=action_executor,
-            verification_provider=verification_provider,
-            combat_resolver=combat_resolver,
-            rest_provider=rest_provider,
-            telemetry_sink=telemetry_sink,
-            cycle_config=CycleConfig(
-                cycle_length_s=60.0,
-                prepare_window_s=10.0,
-                ready_window_s=10.0,
-                recover_timeout_s=30.0,
+class TestScenario5NoEvent:
+    def test_no_observation_results_in_no_event(self) -> None:
+        ports = ScenarioPorts(
+            observation_window=ObservationWindow(
+                cycle_id=1,
+                observation=None,
+                actual_spawn_ts=None,
+                window_closed_ts=165.01,
+                note="no-event",
             ),
         )
+        orchestrator, telemetry = _build_orchestrator(ports)
 
-        # Act
-        results = orchestrator.run_cycles(1)
+        results = orchestrator.run_cycles(1, initial_cycle_id=1)
 
-        # Assert
-        assert len(results) == 1
-        result = results[0]
-        assert result.cycle_id == 0
-        assert result.result == "verify_timeout"
-        assert result.observation_used is True
-
-        # Combat and rest should NOT be called on timeout
-        combat_resolver.resolve_combat.assert_not_called()
-        rest_provider.apply_rest.assert_not_called()
-
-        # Recovery should have been triggered
-        recovery.build_exception_recovery_plan.assert_not_called()  # No exception, timeout path is direct
-
-        # Telemetry should record the attempt and cycle
-        assert telemetry_sink.record_attempt.called
-        assert telemetry_sink.record_cycle.called
+        assert results[0].result == "no_event"
+        assert results[0].observation_used is False
+        assert ports.action_calls == 0
+        assert ports.verify_calls == 0
+        assert ports.combat_calls == 0
+        assert ports.rest_calls == 0
+        assert telemetry.cycles[0].result == "no_event"
 
 
-# ============================================================================
-# Scenario 4: EXECUTION_ERROR -> RECOVER -> WAIT_NEXT_CYCLE
-# ============================================================================
-
-class TestScenario4_ExecutionErrorWithRecovery:
-    """
-    Cycle succeeds verification but throws during success path (combat/rest).
-    Recovery manager handles exception and brings bot to safe state.
-    
-    Flow: observe event → verify success → exception during success path → recovery → WAIT_NEXT_CYCLE
-    """
-
-    def test_exception_during_success_path_triggers_recovery(self):
-        """Exception during combat/rest execution triggers recovery process.""" 
-        # Arrange
-        scheduler = _make_scheduler()
-        fsm = _make_fsm_with_transitions()
-        fsm.current_state = BotState.IDLE  # After recovery
-        fsm.force_state = Mock()  # Required for recovery path
-        fsm.transition_count.side_effect = [0, 1, 2, 3, 4, 5]
-
-        decision_engine = _make_decision_engine()
-        clock = _make_clock()
-
-        observation = Observation(
-            cycle_id=0,
-            observed_at_ts=115.0,
-            signal_detected=True,
-            actual_spawn_ts=115.0,
-        )
-
-        observation_provider = Mock()
-        observation_provider.get_latest_observation.return_value = observation
-
-        action_executor = Mock()
-        action_executor.execute_action.return_value = Mock(
-            cycle_id=0,
-            success=True,
-            reason="action_executed",
-            metadata={},
-        )
-
-        verification_provider = Mock()
-        verification_provider.verify.return_value = VerificationOutcome.SUCCESS
-
-        # Combat throws exception
-        combat_resolver = Mock()
-        test_exception = RuntimeError("Combat system malfunction")
-        combat_resolver.resolve_combat.side_effect = test_exception
-
-        rest_provider = Mock()  # Should NOT be called
-
-        telemetry_sink = Mock()
-
-        recovery = Mock(spec=RecoveryManager)
-        recovery_step = Mock(spec=RecoveryStep)
-        recovery_step.target_state = BotState.IDLE
-        recovery_step.at_ts = 115.12  # Verify resolution time + small delay
-        recovery_step.from_state = BotState.ATTEMPT
-        recovery_step.reason = "exception_recovery"
-        recovery_step.cycle_id = 0
-
-        recovery.build_exception_recovery_plan.return_value = [recovery_step]
-
-        orchestrator = CycleOrchestrator(
-            scheduler=scheduler,
-            decision_engine=decision_engine,
-            fsm=fsm,
-            recovery=recovery,
-            clock=clock,
-            observation_provider=observation_provider,
-            action_executor=action_executor,
-            verification_provider=verification_provider,
-            combat_resolver=combat_resolver,
-            rest_provider=rest_provider,
-            telemetry_sink=telemetry_sink,
-            cycle_config=CycleConfig(
-                cycle_length_s=60.0,
-                prepare_window_s=10.0,
-                ready_window_s=10.0,
-                recover_timeout_s=30.0,
+class TestScenario6LateEventMissed:
+    def test_event_predicted_but_not_observed_is_late_missed(self) -> None:
+        ports = ScenarioPorts(
+            observation_window=ObservationWindow(
+                cycle_id=1,
+                observation=None,
+                actual_spawn_ts=166.5,
+                window_closed_ts=165.01,
+                note="late-event",
             ),
         )
+        orchestrator, telemetry = _build_orchestrator(ports)
 
-        # Act
-        results = orchestrator.run_cycles(1)
+        results = orchestrator.run_cycles(1, initial_cycle_id=1)
 
-        # Assert
-        assert len(results) == 1
-        result = results[0]
-        assert result.cycle_id == 0
-        assert result.result == "execution_error"
-        assert result.observation_used is True
-
-        # Combat was called but threw
-        combat_resolver.resolve_combat.assert_called_once()
-
-        # Rest was NOT called (exception before it)
-        rest_provider.apply_rest.assert_not_called()
-
-        # Recovery was triggered
-        recovery.build_exception_recovery_plan.assert_called_once()
-
-        # Telemetry should record attempt and cycle with error metadata
-        assert telemetry_sink.record_attempt.called
-        assert telemetry_sink.record_cycle.called
+        assert results[0].result == "late_event_missed"
+        assert results[0].observation_used is False
+        assert results[0].drift_s == pytest.approx(6.5)
+        assert telemetry.cycles[0].result == "late_event_missed"
 
 
-# ============================================================================
-# Scenario 5: NO_EVENT
-# ============================================================================
-
-class TestScenario5_NoEvent:
-    """
-    Cycle completes without observing any event (no observation returned).
-    
-    Flow: prepare → ready → no observation → complete with NO_EVENT result
-    """
-
-    def test_no_observation_results_in_no_event(self):
-        """Absence of observation is recorded as no_event, not failure."""
-        # Arrange
-        scheduler = _make_scheduler()
-        scheduler_prediction = scheduler.prediction_for_cycle.return_value
-        scheduler_prediction.predicted_spawn_ts = None  # No event was expected
-
-        fsm = _make_fsm_with_transitions()
-        fsm.current_state = BotState.IDLE
-
-        decision_engine = _make_decision_engine()
-        recovery = _make_recovery()
-        clock = _make_clock()
-
-        observation_provider = Mock()
-        observation_provider.get_latest_observation.return_value = None  # No event
-
-        action_executor = Mock()
-        verification_provider = Mock()
-        combat_resolver = Mock()
-        rest_provider = Mock()
-        telemetry_sink = Mock()
-
-        orchestrator = CycleOrchestrator(
-            scheduler=scheduler,
-            decision_engine=decision_engine,
-            fsm=fsm,
-            recovery=recovery,
-            clock=clock,
-            observation_provider=observation_provider,
-            action_executor=action_executor,
-            verification_provider=verification_provider,
-            combat_resolver=combat_resolver,
-            rest_provider=rest_provider,
-            telemetry_sink=telemetry_sink,
-            cycle_config=CycleConfig(
-                cycle_length_s=60.0,
-                prepare_window_s=10.0,
-                ready_window_s=10.0,
-                recover_timeout_s=30.0,
+class TestScenario7VisibleEventButNoTargetAvailable:
+    def test_visible_event_without_free_target_completes_without_attempt(self) -> None:
+        observation = _observation(observed_at_ts=160.0, actual_spawn_ts=160.0)
+        ports = ScenarioPorts(
+            observation_window=ObservationWindow(
+                cycle_id=1,
+                observation=observation,
+                actual_spawn_ts=160.0,
+                window_closed_ts=165.01,
+                note="no-target",
+            ),
+            action_result=ActionResult(
+                cycle_id=1,
+                success=False,
+                executed_at_ts=160.0,
+                reason="no_target_available",
+                metadata={
+                    "selected_target_id": None,
+                    "target_decision_reason": "no_target_available",
+                },
             ),
         )
+        orchestrator, telemetry = _build_orchestrator(ports)
 
-        # Act
-        results = orchestrator.run_cycles(1)
+        results = orchestrator.run_cycles(1, initial_cycle_id=1)
 
-        # Assert
-        assert len(results) == 1
-        result = results[0]
-        assert result.cycle_id == 0
-        assert result.result == "no_event"
-        assert result.observation_used is False
-        assert result.actual_spawn_ts is None
-        assert result.drift_s is None
+        assert results[0].result == "no_target_available"
+        assert results[0].final_state is BotState.WAIT_NEXT_CYCLE
+        assert results[0].observation_used is True
+        assert ports.action_calls == 1
+        assert ports.verify_calls == 0
+        assert ports.combat_calls == 0
+        assert ports.rest_calls == 0
+        assert telemetry.attempts == []
+        assert telemetry.cycles[0].result == "no_target_available"
+        assert telemetry.cycles[0].metadata["selected_target_id"] is None
+        assert telemetry.cycles[0].metadata["target_decision_reason"] == "no_target_available"
 
-        # None of the execution paths should be called
-        action_executor.execute_action.assert_not_called()
-        verification_provider.verify.assert_not_called()
-        combat_resolver.resolve_combat.assert_not_called()
-        rest_provider.apply_rest.assert_not_called()
-
-        # Record cycle should be called
-        telemetry_sink.record_cycle.assert_called_once()
-
-
-# ============================================================================
-# Scenario 6: LATE_EVENT_MISSED
-# ============================================================================
-
-class TestScenario6_LateEventMissed:
-    """
-    Cycle completes without observation but event was predicted.
-    Event occurred outside of ready window.
-    
-    Flow: prepare → ready → no observation (but event was expected) → complete with LATE_EVENT_MISSED
-    """
-
-    def test_event_predicted_but_not_observed_is_late_missed(self):
-        """Event was scheduled but not observed => late event missed."""
-        # Arrange
-        scheduler = _make_scheduler()
-        scheduler_prediction = scheduler.prediction_for_cycle.return_value
-        scheduler_prediction.predicted_spawn_ts = 115.0  # Event WAS predicted
-
-        fsm = _make_fsm_with_transitions()
-        fsm.current_state = BotState.IDLE
-
-        decision_engine = _make_decision_engine()
-        recovery = _make_recovery()
-        clock = _make_clock()
-
-        observation_provider = Mock()
-        observation_provider.get_latest_observation.return_value = None  # But NOT observed
-
-        action_executor = Mock()
-        verification_provider = Mock()
-        combat_resolver = Mock()
-        rest_provider = Mock()
-        telemetry_sink = Mock()
-
-        orchestrator = CycleOrchestrator(
-            scheduler=scheduler,
-            decision_engine=decision_engine,
-            fsm=fsm,
-            recovery=recovery,
-            clock=clock,
-            observation_provider=observation_provider,
-            action_executor=action_executor,
-            verification_provider=verification_provider,
-            combat_resolver=combat_resolver,
-            rest_provider=rest_provider,
-            telemetry_sink=telemetry_sink,
-            cycle_config=CycleConfig(
-                cycle_length_s=60.0,
-                prepare_window_s=10.0,
-                ready_window_s=10.0,
-                recover_timeout_s=30.0,
-            ),
-        )
-
-        # Act
-        results = orchestrator.run_cycles(1)
-
-        # Assert
-        assert len(results) == 1
-        result = results[0]
-        assert result.cycle_id == 0
-        assert result.result == "late_event_missed"
-        assert result.observation_used is False
-        assert result.predicted_spawn_ts == 115.0
-        assert result.actual_spawn_ts is None
-
-        # None of the execution paths should be called
-        action_executor.execute_action.assert_not_called()
-        verification_provider.verify.assert_not_called()
-        combat_resolver.resolve_combat.assert_not_called()
-        rest_provider.apply_rest.assert_not_called()
-
-        # Record cycle should be called
-        telemetry_sink.record_cycle.assert_called_once()
-
-
-# ============================================================================
-# Additional Tests: Multi-cycle and Drift
-# ============================================================================
 
 class TestMultipleCycles:
-    """Test that orchestrator handles multiple cycles correctly."""
-
-    def test_run_multiple_cycles_produces_correct_count(self):
-        """Running N cycles produces N results with correct IDs."""
-        # Arrange
-        scheduler = _make_scheduler()
-        fsm = _make_fsm_with_transitions()
-        fsm.current_state = BotState.IDLE
-        fsm.transition_count.side_effect = [0, 1] * 10  # For multiple cycles
-
-        decision_engine = _make_decision_engine()
-        recovery = _make_recovery()
-        clock = _make_clock()
-
-        observation_provider = Mock()
-        observation_provider.get_latest_observation.return_value = None
-
-        action_executor = Mock()
-        verification_provider = Mock()
-        combat_resolver = Mock()
-        rest_provider = Mock()
-        telemetry_sink = Mock()
-
-        orchestrator = CycleOrchestrator(
-            scheduler=scheduler,
-            decision_engine=decision_engine,
-            fsm=fsm,
-            recovery=recovery,
-            clock=clock,
-            observation_provider=observation_provider,
-            action_executor=action_executor,
-            verification_provider=verification_provider,
-            combat_resolver=combat_resolver,
-            rest_provider=rest_provider,
-            telemetry_sink=telemetry_sink,
-            cycle_config=CycleConfig(
-                cycle_length_s=60.0,
-                prepare_window_s=10.0,
-                ready_window_s=10.0,
-                recover_timeout_s=30.0,
+    def test_run_multiple_cycles_produces_correct_count(self) -> None:
+        ports = ScenarioPorts(
+            observation_window=ObservationWindow(
+                cycle_id=1,
+                observation=None,
+                actual_spawn_ts=None,
+                window_closed_ts=165.01,
             ),
         )
+        orchestrator, _ = _build_orchestrator(ports)
 
-        # Act
-        results = orchestrator.run_cycles(5)
+        results = orchestrator.run_cycles(3, initial_cycle_id=1)
 
-        # Assert
-        assert len(results) == 5
-        assert results[0].cycle_id == 0
-        assert results[1].cycle_id == 1
-        assert results[2].cycle_id == 2
-        assert results[3].cycle_id == 3
-        assert results[4].cycle_id == 4
+        assert [item.cycle_id for item in results] == [1, 2, 3]
 
 
 class TestDriftCalculation:
-    """Test that drift is correctly calculated when observation registered."""
-
-    def test_positive_drift_when_event_is_late(self):
-        """Event observed after predicted spawn time = positive drift."""
-        # Arrange
-        scheduler = _make_scheduler()
-        fsm = _make_fsm_with_transitions()
-        fsm.current_state = BotState.WAIT_NEXT_CYCLE
-
-        decision_engine = _make_decision_engine()
-        recovery = _make_recovery()
-        clock = _make_clock()
-
-        observation = Observation(
-            cycle_id=0,
-            observed_at_ts=116.5,  # 1.5s late
-            signal_detected=True,
-            actual_spawn_ts=116.5,
-        )
-
-        observation_provider = Mock()
-        observation_provider.get_latest_observation.return_value = observation
-
-        action_executor = Mock()
-        action_executor.execute_action.return_value = Mock(
-            cycle_id=0, success=True, reason="executed", metadata={}
-        )
-
-        verification_provider = Mock()
-        verification_provider.verify.return_value = VerificationOutcome.SUCCESS
-
-        combat_resolver = Mock()
-        combat_resolver.resolve_combat.return_value = Mock(
-            cycle_id=0, won=True, hp_ratio=0.7, metadata={}
-        )
-
-        rest_provider = Mock()
-        rest_provider.apply_rest.return_value = Mock(
-            cycle_id=0, hp_ratio=0.95, recovered=True, metadata={}
-        )
-
-        telemetry_sink = Mock()
-
-        orchestrator = CycleOrchestrator(
-            scheduler=scheduler,
-            decision_engine=decision_engine,
-            fsm=fsm,
-            recovery=recovery,
-            clock=clock,
-            observation_provider=observation_provider,
-            action_executor=action_executor,
-            verification_provider=verification_provider,
-            combat_resolver=combat_resolver,
-            rest_provider=rest_provider,
-            telemetry_sink=telemetry_sink,
-            cycle_config=CycleConfig(
-                cycle_length_s=60.0,
-                prepare_window_s=10.0,
-                ready_window_s=10.0,
-                recover_timeout_s=30.0,
+    def test_positive_drift_when_event_is_late(self) -> None:
+        observation = _observation(observed_at_ts=161.5, actual_spawn_ts=161.5)
+        ports = ScenarioPorts(
+            observation_window=ObservationWindow(
+                cycle_id=1,
+                observation=observation,
+                actual_spawn_ts=161.5,
+                window_closed_ts=165.01,
             ),
-        )
-
-        # Act
-        results = orchestrator.run_cycles(1)
-
-        # Assert
-        assert results[0].drift_s == pytest.approx(1.5, abs=0.01)
-
-    def test_negative_drift_when_event_is_early(self):
-        """Event observed before predicted spawn time = negative drift."""
-        # Arrange
-        scheduler = _make_scheduler()
-        fsm = _make_fsm_with_transitions()
-        fsm.current_state = BotState.WAIT_NEXT_CYCLE
-
-        decision_engine = _make_decision_engine()
-        recovery = _make_recovery()
-        clock = _make_clock()
-
-        observation = Observation(
-            cycle_id=0,
-            observed_at_ts=113.8,  # 1.2s early
-            signal_detected=True,
-            actual_spawn_ts=113.8,
-        )
-
-        observation_provider = Mock()
-        observation_provider.get_latest_observation.return_value = observation
-
-        action_executor = Mock()
-        action_executor.execute_action.return_value = Mock(
-            cycle_id=0, success=True, reason="executed", metadata={}
-        )
-
-        verification_provider = Mock()
-        verification_provider.verify.return_value = VerificationOutcome.SUCCESS
-
-        combat_resolver = Mock()
-        combat_resolver.resolve_combat.return_value = Mock(
-            cycle_id=0, won=True, hp_ratio=0.7, metadata={}
-        )
-
-        rest_provider = Mock()
-        rest_provider.apply_rest.return_value = Mock(
-            cycle_id=0, hp_ratio=0.95, recovered=True, metadata={}
-        )
-
-        telemetry_sink = Mock()
-
-        orchestrator = CycleOrchestrator(
-            scheduler=scheduler,
-            decision_engine=decision_engine,
-            fsm=fsm,
-            recovery=recovery,
-            clock=clock,
-            observation_provider=observation_provider,
-            action_executor=action_executor,
-            verification_provider=verification_provider,
-            combat_resolver=combat_resolver,
-            rest_provider=rest_provider,
-            telemetry_sink=telemetry_sink,
-            cycle_config=CycleConfig(
-                cycle_length_s=60.0,
-                prepare_window_s=10.0,
-                ready_window_s=10.0,
-                recover_timeout_s=30.0,
+            action_result=ActionResult(cycle_id=1, success=True, executed_at_ts=161.52),
+            verification_result=VerificationResult(
+                cycle_id=1,
+                outcome=VerificationOutcome.SUCCESS,
+                started_at_ts=161.53,
+                completed_at_ts=161.63,
             ),
+            combat_timeline=CombatTimeline(
+                cycle_id=1,
+                snapshots=[_combat_snapshot(event_ts=162.0, hp_ratio=0.95, in_combat=False)],
+            ),
+            rest_timeline=RestTimeline(cycle_id=1, snapshots=[]),
         )
+        orchestrator, _ = _build_orchestrator(ports)
 
-        # Act
-        results = orchestrator.run_cycles(1)
+        results = orchestrator.run_cycles(1, initial_cycle_id=1)
 
-        # Assert
-        assert results[0].drift_s == pytest.approx(-1.2, abs=0.01)
+        assert results[0].drift_s == pytest.approx(1.5)
+
+    def test_negative_drift_when_event_is_early(self) -> None:
+        observation = _observation(observed_at_ts=158.8, actual_spawn_ts=158.8)
+        ports = ScenarioPorts(
+            observation_window=ObservationWindow(
+                cycle_id=1,
+                observation=observation,
+                actual_spawn_ts=158.8,
+                window_closed_ts=165.01,
+            ),
+            action_result=ActionResult(cycle_id=1, success=True, executed_at_ts=158.82),
+            verification_result=VerificationResult(
+                cycle_id=1,
+                outcome=VerificationOutcome.SUCCESS,
+                started_at_ts=158.83,
+                completed_at_ts=158.93,
+            ),
+            combat_timeline=CombatTimeline(
+                cycle_id=1,
+                snapshots=[_combat_snapshot(event_ts=159.3, hp_ratio=0.95, in_combat=False)],
+            ),
+            rest_timeline=RestTimeline(cycle_id=1, snapshots=[]),
+        )
+        orchestrator, _ = _build_orchestrator(ports)
+
+        results = orchestrator.run_cycles(1, initial_cycle_id=1)
+
+        assert results[0].drift_s == pytest.approx(-1.2)

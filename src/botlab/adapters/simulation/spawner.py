@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal, Mapping
 
 from botlab.types import CyclePrediction, Observation
@@ -10,31 +10,70 @@ VerifyOutcome = Literal["success", "failure", "timeout"]
 
 
 @dataclass(slots=True, frozen=True)
+class SimulatedGroupState:
+    group_id: str
+    position_xy: tuple[float, float]
+    alive_count: int = 3
+    engaged_by_other: bool = False
+    reachable: bool = True
+    threat_score: float = 0.0
+    metadata: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(slots=True, frozen=True)
 class CycleScenario:
     """
     Plan jednego cyklu w symulacji.
 
     Pola:
     - has_event:
-        Czy w ogóle istnieje realne zdarzenie w tym cyklu.
+        Czy w ogole istnieje realne zdarzenie w tym cyklu.
     - drift_s:
-        Przesunięcie rzeczywistego spawnu względem predicted_spawn_ts.
+        Przesuniecie rzeczywistego spawnu wzgledem predicted_spawn_ts.
     - verify_result:
-        Wynik etapu VERIFY, jeśli zdarzenie zostało zauważone i wykonano ATTEMPT.
+        Wynik etapu VERIFY, jesli zdarzenie zostalo zauwazone i wykonano ATTEMPT.
     - combat_turns:
         Liczba tur walki po udanym VERIFY.
     - combat_turn_duration_s:
-        Czas jednej tury walki. Jeśli None, użyta zostanie wartość domyślna battle engine.
+        Czas jednej tury walki. Jesli None, uzyta zostanie wartosc domyslna battle engine.
     - combat_final_hp_ratio:
-        HP po zakończeniu walki. Decyduje, czy system przejdzie do REST.
+        HP po zakonczeniu walki. Decyduje, czy system przejdzie do REST.
     - combat_strategy:
         Nazwa strategii wpisywana do CombatSnapshot.
+    - combat_profile_name:
+        Nazwa profilu walki mapowanego na named combat plan.
+    - combat_plan_name:
+        Nazwa gotowego planu walki do rozwiazania przez katalog planow.
+    - combat_plan_rounds:
+        Jawny plan "per runda", np. (("1", "space"), ("2",)).
+    - combat_inputs:
+        Jawna sekwencja wejsc walki, fallback gdy nie wybrano combat_plan_name.
     - force_battle_error:
-        Wymusza wyjątek w warstwie battle.
+        Wymusza wyjatek w warstwie battle.
     - force_rest_error:
-        Wymusza wyjątek w warstwie rest.
+        Wymusza wyjatek w warstwie rest.
+    - spawn_zone_visible:
+        Czy bot jest ustawiony tak, ze widzi strefe spawnu.
+    - bot_position_xy:
+        Pozycja bota uzywana do obliczen dystansu widocznych grupek.
+    - approach_revalidation_delay_s:
+        Offset czasowy snapshotu rewalidacji celu podczas dojscia.
+    - approach_bot_position_xy:
+        Opcjonalna pozycja bota dla snapshotu w fazie dojscia.
+    - interaction_revalidation_delay_s:
+        Offset czasowy snapshotu koncowej walidacji celu przed interakcja.
+    - interaction_bot_position_xy:
+        Opcjonalna pozycja bota dla snapshotu tuz przed interakcja.
+    - current_target_id:
+        Target ustawiony na starcie cyklu, jesli juz istnial.
+    - approach_groups:
+        Opcjonalny widok grupek do rewalidacji celu podczas dojscia.
+    - interaction_groups:
+        Opcjonalny widok grupek do koncowej walidacji celu przed interakcja.
+    - groups:
+        Widok grup PvE dla modelu swiata.
     - note:
-        Dodatkowy opis pomocniczy do testów i telemetry.
+        Dodatkowy opis pomocniczy do testow i telemetry.
     """
 
     has_event: bool = True
@@ -44,25 +83,39 @@ class CycleScenario:
     combat_turn_duration_s: float | None = None
     combat_final_hp_ratio: float = 0.80
     combat_strategy: str = "default"
+    combat_profile_name: str | None = None
+    combat_plan_name: str | None = None
+    combat_plan_rounds: tuple[tuple[str, ...], ...] | None = None
+    combat_inputs: tuple[str, ...] = ("1", "space")
     force_battle_error: bool = False
     force_rest_error: bool = False
+    spawn_zone_visible: bool = True
+    bot_position_xy: tuple[float, float] = (0.0, 0.0)
+    approach_revalidation_delay_s: float = 0.250
+    approach_bot_position_xy: tuple[float, float] | None = None
+    interaction_revalidation_delay_s: float = 0.450
+    interaction_bot_position_xy: tuple[float, float] | None = None
+    current_target_id: str | None = None
+    approach_groups: tuple[SimulatedGroupState, ...] | None = None
+    interaction_groups: tuple[SimulatedGroupState, ...] | None = None
+    groups: tuple[SimulatedGroupState, ...] = field(default_factory=tuple)
     note: str = ""
 
 
 @dataclass(slots=True, frozen=True)
 class SpawnEvent:
     """
-    Zmaterializowany wynik planu cyklu względem konkretnej predykcji.
+    Zmaterializowany wynik planu cyklu wzgledem konkretnej predykcji.
 
     Pola:
     - actual_spawn_ts:
-        Rzeczywisty moment pojawienia się zdarzenia, jeśli istnieje.
+        Rzeczywisty moment pojawienia sie zdarzenia, jesli istnieje.
     - observable_in_ready_window:
-        Czy zdarzenie mieści się w ready window i może zostać zauważone przez system.
+        Czy zdarzenie miesci sie w ready window i moze zostac zauwazone przez system.
     - observation:
-        Obserwacja dostarczona do FSM, jeśli zdarzenie było zauważalne.
+        Obserwacja dostarczona do FSM, jesli zdarzenie bylo zauwazalne.
     - verify_result:
-        Wynik VERIFY dla zauważalnego zdarzenia.
+        Wynik VERIFY dla zauwazalnego zdarzenia.
     """
 
     cycle_id: int
@@ -76,13 +129,13 @@ class SpawnEvent:
 
 class SimulatedSpawner:
     """
-    Minimalny generator planów cykli dla symulacji.
+    Minimalny generator planow cykli dla symulacji.
 
     Zasady:
-    - jeśli has_event=False, w cyklu nie ma realnego spawnu,
-    - jeśli actual_spawn_ts wypada poza ready window, FSM nie dostaje obserwacji,
-    - jeśli actual_spawn_ts mieści się w ready window, runner dostaje Observation
-      i może przejść do ATTEMPT / VERIFY.
+    - jesli has_event=False, w cyklu nie ma realnego spawnu,
+    - jesli actual_spawn_ts wypada poza ready window, FSM nie dostaje obserwacji,
+    - jesli actual_spawn_ts miesci sie w ready window, runner dostaje Observation
+      i moze przejsc do ATTEMPT / VERIFY.
     """
 
     def __init__(
@@ -114,7 +167,7 @@ class SimulatedSpawner:
             )
 
         actual_spawn_ts = prediction.predicted_spawn_ts + scenario.drift_s
-        observable_in_ready_window = (
+        observable_in_ready_window = scenario.spawn_zone_visible and (
             prediction.ready_window_start_ts <= actual_spawn_ts <= prediction.ready_window_end_ts
         )
 
