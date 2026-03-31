@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+from pathlib import Path
 from typing import Sequence
 
 from botlab.adapters.simulation.combat_profiles import SimulatedCombatProfileCatalog
@@ -93,6 +95,17 @@ def build_argument_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Wypisuje dostepne profile walki i konczy dzialanie.",
     )
+    parser.add_argument(
+        "--export-report-json",
+        type=str,
+        default=None,
+        help="Opcjonalna sciezka do zapisu raportu skutecznosci w JSON.",
+    )
+    parser.add_argument(
+        "--show-cycle-trace",
+        action="store_true",
+        help="Wypisuje czytelny trace decyzji cyklu: targetowanie, retarget, combat i rest.",
+    )
 
     return parser
 
@@ -138,7 +151,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         combat_profile_name=_resolve_combat_profile_name(settings, args.combat_profile),
         enable_console=args.console_log,
     )
-    _print_report(settings=settings, report=report, replay=replay)
+    _export_report_json(report=report, export_path=args.export_report_json)
+    _print_report(
+        settings=settings,
+        report=report,
+        replay=replay,
+        show_cycle_trace=_should_show_cycle_trace(
+            replay=replay,
+            show_cycle_trace=args.show_cycle_trace,
+        ),
+    )
 
     return 0
 
@@ -298,11 +320,25 @@ def _print_combat_profiles() -> None:
         print(profile_name)
 
 
+def _export_report_json(*, report: SimulationReport, export_path: str | None) -> None:
+    if export_path is None:
+        return
+
+    path = Path(export_path).expanduser().resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = report.to_export_dict()
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+
 def _print_report(
     *,
     settings: Settings,
     report: SimulationReport,
     replay: ScenarioReplay | None,
+    show_cycle_trace: bool = False,
 ) -> None:
     print(f"app.name={settings.app.name}")
     print(f"app.mode={settings.app.mode}")
@@ -381,6 +417,27 @@ def _print_report(
             f"rest_cycles={summary.rest_cycles} "
             f"avg_final_hp_ratio={avg_hp_repr}"
         )
+
+    if show_cycle_trace:
+        for line in report.decision_trace_lines():
+            print(line)
+
+
+def _should_show_cycle_trace(
+    *,
+    replay: ScenarioReplay | None,
+    show_cycle_trace: bool,
+) -> bool:
+    if show_cycle_trace:
+        return True
+    if replay is None:
+        return False
+    return replay.name in {
+        "demo_farming_cycle",
+        "demo_farming_showcase",
+        "demo_observation_miss",
+        "demo_observation_reposition",
+    }
 
 
 if __name__ == "__main__":

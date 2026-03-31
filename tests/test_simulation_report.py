@@ -104,3 +104,30 @@ def test_simulation_report_builds_combat_profile_summaries() -> None:
     assert summaries[0].execution_error_cycles == 1
     assert summaries[0].rest_cycles == 1
     assert summaries[0].avg_final_hp_ratio == 0.5
+
+
+def test_simulation_report_can_be_exported_to_dict() -> None:
+    report = SimulationReport(
+        cycle_results=[],
+        log_path=Path("logs/botlab.log"),
+        sqlite_path=Path("data/telemetry/botlab.sqlite3"),
+        cycle_records=[
+            {
+                "cycle_id": 1,
+                "result": "success",
+                "metadata": {
+                    "combat_plan_name": "basic_1_space",
+                    "combat_profile_name": "basic_farmer",
+                    "combat_final_hp_ratio": 0.7,
+                    "combat_finished_with_rest": False,
+                },
+            }
+        ],
+    )
+
+    payload = report.to_export_dict()
+
+    assert payload["total_cycles"] == 0
+    assert payload["results"]["success"] == 0
+    assert payload["combat_plan_summaries"][0]["key"] == "basic_1_space"
+    assert payload["combat_profile_summaries"][0]["key"] == "basic_farmer"

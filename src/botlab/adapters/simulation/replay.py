@@ -304,8 +304,260 @@ def _build_preset_catalog() -> dict[str, ScenarioReplay]:
         },
     )
 
+    demo_farming = ScenarioReplay(
+        name="demo_farming_cycle",
+        description=(
+            "Kanoniczny demo farming loop: odrzucenie niedostepnych grupek, "
+            "retarget podczas dojscia, combat, rest i kolejny cykl."
+        ),
+        total_cycles=2,
+        overrides={
+            1: CycleScenario(
+                has_event=True,
+                spawn_zone_visible=True,
+                bot_position_xy=(0.0, 0.0),
+                groups=(
+                    SimulatedGroupState(
+                        group_id="taken-near",
+                        position_xy=(1.0, 0.0),
+                        engaged_by_other=True,
+                    ),
+                    SimulatedGroupState(
+                        group_id="blocked-mid",
+                        position_xy=(2.0, 0.0),
+                        reachable=False,
+                    ),
+                    SimulatedGroupState(
+                        group_id="front-free",
+                        position_xy=(2.5, 0.0),
+                    ),
+                    SimulatedGroupState(
+                        group_id="fallback-safe",
+                        position_xy=(4.0, 0.0),
+                    ),
+                ),
+                approach_revalidation_delay_s=0.300,
+                approach_bot_position_xy=(1.0, 0.0),
+                approach_groups=(
+                    SimulatedGroupState(
+                        group_id="taken-near",
+                        position_xy=(1.0, 0.0),
+                        engaged_by_other=True,
+                    ),
+                    SimulatedGroupState(
+                        group_id="blocked-mid",
+                        position_xy=(2.0, 0.0),
+                        reachable=False,
+                    ),
+                    SimulatedGroupState(
+                        group_id="front-free",
+                        position_xy=(2.5, 0.0),
+                        engaged_by_other=True,
+                    ),
+                    SimulatedGroupState(
+                        group_id="fallback-safe",
+                        position_xy=(3.5, 0.0),
+                    ),
+                ),
+                verify_result="success",
+                combat_turns=3,
+                combat_final_hp_ratio=0.40,
+                note="demo-cycle-1-retarget-rest",
+            ),
+            2: CycleScenario(
+                has_event=True,
+                spawn_zone_visible=True,
+                bot_position_xy=(0.0, 0.0),
+                groups=(
+                    SimulatedGroupState(
+                        group_id="taken-left",
+                        position_xy=(1.5, 0.0),
+                        engaged_by_other=True,
+                    ),
+                    SimulatedGroupState(
+                        group_id="clean-near",
+                        position_xy=(2.0, 0.0),
+                    ),
+                    SimulatedGroupState(
+                        group_id="clean-far",
+                        position_xy=(5.0, 0.0),
+                    ),
+                ),
+                verify_result="success",
+                combat_turns=2,
+                combat_final_hp_ratio=0.92,
+                note="demo-cycle-2-clean-success",
+            ),
+        },
+    )
+
+    demo_showcase = ScenarioReplay(
+        name="demo_farming_showcase",
+        description=(
+            "Pokazowy replay farmienia z czytelnym rytmem cyklu 45s: "
+            "wybor targetu, retarget, combat, rest i kolejny clean cycle."
+        ),
+        total_cycles=2,
+        initial_anchor_spawn_ts=100.0,
+        initial_anchor_cycle_id=0,
+        overrides={
+            1: CycleScenario(
+                has_event=True,
+                drift_s=0.150,
+                spawn_zone_visible=True,
+                observation_start_position_xy=(-6.0, 0.0),
+                bot_position_xy=(0.0, 0.0),
+                groups=(
+                    SimulatedGroupState(
+                        group_id="taken-near",
+                        position_xy=(1.0, 0.0),
+                        engaged_by_other=True,
+                    ),
+                    SimulatedGroupState(
+                        group_id="blocked-mid",
+                        position_xy=(2.0, 0.0),
+                        reachable=False,
+                    ),
+                    SimulatedGroupState(
+                        group_id="front-free",
+                        position_xy=(2.5, 0.0),
+                    ),
+                    SimulatedGroupState(
+                        group_id="fallback-safe",
+                        position_xy=(4.5, 0.0),
+                    ),
+                ),
+                approach_revalidation_delay_s=0.450,
+                approach_bot_position_xy=(1.25, 0.0),
+                approach_groups=(
+                    SimulatedGroupState(
+                        group_id="taken-near",
+                        position_xy=(1.0, 0.0),
+                        engaged_by_other=True,
+                    ),
+                    SimulatedGroupState(
+                        group_id="blocked-mid",
+                        position_xy=(2.0, 0.0),
+                        reachable=False,
+                    ),
+                    SimulatedGroupState(
+                        group_id="front-free",
+                        position_xy=(2.5, 0.0),
+                        engaged_by_other=True,
+                    ),
+                    SimulatedGroupState(
+                        group_id="fallback-safe",
+                        position_xy=(3.8, 0.0),
+                    ),
+                ),
+                verify_result="success",
+                combat_turns=3,
+                combat_final_hp_ratio=0.38,
+                note="showcase-cycle-1-retarget-rest",
+            ),
+            2: CycleScenario(
+                has_event=True,
+                drift_s=-0.100,
+                spawn_zone_visible=True,
+                observation_start_position_xy=(-3.0, 1.0),
+                bot_position_xy=(0.0, 0.0),
+                groups=(
+                    SimulatedGroupState(
+                        group_id="taken-left",
+                        position_xy=(1.5, 0.0),
+                        engaged_by_other=True,
+                    ),
+                    SimulatedGroupState(
+                        group_id="clean-near",
+                        position_xy=(2.2, 0.0),
+                    ),
+                    SimulatedGroupState(
+                        group_id="clean-far",
+                        position_xy=(5.5, 0.0),
+                    ),
+                ),
+                verify_result="success",
+                combat_turns=2,
+                combat_final_hp_ratio=0.91,
+                note="showcase-cycle-2-clean-success",
+            ),
+        },
+    )
+
+    demo_observation_miss = ScenarioReplay(
+        name="demo_observation_miss",
+        description=(
+            "Demo utraty cyklu przed targetowaniem: bot nie zdaza dojsc "
+            "do pozycji obserwacyjnej przed ready window."
+        ),
+        total_cycles=1,
+        overrides={
+            1: CycleScenario(
+                has_event=True,
+                spawn_zone_visible=True,
+                observation_start_position_xy=(-40.0, 0.0),
+                bot_position_xy=(0.0, 0.0),
+                groups=(
+                    SimulatedGroupState(
+                        group_id="would-be-target",
+                        position_xy=(2.0, 0.0),
+                    ),
+                ),
+                note="demo-observation-miss",
+            ),
+        },
+    )
+
+    demo_observation_reposition = ScenarioReplay(
+        name="demo_observation_reposition",
+        description=(
+            "Demo recovery po spoznionej obserwacji: pierwszy cykl przepada, "
+            "ale nastepny reuse'uje pozycje obserwacyjna i wraca do farmienia."
+        ),
+        total_cycles=2,
+        overrides={
+            1: CycleScenario(
+                has_event=True,
+                spawn_zone_visible=True,
+                observation_start_position_xy=(-40.0, 0.0),
+                bot_position_xy=(0.0, 0.0),
+                groups=(
+                    SimulatedGroupState(
+                        group_id="late-target",
+                        position_xy=(2.0, 0.0),
+                    ),
+                ),
+                note="reposition-cycle-missed",
+            ),
+            2: CycleScenario(
+                has_event=True,
+                spawn_zone_visible=True,
+                bot_position_xy=(0.0, 0.0),
+                groups=(
+                    SimulatedGroupState(
+                        group_id="clean-near",
+                        position_xy=(2.0, 0.0),
+                    ),
+                    SimulatedGroupState(
+                        group_id="busy-side",
+                        position_xy=(1.0, 1.0),
+                        engaged_by_other=True,
+                    ),
+                ),
+                verify_result="success",
+                combat_turns=2,
+                combat_final_hp_ratio=0.93,
+                note="reposition-cycle-recovered",
+            ),
+        },
+    )
+
     return {
         baseline.name: baseline,
+        demo_farming.name: demo_farming,
+        demo_observation_miss.name: demo_observation_miss,
+        demo_observation_reposition.name: demo_observation_reposition,
+        demo_showcase.name: demo_showcase,
         retarget.name: retarget,
     }
 
@@ -329,6 +581,11 @@ def _parse_cycle_scenario(raw_scenario: object) -> CycleScenario:
         force_battle_error=_optional_bool(raw_scenario, "force_battle_error", False),
         force_rest_error=_optional_bool(raw_scenario, "force_rest_error", False),
         spawn_zone_visible=_optional_bool(raw_scenario, "spawn_zone_visible", True),
+        observation_start_position_xy=_optional_nullable_point(
+            raw_scenario,
+            "observation_start_position_xy",
+            None,
+        ),
         bot_position_xy=_optional_point(raw_scenario, "bot_position_xy", (0.0, 0.0)),
         approach_revalidation_delay_s=_optional_float(
             raw_scenario,

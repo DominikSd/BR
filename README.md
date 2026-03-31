@@ -84,10 +84,53 @@ Replay z wbudowanego presetu:
 python -m botlab.main --config config/default.yaml --scenario-preset baseline_mixed_cycle
 ```
 
+Kanoniczne demo farming loop:
+
+```bash
+python -m botlab.main --config config/default.yaml --scenario-preset demo_farming_cycle
+```
+
+Ten preset wypisuje czytelny trace decyzji cyklu:
+- ktory target zostal wybrany,
+- ktore grupki odrzucono i dlaczego,
+- kiedy nastapil retarget,
+- kiedy zaczela sie walka,
+- czy byl rest,
+- jaki byl koncowy wynik cyklu.
+
+Bardziej pokazowy wariant z czytelnymi timestampami faz:
+
+```bash
+python -m botlab.main --config config/default.yaml --scenario-preset demo_farming_showcase
+```
+
+Showcase wypisuje dodatkowo:
+- przejscie do pozycji obserwacyjnej (`phase=staging`),
+- oczekiwanie na spawn w punkcie obserwacji (`phase=wait`),
+- dalej standardowy flow targetowania, retargetu, combat i rest.
+
+Demo utraty cyklu przed targetowaniem:
+
+```bash
+python -m botlab.main --config config/default.yaml --scenario-preset demo_observation_miss
+```
+
+Demo recovery po takim spoznieniu w kolejnym cyklu:
+
+```bash
+python -m botlab.main --config config/default.yaml --scenario-preset demo_observation_reposition
+```
+
 Lista dostepnych presetow:
 
 ```bash
 python -m botlab.main --list-scenario-presets
+```
+
+Wymuszenie trace decyzji dla dowolnego runa:
+
+```bash
+python -m botlab.main --config config/default.yaml --scenario-preset retarget_path --show-cycle-trace
 ```
 
 Lista dostepnych planow walki:
@@ -115,6 +158,12 @@ python -m botlab.main --config config/default.yaml --cycles 5 --combat-profile f
 ```
 
 Na koncu przebiegu CLI wypisuje tez agregaty telemetry per `combat_plan_name` i `combat_profile_name`, z liczba sukcesow, restow i srednim koncowym HP.
+
+Opcjonalny eksport raportu do JSON:
+
+```bash
+python -m botlab.main --config config/default.yaml --cycles 5 --export-report-json data/reports/latest.json
+```
 
 Replay z pliku YAML:
 

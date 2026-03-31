@@ -16,28 +16,83 @@ if TYPE_CHECKING:
 
 
 class SimulatedObservationPreparationProvider:
-    """Zwraca prosty wynik ustawienia bota do obserwacji strefy spawnu."""
+    """Returns a simple result for moving into spawn observation position."""
 
-    def __init__(self, runtime: SimulatedCycleRuntime) -> None:
+    def __init__(
+        self,
+        runtime: SimulatedCycleRuntime,
+        *,
+        movement_speed_units_per_s: float = 4.0,
+    ) -> None:
+        if movement_speed_units_per_s <= 0.0:
+            raise ValueError("movement_speed_units_per_s musi byc wieksze od 0.")
         self._runtime = runtime
+        self._movement_speed_units_per_s = movement_speed_units_per_s
 
     def prepare_observation(self, cycle_id: int) -> ObservationPreparationResult:
         context = self._runtime.context_for_cycle(cycle_id)
         scenario = context.spawn_event.scenario
+        previous_preparation = self._runtime.observation_preparation_for_cycle(cycle_id - 1)
+        if scenario.observation_start_position_xy is not None:
+            starting_position_xy = scenario.observation_start_position_xy
+            start_position_source = "scenario_override"
+        elif (
+            previous_preparation is not None
+            and previous_preparation.ready_for_observation is False
+            and previous_preparation.metadata.get("ready_reason")
+            == "arrived_after_ready_window_start"
+        ):
+            starting_position_xy = previous_preparation.observation_position_xy
+            start_position_source = "carryover_from_previous_missed_cycle"
+        else:
+            starting_position_xy = scenario.bot_position_xy
+            start_position_source = "scenario_current_position"
+
+        starting_position = Position(*starting_position_xy)
+        observation_position = Position(*scenario.bot_position_xy)
+        travel_distance = starting_position.distance_to(observation_position)
+        travel_s = travel_distance / self._movement_speed_units_per_s
+        arrived_at_ts = context.trace.prepare_ts + travel_s
+        ready_for_observation = (
+            scenario.spawn_zone_visible
+            and arrived_at_ts <= context.prediction.ready_window_start_ts
+        )
+        wait_for_spawn_s = max(0.0, context.prediction.predicted_spawn_ts - arrived_at_ts)
+
+        if not scenario.spawn_zone_visible:
+            ready_reason = "spawn_zone_hidden"
+        elif ready_for_observation:
+            ready_reason = "ready_in_observation_position"
+        else:
+            ready_reason = "arrived_after_ready_window_start"
+
         return ObservationPreparationResult(
             cycle_id=cycle_id,
             spawn_zone_visible=scenario.spawn_zone_visible,
-            ready_for_observation=scenario.spawn_zone_visible,
+            ready_for_observation=ready_for_observation,
+            starting_position_xy=starting_position_xy,
+            observation_position_xy=scenario.bot_position_xy,
+            travel_s=travel_s,
+            arrived_at_ts=arrived_at_ts,
+            wait_for_spawn_s=wait_for_spawn_s,
             note=scenario.note,
             metadata={
+                "ready_reason": ready_reason,
+                "start_position_source": start_position_source,
+                "reposition_required": travel_distance > 0.0,
                 "bot_position_xy": scenario.bot_position_xy,
+                "observation_start_position_xy": starting_position_xy,
                 "configured_group_count": len(scenario.groups),
+                "travel_distance": travel_distance,
+                "movement_speed_units_per_s": self._movement_speed_units_per_s,
+                "prepare_started_ts": context.trace.prepare_ts,
+                "ready_window_start_ts": context.prediction.ready_window_start_ts,
             },
         )
 
 
 class SimulatedWorldStateProvider:
-    """Buduje domenowy WorldSnapshot z kontekstu cyklu symulacyjnego."""
+    """Builds a domain WorldSnapshot from simulation cycle context."""
 
     def __init__(self, runtime: SimulatedCycleRuntime) -> None:
         self._runtime = runtime
@@ -112,7 +167,6 @@ class SimulatedWorldStateProvider:
         metadata: dict[str, object],
     ) -> WorldSnapshot:
         bot_position = Position(*bot_position_xy)
-        visible_groups: tuple[GroupSnapshot, ...]
         if spawn_zone_visible:
             visible_groups = tuple(
                 self._build_group_snapshot(bot_position=bot_position, group=group)
@@ -133,7 +187,7 @@ class SimulatedWorldStateProvider:
 
 
 class SimulatedApproachWorldStateProvider(SimulatedWorldStateProvider):
-    """Buduje snapshot swiata dla rewalidacji celu podczas dojscia."""
+    """Builds a world snapshot for target revalidation during approach."""
 
     def get_approach_world_snapshot(self, cycle_id: int) -> WorldSnapshot:
         context = self._runtime.context_for_cycle(cycle_id)
@@ -169,7 +223,7 @@ class SimulatedApproachWorldStateProvider(SimulatedWorldStateProvider):
 
 
 class SimulatedInteractionWorldStateProvider(SimulatedWorldStateProvider):
-    """Buduje snapshot swiata do końcowej walidacji tuż przed interakcją."""
+    """Builds a world snapshot for final validation before interaction."""
 
     def get_interaction_world_snapshot(self, cycle_id: int) -> WorldSnapshot:
         context = self._runtime.context_for_cycle(cycle_id)
@@ -206,7 +260,7 @@ class SimulatedInteractionWorldStateProvider(SimulatedWorldStateProvider):
 
 
 class SimulatedTargetApproachProvider:
-    """Liczy prosty, deterministyczny czas dojścia do wybranego targetu."""
+    """Builds a deterministic step-by-step approach to the selected target."""
 
     def __init__(
         self,
@@ -214,15 +268,19 @@ class SimulatedTargetApproachProvider:
         *,
         movement_speed_units_per_s: float = 4.0,
         interaction_range: float = 0.5,
+        step_distance_units: float = 1.0,
     ) -> None:
         if movement_speed_units_per_s <= 0.0:
-            raise ValueError("movement_speed_units_per_s musi być większe od 0.")
+            raise ValueError("movement_speed_units_per_s musi byc wieksze od 0.")
         if interaction_range < 0.0:
-            raise ValueError("interaction_range nie może być ujemny.")
+            raise ValueError("interaction_range nie moze byc ujemny.")
+        if step_distance_units <= 0.0:
+            raise ValueError("step_distance_units musi byc wieksze od 0.")
 
         self._runtime = runtime
         self._movement_speed_units_per_s = movement_speed_units_per_s
         self._interaction_range = interaction_range
+        self._step_distance_units = step_distance_units
 
     def approach_target(self, target_resolution: TargetResolution) -> TargetApproachResult:
         world_snapshot = target_resolution.world_snapshot
@@ -261,6 +319,11 @@ class SimulatedTargetApproachProvider:
         travel_distance = max(0.0, group.distance - self._interaction_range)
         travel_s = travel_distance / self._movement_speed_units_per_s
         completed_at_ts = started_at_ts + travel_s
+        movement_steps = self._build_movement_steps(
+            started_at_ts=started_at_ts,
+            travel_distance=travel_distance,
+        )
+
         return TargetApproachResult(
             cycle_id=target_resolution.cycle_id,
             target_id=target_id,
@@ -277,12 +340,46 @@ class SimulatedTargetApproachProvider:
                 "interaction_range": self._interaction_range,
                 "target_distance": group.distance,
                 "travel_distance": travel_distance,
+                "step_distance_units": self._step_distance_units,
+                "movement_step_count": len(movement_steps),
+                "movement_steps": movement_steps,
             },
         )
 
+    def _build_movement_steps(
+        self,
+        *,
+        started_at_ts: float,
+        travel_distance: float,
+    ) -> list[dict[str, float | int]]:
+        if travel_distance <= 0.0:
+            return []
+
+        remaining_distance = travel_distance
+        accumulated_distance = 0.0
+        current_ts = started_at_ts
+        step_index = 0
+        steps: list[dict[str, float | int]] = []
+        while remaining_distance > 0.0:
+            step_index += 1
+            step_distance = min(self._step_distance_units, remaining_distance)
+            step_duration_s = step_distance / self._movement_speed_units_per_s
+            accumulated_distance += step_distance
+            current_ts += step_duration_s
+            remaining_distance = max(0.0, travel_distance - accumulated_distance)
+            steps.append(
+                {
+                    "step_index": step_index,
+                    "step_distance": round(step_distance, 6),
+                    "arrived_ts": round(current_ts, 6),
+                    "remaining_distance": round(remaining_distance, 6),
+                }
+            )
+        return steps
+
 
 class SimulatedTargetInteractionProvider:
-    """Zwraca prosty wynik gotowosci do interakcji z celem po dojściu."""
+    """Returns a simple readiness result after approach."""
 
     def prepare_interaction(
         self,

@@ -54,6 +54,8 @@ class CycleScenario:
         Wymusza wyjatek w warstwie rest.
     - spawn_zone_visible:
         Czy bot jest ustawiony tak, ze widzi strefe spawnu.
+    - observation_start_position_xy:
+        Opcjonalna pozycja startowa przed podejsciem do punktu obserwacyjnego.
     - bot_position_xy:
         Pozycja bota uzywana do obliczen dystansu widocznych grupek.
     - approach_revalidation_delay_s:
@@ -90,6 +92,7 @@ class CycleScenario:
     force_battle_error: bool = False
     force_rest_error: bool = False
     spawn_zone_visible: bool = True
+    observation_start_position_xy: tuple[float, float] | None = None
     bot_position_xy: tuple[float, float] = (0.0, 0.0)
     approach_revalidation_delay_s: float = 0.250
     approach_bot_position_xy: tuple[float, float] | None = None

@@ -103,7 +103,13 @@ class TargetApproachService:
                 initial_result,
                 initial_target_id=initial_target_id,
                 retargeted=False,
-                extra_metadata={"revalidation_reason": decision.reason},
+                extra_metadata={
+                    "revalidation_reason": decision.reason,
+                    **self._revalidation_step_metadata(
+                        initial_result=initial_result,
+                        revalidation_ts=approach_world_snapshot.observed_at_ts,
+                    ),
+                },
             )
 
         if final_target_id is None:
@@ -121,6 +127,10 @@ class TargetApproachService:
                     "revalidation_reason": decision.reason,
                     "validation_reason": (
                         None if decision.validation is None else decision.validation.reason
+                    ),
+                    **self._revalidation_step_metadata(
+                        initial_result=initial_result,
+                        revalidation_ts=approach_world_snapshot.observed_at_ts,
                     ),
                 },
             )
@@ -141,6 +151,10 @@ class TargetApproachService:
                 "revalidation_reason": decision.reason,
                 "validation_reason": (
                     None if decision.validation is None else decision.validation.reason
+                ),
+                **self._revalidation_step_metadata(
+                    initial_result=initial_result,
+                    revalidation_ts=approach_world_snapshot.observed_at_ts,
                 ),
             },
         )
@@ -168,6 +182,30 @@ class TargetApproachService:
             retargeted=retargeted,
             metadata=metadata,
         )
+
+    def _revalidation_step_metadata(
+        self,
+        *,
+        initial_result: TargetApproachResult,
+        revalidation_ts: float,
+    ) -> dict[str, object]:
+        raw_steps = initial_result.metadata.get("movement_steps", [])
+        if not isinstance(raw_steps, list) or not raw_steps:
+            return {}
+
+        for raw_step in raw_steps:
+            if not isinstance(raw_step, dict):
+                continue
+            arrived_ts = raw_step.get("arrived_ts")
+            step_index = raw_step.get("step_index")
+            if isinstance(arrived_ts, (int, float)) and isinstance(step_index, int):
+                if revalidation_ts <= float(arrived_ts):
+                    return {"revalidation_step_index": step_index}
+
+        last_step = raw_steps[-1]
+        if isinstance(last_step, dict) and isinstance(last_step.get("step_index"), int):
+            return {"revalidation_step_index": last_step["step_index"]}
+        return {}
 
 
 class TargetInteractionService:

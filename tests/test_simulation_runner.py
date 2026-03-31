@@ -465,13 +465,13 @@ def test_runner_reports_observation_preparation_and_nearest_free_target(tmp_path
     assert report.target_resolutions[0].selected_target_id == "free-near"
     assert report.target_resolutions[0].decision.reason == "selected_initial_target"
     assert report.target_resolutions[1].selected_target_id is None
-    assert report.target_resolutions[1].decision.reason == "no_target_available"
+    assert report.target_resolutions[1].decision.reason == "observation_not_ready"
     assert [item.cycle_id for item in report.approach_results] == [1, 2]
     assert report.approach_results[0].target_id == "free-near"
     assert report.approach_results[0].arrived is True
     assert report.approach_results[0].travel_s == 0.375
     assert report.approach_results[1].target_id is None
-    assert report.approach_results[1].reason == "no_target_selected"
+    assert report.approach_results[1].reason == "observation_not_ready"
     assert [item.cycle_id for item in report.interaction_results] == [1, 2]
     assert report.interaction_results[0].target_id == "free-near"
     assert report.interaction_results[0].ready is True
@@ -593,6 +593,53 @@ def test_runner_reports_no_target_available_when_visible_groups_are_not_targetab
     assert cycles[0]["metadata"]["retarget_count"] == 0
     assert cycles[0]["metadata"]["target_loss_count"] == 0
     assert cycles[0]["metadata"]["interaction_ready"] is False
+
+
+def test_runner_loses_cycle_before_targeting_when_observation_position_is_reached_too_late(
+    tmp_path: Path,
+) -> None:
+    settings = _build_settings(tmp_path)
+
+    spawner = SimulatedSpawner(
+        overrides={
+            1: CycleScenario(
+                has_event=True,
+                spawn_zone_visible=True,
+                observation_start_position_xy=(-40.0, 0.0),
+                bot_position_xy=(0.0, 0.0),
+                groups=(
+                    SimulatedGroupState(group_id="would-be-target", position_xy=(2.0, 0.0)),
+                ),
+                note="late-to-observation-position",
+            ),
+        }
+    )
+
+    runner = SimulationRunner.from_settings(
+        settings,
+        spawner=spawner,
+        initial_anchor_spawn_ts=100.0,
+        enable_console=False,
+    )
+
+    report = runner.run_cycles(1)
+
+    assert report.observation_preparations[0].ready_for_observation is False
+    assert report.observation_preparations[0].metadata["ready_reason"] == (
+        "arrived_after_ready_window_start"
+    )
+    assert report.target_resolutions[0].decision.reason == "observation_not_ready"
+    assert report.approach_results[0].reason == "observation_not_ready"
+    assert report.interaction_results[0].reason == "observation_not_ready"
+    assert report.cycle_results[0].result == "no_event"
+    assert report.cycle_results[0].observation_used is False
+
+    attempts = runner.storage.fetch_attempts()
+    assert attempts == []
+
+    cycles = runner.storage.fetch_cycles()
+    assert cycles[0]["result"] == "no_event"
+    assert cycles[0]["metadata"]["observation_ready_reason"] == "arrived_after_ready_window_start"
 
 
 def test_runner_retargets_immediately_when_target_becomes_unavailable_during_approach(

@@ -26,14 +26,17 @@ from botlab.application import (
     CombatTimeline,
     CycleOrchestrator,
     ObservationPreparationService,
+    ObservationPreparationResult,
     ObservationWindow,
     RestTimeline,
     SimulationReport,
     TargetAcquisitionService,
     TargetApproachService,
+    TargetApproachResult,
     TargetEngagementService,
     TargetResolution,
     TargetInteractionService,
+    TargetInteractionResult,
     VerificationOutcome,
     VerificationResult,
 )
@@ -50,6 +53,8 @@ from botlab.domain.decision_engine import DecisionEngine
 from botlab.domain.fsm import CycleFSM
 from botlab.domain.recovery import RecoveryManager
 from botlab.domain.scheduler import CycleScheduler
+from botlab.domain.targeting import RetargetDecision
+from botlab.domain.world import Position, WorldSnapshot
 from botlab.domain.targeting import RetargetPolicy, TargetSelectionPolicy, TargetValidationPolicy
 from botlab.types import BotState, Observation, TelemetryRecord
 
@@ -83,6 +88,7 @@ class SimulatedCycleRuntime:
         self._spawner = spawner
         self._world = world
         self._contexts: dict[int, SimulatedCycleContext] = {}
+        self._observation_preparations: dict[int, ObservationPreparationResult] = {}
         self._target_resolutions: dict[int, TargetResolution] = {}
         self._approach_results: dict[int, TargetApproachResult] = {}
         self._interaction_results: dict[int, TargetInteractionResult] = {}
@@ -125,6 +131,19 @@ class SimulatedCycleRuntime:
 
     def interaction_result_for_cycle(self, cycle_id: int) -> "TargetInteractionResult | None":
         return self._interaction_results.get(cycle_id)
+
+    def set_observation_preparation(
+        self,
+        cycle_id: int,
+        result: ObservationPreparationResult,
+    ) -> None:
+        self._observation_preparations[cycle_id] = result
+
+    def observation_preparation_for_cycle(
+        self,
+        cycle_id: int,
+    ) -> ObservationPreparationResult | None:
+        return self._observation_preparations.get(cycle_id)
 
 
 class SimulationRunner:
@@ -282,15 +301,29 @@ class SimulationRunner:
             observation_preparation = self._observation_preparation_service.prepare_observation(
                 cycle_id=cycle_id
             )
-            engagement = self._target_engagement_service.engage_target(
-                cycle_id=cycle_id,
-                current_target_id=self._runtime.context_for_cycle(
-                    cycle_id
-                ).spawn_event.scenario.current_target_id,
-            )
-            target_resolution = engagement.target_resolution
-            approach_result = engagement.approach_result
-            interaction_result = engagement.interaction_result
+            self._runtime.set_observation_preparation(cycle_id, observation_preparation)
+            if observation_preparation.ready_for_observation:
+                engagement = self._target_engagement_service.engage_target(
+                    cycle_id=cycle_id,
+                    current_target_id=self._runtime.context_for_cycle(
+                        cycle_id
+                    ).spawn_event.scenario.current_target_id,
+                )
+                target_resolution = engagement.target_resolution
+                approach_result = engagement.approach_result
+                interaction_result = engagement.interaction_result
+            else:
+                target_resolution = self._build_observation_not_ready_target_resolution(
+                    cycle_id=cycle_id
+                )
+                approach_result = self._build_observation_not_ready_approach_result(
+                    cycle_id=cycle_id,
+                    observation_preparation=observation_preparation,
+                )
+                interaction_result = self._build_observation_not_ready_interaction_result(
+                    cycle_id=cycle_id,
+                    observation_preparation=observation_preparation,
+                )
             self._runtime.set_target_resolution(cycle_id, target_resolution)
             self._runtime.set_approach_result(cycle_id, approach_result)
             self._runtime.set_interaction_result(cycle_id, interaction_result)
@@ -305,6 +338,12 @@ class SimulationRunner:
                 )
             )
 
+        cycle_records = [
+            record
+            for record in self._storage.fetch_cycles()
+            if int(record["cycle_id"]) in set(cycle_ids)
+        ]
+
         return SimulationReport(
             cycle_results=cycle_results,
             log_path=self._resolve_log_path(),
@@ -313,7 +352,87 @@ class SimulationRunner:
             target_resolutions=target_resolutions,
             approach_results=approach_results,
             interaction_results=interaction_results,
-            cycle_records=self._storage.fetch_cycles(),
+            cycle_records=cycle_records,
+        )
+
+    def _build_observation_not_ready_target_resolution(self, *, cycle_id: int) -> TargetResolution:
+        context = self._runtime.context_for_cycle(cycle_id)
+        scenario = context.spawn_event.scenario
+        preparation = self._runtime.observation_preparation_for_cycle(cycle_id)
+        empty_world = WorldSnapshot(
+            observed_at_ts=context.prediction.ready_window_start_ts,
+            bot_position=Position(*scenario.bot_position_xy),
+            groups=(),
+            in_combat=False,
+            current_target_id=scenario.current_target_id,
+            spawn_zone_visible=False,
+            metadata={
+                "cycle_id": cycle_id,
+                "scenario_note": scenario.note,
+                "phase": "observation_not_ready",
+                "observation_ready_reason": None
+                if preparation is None
+                else preparation.metadata.get("ready_reason"),
+            },
+        )
+        return TargetResolution(
+            cycle_id=cycle_id,
+            current_target_id=scenario.current_target_id,
+            selected_target_id=None,
+            world_snapshot=empty_world,
+            decision=RetargetDecision(
+                current_target_id=scenario.current_target_id,
+                selected_target=None,
+                validation=None,
+                changed=False,
+                reason="observation_not_ready",
+            ),
+        )
+
+    def _build_observation_not_ready_approach_result(
+        self,
+        *,
+        cycle_id: int,
+        observation_preparation: ObservationPreparationResult,
+    ) -> TargetApproachResult:
+        completed_at_ts = (
+            observation_preparation.arrived_at_ts
+            if observation_preparation.arrived_at_ts is not None
+            else 0.0
+        )
+        return TargetApproachResult(
+            cycle_id=cycle_id,
+            target_id=None,
+            started_at_ts=completed_at_ts,
+            completed_at_ts=completed_at_ts,
+            travel_s=0.0,
+            arrived=False,
+            reason="observation_not_ready",
+            metadata={
+                "ready_reason": observation_preparation.metadata.get("ready_reason"),
+            },
+        )
+
+    def _build_observation_not_ready_interaction_result(
+        self,
+        *,
+        cycle_id: int,
+        observation_preparation: ObservationPreparationResult,
+    ) -> TargetInteractionResult:
+        observed_at_ts = (
+            observation_preparation.arrived_at_ts
+            if observation_preparation.arrived_at_ts is not None
+            else 0.0
+        )
+        return TargetInteractionResult(
+            cycle_id=cycle_id,
+            target_id=None,
+            ready=False,
+            observed_at_ts=observed_at_ts,
+            reason="observation_not_ready",
+            metadata={
+                "ready_reason": observation_preparation.metadata.get("ready_reason"),
+            },
         )
 
     def _resolve_log_path(self) -> Path:
@@ -332,6 +451,21 @@ class SimulatedObservationProvider(ObservationProvider):
         context = self._runtime.context_for_cycle(cycle_id)
         spawn_event = context.spawn_event
         trace = context.trace
+        observation_preparation = self._runtime.observation_preparation_for_cycle(cycle_id)
+        if observation_preparation is not None and not observation_preparation.ready_for_observation:
+            return ObservationWindow(
+                cycle_id=cycle_id,
+                observation=None,
+                actual_spawn_ts=spawn_event.actual_spawn_ts,
+                window_closed_ts=trace.ready_window_close_ts,
+                note=spawn_event.scenario.note,
+                metadata={
+                    "observable_in_ready_window": False,
+                    "observation_ready_reason": observation_preparation.metadata.get(
+                        "ready_reason"
+                    ),
+                },
+            )
         return ObservationWindow(
             cycle_id=cycle_id,
             observation=spawn_event.observation,

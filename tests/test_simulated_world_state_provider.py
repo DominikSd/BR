@@ -101,6 +101,7 @@ def test_observation_preparation_provider_reports_spawn_zone_visibility() -> Non
         1,
         CycleScenario(
             spawn_zone_visible=False,
+            observation_start_position_xy=(0.0, 0.0),
             bot_position_xy=(3.0, 4.0),
             groups=(SimulatedGroupState(group_id="g-1", position_xy=(5.0, 5.0)),),
             note="need-reposition",
@@ -113,9 +114,52 @@ def test_observation_preparation_provider_reports_spawn_zone_visibility() -> Non
     assert result.cycle_id == 1
     assert result.spawn_zone_visible is False
     assert result.ready_for_observation is False
+    assert result.starting_position_xy == (0.0, 0.0)
+    assert result.observation_position_xy == (3.0, 4.0)
+    assert result.travel_s == 1.25
+    assert result.arrived_at_ts == 141.25
+    assert result.wait_for_spawn_s == 3.75
     assert result.note == "need-reposition"
     assert result.metadata["bot_position_xy"] == (3.0, 4.0)
+    assert result.metadata["observation_start_position_xy"] == (0.0, 0.0)
     assert result.metadata["configured_group_count"] == 1
+    assert result.metadata["reposition_required"] is True
+
+
+def test_observation_preparation_provider_reuses_previous_observation_position_after_missed_cycle(
+) -> None:
+    runtime = _runtime_for_scenario(
+        1,
+        CycleScenario(
+            spawn_zone_visible=True,
+            observation_start_position_xy=(-40.0, 0.0),
+            bot_position_xy=(0.0, 0.0),
+            note="missed-cycle",
+        ),
+    )
+    runtime.context_for_cycle(1)
+    provider = SimulatedObservationPreparationProvider(runtime)
+    first = provider.prepare_observation(1)
+    runtime.set_observation_preparation(1, first)
+
+    runtime = _runtime_for_scenario(
+        2,
+        CycleScenario(
+            spawn_zone_visible=True,
+            bot_position_xy=(0.0, 0.0),
+            note="recovered-cycle",
+        ),
+    )
+    runtime.set_observation_preparation(1, first)
+    runtime.context_for_cycle(2)
+    provider = SimulatedObservationPreparationProvider(runtime)
+
+    second = provider.prepare_observation(2)
+
+    assert second.starting_position_xy == (0.0, 0.0)
+    assert second.observation_position_xy == (0.0, 0.0)
+    assert second.travel_s == 0.0
+    assert second.metadata["start_position_source"] == "carryover_from_previous_missed_cycle"
 
 
 def test_target_approach_provider_computes_travel_time_for_selected_target() -> None:
@@ -152,6 +196,9 @@ def test_target_approach_provider_computes_travel_time_for_selected_target() -> 
     assert result.completed_at_ts == world_snapshot.observed_at_ts + 1.5
     assert result.initial_target_id == "g-1"
     assert result.metadata["travel_distance"] == 4.5
+    assert result.metadata["movement_step_count"] == 5
+    assert result.metadata["movement_steps"][0]["step_index"] == 1
+    assert result.metadata["movement_steps"][-1]["remaining_distance"] == 0.0
 
 
 def test_target_approach_provider_skips_when_no_target_selected() -> None:

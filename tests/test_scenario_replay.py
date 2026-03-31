@@ -34,6 +34,10 @@ def test_list_scenario_replay_presets_contains_builtin_replays() -> None:
     preset_names = {preset.name for preset in presets}
 
     assert "baseline_mixed_cycle" in preset_names
+    assert "demo_farming_cycle" in preset_names
+    assert "demo_observation_miss" in preset_names
+    assert "demo_observation_reposition" in preset_names
+    assert "demo_farming_showcase" in preset_names
     assert "retarget_path" in preset_names
 
 
@@ -154,3 +158,105 @@ def test_load_scenario_replay_with_combat_profile_name(tmp_path: Path) -> None:
 
     assert replay.name == "profile_replay"
     assert replay.overrides[1].combat_profile_name == "fast_farmer"
+
+
+def test_scenario_replay_runner_can_execute_demo_farming_cycle_preset(tmp_path: Path) -> None:
+    settings = _build_settings(tmp_path)
+    replay_runner = ScenarioReplayRunner.from_preset(
+        settings,
+        preset_name="demo_farming_cycle",
+        enable_console=False,
+    )
+
+    report = replay_runner.run()
+
+    assert report.total_cycles == 2
+    assert report.count_result("success") == 2
+
+    assert report.target_resolutions[0].selected_target_id == "front-free"
+    assert report.approach_results[0].initial_target_id == "front-free"
+    assert report.approach_results[0].target_id == "fallback-safe"
+    assert report.approach_results[0].retargeted is True
+    assert report.interaction_results[0].target_id == "fallback-safe"
+    assert report.interaction_results[0].ready is True
+
+    assert report.target_resolutions[1].selected_target_id == "clean-near"
+    assert report.approach_results[1].target_id == "clean-near"
+    assert report.approach_results[1].retargeted is False
+    assert report.interaction_results[1].target_id == "clean-near"
+    assert report.interaction_results[1].ready is True
+
+    cycle_records = {record["cycle_id"]: record for record in report.cycle_records}
+    assert cycle_records[1]["metadata"]["combat_finished_with_rest"] is True
+    assert cycle_records[2]["metadata"]["combat_finished_with_rest"] is False
+
+
+def test_scenario_replay_runner_can_execute_demo_farming_showcase_preset(
+    tmp_path: Path,
+) -> None:
+    settings = _build_settings(tmp_path)
+    replay_runner = ScenarioReplayRunner.from_preset(
+        settings,
+        preset_name="demo_farming_showcase",
+        enable_console=False,
+    )
+
+    report = replay_runner.run()
+
+    assert report.total_cycles == 2
+    assert report.count_result("success") == 2
+    assert report.cycle_results[0].predicted_spawn_ts == 145.0
+    assert report.cycle_results[0].actual_spawn_ts == 145.15
+    assert report.observation_preparations[0].starting_position_xy == (-6.0, 0.0)
+    assert report.observation_preparations[0].observation_position_xy == (0.0, 0.0)
+    assert report.observation_preparations[0].travel_s == 1.5
+    assert report.observation_preparations[0].wait_for_spawn_s == 3.5
+    assert report.approach_results[0].retargeted is True
+    assert report.cycle_results[1].predicted_spawn_ts == 190.3
+    assert round(report.cycle_results[1].actual_spawn_ts or 0.0, 3) == 190.2
+
+
+def test_scenario_replay_runner_can_execute_demo_observation_miss_preset(
+    tmp_path: Path,
+) -> None:
+    settings = _build_settings(tmp_path)
+    replay_runner = ScenarioReplayRunner.from_preset(
+        settings,
+        preset_name="demo_observation_miss",
+        enable_console=False,
+    )
+
+    report = replay_runner.run()
+
+    assert report.total_cycles == 1
+    assert report.count_result("no_event") == 1
+    assert report.observation_preparations[0].ready_for_observation is False
+    assert report.observation_preparations[0].metadata["ready_reason"] == (
+        "arrived_after_ready_window_start"
+    )
+    assert report.target_resolutions[0].decision.reason == "observation_not_ready"
+
+
+def test_scenario_replay_runner_can_execute_demo_observation_reposition_preset(
+    tmp_path: Path,
+) -> None:
+    settings = _build_settings(tmp_path)
+    replay_runner = ScenarioReplayRunner.from_preset(
+        settings,
+        preset_name="demo_observation_reposition",
+        enable_console=False,
+    )
+
+    report = replay_runner.run()
+
+    assert report.total_cycles == 2
+    assert report.count_result("no_event") == 1
+    assert report.count_result("success") == 1
+    assert report.observation_preparations[0].metadata["ready_reason"] == (
+        "arrived_after_ready_window_start"
+    )
+    assert report.observation_preparations[1].metadata["start_position_source"] == (
+        "carryover_from_previous_missed_cycle"
+    )
+    assert report.observation_preparations[1].travel_s == 0.0
+    assert report.target_resolutions[1].selected_target_id == "clean-near"
