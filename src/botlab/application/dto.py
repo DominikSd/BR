@@ -353,7 +353,17 @@ class SimulationReport:
                     "phase=combat "
                     "result=completed "
                     f"turns={metadata.get('combat_turn_count')} "
-                    f"final_hp_ratio={self._format_optional_float(metadata.get('combat_final_hp_ratio'))}"
+                    f"final_hp_ratio={self._format_optional_float(metadata.get('combat_final_hp_ratio'))} "
+                    f"final_condition_ratio={self._format_optional_float(metadata.get('combat_final_condition_ratio'))}"
+                )
+
+            if metadata.get("reward_completed_ts") is not None:
+                lines.append(
+                    "cycle_trace="
+                    f"{cycle_id} "
+                    "phase=reward "
+                    f"reward_started_ts={self._format_optional_float(metadata.get('reward_started_ts'))} "
+                    f"reward_completed_ts={self._format_optional_float(metadata.get('reward_completed_ts'))}"
                 )
 
             if metadata.get("combat_finished_with_rest") is True:
@@ -363,7 +373,8 @@ class SimulationReport:
                     "phase=rest "
                     "result=completed "
                     f"ticks={metadata.get('rest_tick_count')} "
-                    f"final_hp_ratio={self._format_optional_float(metadata.get('rest_final_hp_ratio'))}"
+                    f"final_hp_ratio={self._format_optional_float(metadata.get('rest_final_hp_ratio'))} "
+                    f"final_condition_ratio={self._format_optional_float(metadata.get('rest_final_condition_ratio'))}"
                 )
 
             lines.append(

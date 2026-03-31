@@ -96,6 +96,27 @@ def test_world_state_provider_creates_default_group_for_visible_spawn_event() ->
     assert snapshot.groups[0].distance == 5.0
 
 
+def test_world_state_provider_can_generate_groups_in_spawn_circle() -> None:
+    runtime = _runtime_for_scenario(
+        1,
+        CycleScenario(
+            has_event=True,
+            spawn_zone_visible=True,
+            bot_position_xy=(0.0, 0.0),
+            spawn_circle_center_xy=(3.0, 0.0),
+            spawn_circle_radius=2.5,
+            spawn_group_count=3,
+            spawn_random_seed=42,
+        ),
+    )
+    provider = SimulatedWorldStateProvider(runtime)
+
+    snapshot = provider.get_world_snapshot(1)
+
+    assert len(snapshot.groups) == 3
+    assert all(group.metadata.get("mob_variant") in {"mob_a", "mob_b"} for group in snapshot.groups)
+
+
 def test_observation_preparation_provider_reports_spawn_zone_visibility() -> None:
     runtime = _runtime_for_scenario(
         1,

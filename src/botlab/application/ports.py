@@ -120,6 +120,7 @@ class RestProvider(Protocol):
         *,
         rest_started_ts: float,
         starting_hp_ratio: float,
+        starting_condition_ratio: float = 1.0,
         observation: Observation,
     ) -> RestTimeline:
         """Zwraca timeline regeneracji po walce."""

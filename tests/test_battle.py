@@ -33,9 +33,11 @@ def test_simulated_battle_finishes_with_final_snapshot_and_expected_hp() -> None
     assert timeline[-1].snapshot.strategy == "aggressive"
     assert timeline[0].snapshot.metadata["combat_plan_name"] == "basic_1_space"
     assert timeline[0].snapshot.metadata["combat_plan_source"] == "default_catalog_plan"
-    assert timeline[0].snapshot.metadata["input_sequence"] == ("1", "space")
+    assert timeline[0].snapshot.metadata["input_sequence"] == ("1", "space", "3", "space")
     assert timeline[0].snapshot.metadata["input_key"] == "1"
     assert timeline[1].snapshot.metadata["input_key"] == "space"
+    assert timeline[2].snapshot.metadata["input_key"] == "3"
+    assert timeline[3].snapshot.metadata["input_key"] == "space"
 
     assert any(item.snapshot.in_combat is True for item in timeline[:-1])
 

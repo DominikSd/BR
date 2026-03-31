@@ -35,6 +35,7 @@ def test_list_scenario_replay_presets_contains_builtin_replays() -> None:
 
     assert "baseline_mixed_cycle" in preset_names
     assert "demo_farming_cycle" in preset_names
+    assert "demo_farming_session" in preset_names
     assert "demo_observation_miss" in preset_names
     assert "demo_observation_reposition" in preset_names
     assert "demo_farming_showcase" in preset_names
@@ -260,3 +261,39 @@ def test_scenario_replay_runner_can_execute_demo_observation_reposition_preset(
     )
     assert report.observation_preparations[1].travel_s == 0.0
     assert report.target_resolutions[1].selected_target_id == "clean-near"
+
+
+def test_scenario_replay_runner_can_execute_demo_farming_session_preset(
+    tmp_path: Path,
+) -> None:
+    settings = _build_settings(tmp_path)
+    replay_runner = ScenarioReplayRunner.from_preset(
+        settings,
+        preset_name="demo_farming_session",
+        enable_console=False,
+    )
+
+    report = replay_runner.run()
+
+    assert report.total_cycles == 2
+    assert report.count_result("success") == 2
+
+    assert report.target_resolutions[0].selected_target_id == "front-free"
+    assert report.approach_results[0].target_id == "fallback-safe"
+    assert report.approach_results[0].retargeted is True
+    assert report.interaction_results[0].target_id == "fallback-safe"
+    assert report.interaction_results[0].ready is True
+
+    cycle_records = {record["cycle_id"]: record for record in report.cycle_records}
+    assert cycle_records[1]["metadata"]["reward_started_ts"] is not None
+    assert cycle_records[1]["metadata"]["reward_completed_ts"] is not None
+    assert cycle_records[1]["metadata"]["combat_final_condition_ratio"] == 0.38
+    assert cycle_records[1]["metadata"]["combat_finished_with_rest"] is True
+    assert cycle_records[1]["metadata"]["rest_final_condition_ratio"] >= 0.9
+
+    assert report.target_resolutions[1].selected_target_id is not None
+    assert report.target_resolutions[1].world_snapshot.groups
+    assert all(
+        group.metadata.get("mob_variant") in {"mob_a", "mob_b"}
+        for group in report.target_resolutions[1].world_snapshot.groups
+    )

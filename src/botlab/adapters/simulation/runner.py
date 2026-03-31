@@ -132,6 +132,9 @@ class SimulatedCycleRuntime:
     def interaction_result_for_cycle(self, cycle_id: int) -> "TargetInteractionResult | None":
         return self._interaction_results.get(cycle_id)
 
+    def groups_for_cycle(self, cycle_id: int) -> tuple[object, ...]:
+        return self._spawner.groups_for_cycle(cycle_id)
+
     def set_observation_preparation(
         self,
         cycle_id: int,
@@ -605,6 +608,12 @@ class SimulatedActionExecutor(ActionExecutor):
 
     def _build_combat_metadata(self, *, cycle_id: int) -> dict[str, object]:
         scenario = self._runtime.context_for_cycle(cycle_id).spawn_event.scenario
+        default_input_fallback = (
+            scenario.combat_profile_name is None
+            and scenario.combat_plan_name is None
+            and scenario.combat_plan_rounds is None
+            and scenario.combat_inputs == ("1", "space")
+        )
 
         if scenario.combat_profile_name is not None:
             selection = self._combat_profile_catalog.select_profile(scenario.combat_profile_name)
@@ -612,7 +621,7 @@ class SimulatedActionExecutor(ActionExecutor):
             selection = self._combat_plan_catalog.select_plan(
                 plan_name=scenario.combat_plan_name,
                 round_sequences=scenario.combat_plan_rounds,
-                input_sequence=scenario.combat_inputs,
+                input_sequence=None if default_input_fallback else scenario.combat_inputs,
             )
 
         metadata = {
@@ -705,6 +714,7 @@ class SimulatedRestProvider(RestProvider):
         *,
         rest_started_ts: float,
         starting_hp_ratio: float,
+        starting_condition_ratio: float = 1.0,
         observation: Observation,
     ) -> RestTimeline:
         context = self._runtime.context_for_cycle(cycle_id)
@@ -712,6 +722,7 @@ class SimulatedRestProvider(RestProvider):
             cycle_id=cycle_id,
             rest_started_ts=rest_started_ts,
             starting_hp_ratio=starting_hp_ratio,
+            starting_condition_ratio=starting_condition_ratio,
             scenario=context.spawn_event.scenario,
         )
         return RestTimeline(

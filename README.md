@@ -37,7 +37,9 @@ Target moze zostac utracony podczas ruchu albo tuz przed interakcja. W takim prz
 
 Aktualna walka jest celowo prosta i deterministyczna:
 
-- domyslna sekwencja wejsc to `1 -> space`
+- domyslny loop walki to:
+  runda 1: `1 -> space`
+  kolejne rundy: `3 -> space`
 - nazwane plany walki sa ladowane z `config/combat_plans.yaml`
 - profile walki mapujace sie na named plans sa ladowane z `config/combat_profiles.yaml`
 - standardowy run moze miec domyslny profil z `combat.default_profile_name` w `config/default.yaml`
@@ -97,6 +99,22 @@ Ten preset wypisuje czytelny trace decyzji cyklu:
 - kiedy zaczela sie walka,
 - czy byl rest,
 - jaki byl koncowy wynik cyklu.
+
+Kanoniczna pelna sesja farmienia:
+
+```bash
+python -m botlab.main --config config/default.yaml --scenario-preset demo_farming_session
+```
+
+Ten preset pokazuje w jednym przebiegu:
+- kilka grupek w strefie respawnu,
+- odrzucenie grupki zajetej przez kogos innego,
+- przejecie targetu podczas approach,
+- natychmiastowy retarget na najblizsza inna wolna grupke,
+- combat,
+- reward,
+- rest do progow gotowosci,
+- kolejny cykl z nowym respawnem grupek.
 
 Bardziej pokazowy wariant z czytelnymi timestampami faz:
 

@@ -434,6 +434,7 @@ def _should_show_cycle_trace(
         return False
     return replay.name in {
         "demo_farming_cycle",
+        "demo_farming_session",
         "demo_farming_showcase",
         "demo_observation_miss",
         "demo_observation_reposition",

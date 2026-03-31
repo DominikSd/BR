@@ -127,6 +127,10 @@ class SimulatedWorldStateProvider:
         if scenario.groups:
             return scenario.groups
 
+        generated_groups = self._runtime.groups_for_cycle(cycle_id)
+        if generated_groups:
+            return tuple(generated_groups)
+
         if not scenario.has_event:
             return ()
 

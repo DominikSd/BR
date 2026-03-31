@@ -70,6 +70,7 @@ def _combat_snapshot(
     *,
     event_ts: float,
     hp_ratio: float,
+    condition_ratio: float = 1.0,
     in_combat: bool,
     turn_index: int = 1,
 ) -> TimedCombatSnapshot:
@@ -83,11 +84,12 @@ def _combat_snapshot(
             in_combat=in_combat,
             combat_started_ts=event_ts - 0.3,
             combat_finished_ts=None if in_combat else event_ts,
+            condition_ratio=condition_ratio,
         ),
     )
 
 
-def _rest_snapshot(*, event_ts: float, hp_ratio: float) -> TimedCombatSnapshot:
+def _rest_snapshot(*, event_ts: float, hp_ratio: float, condition_ratio: float = 1.0) -> TimedCombatSnapshot:
     return TimedCombatSnapshot(
         event_ts=event_ts,
         snapshot=CombatSnapshot(
@@ -96,6 +98,7 @@ def _rest_snapshot(*, event_ts: float, hp_ratio: float) -> TimedCombatSnapshot:
             enemy_count=0,
             strategy="rest",
             in_combat=False,
+            condition_ratio=condition_ratio,
         ),
     )
 
@@ -168,6 +171,7 @@ class ScenarioPorts:
         *,
         rest_started_ts: float,
         starting_hp_ratio: float,
+        starting_condition_ratio: float = 1.0,
         observation: Observation,
     ) -> RestTimeline:
         self.rest_calls += 1
@@ -224,11 +228,11 @@ class TestScenario1SuccessWithRestRequired:
             ),
             combat_timeline=CombatTimeline(
                 cycle_id=1,
-                snapshots=[_combat_snapshot(event_ts=160.60, hp_ratio=0.40, in_combat=False)],
+                snapshots=[_combat_snapshot(event_ts=160.60, hp_ratio=0.40, condition_ratio=0.40, in_combat=False)],
             ),
             rest_timeline=RestTimeline(
                 cycle_id=1,
-                snapshots=[_rest_snapshot(event_ts=161.10, hp_ratio=0.95)],
+                snapshots=[_rest_snapshot(event_ts=161.10, hp_ratio=0.95, condition_ratio=0.95)],
             ),
         )
         orchestrator, telemetry = _build_orchestrator(ports)
@@ -240,7 +244,7 @@ class TestScenario1SuccessWithRestRequired:
         assert ports.combat_calls == 1
         assert ports.rest_calls == 1
         assert any(item.state_exit == BotState.REST for item in telemetry.transitions)
-        assert any(item.reason == "rest_completed_hp_restored" for item in telemetry.transitions)
+        assert any(item.reason == "rest_completed_resources_restored" for item in telemetry.transitions)
 
 
 class TestScenario2SuccessWithoutRestRequired:

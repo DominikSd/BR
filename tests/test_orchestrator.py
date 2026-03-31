@@ -131,6 +131,7 @@ class StaticRestProvider:
         *,
         rest_started_ts: float,
         starting_hp_ratio: float,
+        starting_condition_ratio: float = 1.0,
         observation: Observation,
     ) -> RestTimeline:
         assert cycle_id == self._timeline.cycle_id

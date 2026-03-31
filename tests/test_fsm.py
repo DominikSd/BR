@@ -212,7 +212,7 @@ def test_fsm_combat_to_rest_to_wait_next_cycle() -> None:
     )
 
     assert decision_rest.next_state is BotState.REST
-    assert decision_rest.reason == "combat_finished_low_hp"
+    assert decision_rest.reason == "combat_finished_low_resources"
     assert fsm.current_state is BotState.REST
 
     restored_hp_snapshot = CombatSnapshot(
@@ -234,5 +234,5 @@ def test_fsm_combat_to_rest_to_wait_next_cycle() -> None:
     )
 
     assert decision_wait.next_state is BotState.WAIT_NEXT_CYCLE
-    assert decision_wait.reason == "rest_completed_hp_restored"
+    assert decision_wait.reason == "rest_completed_resources_restored"
     assert fsm.current_state is BotState.WAIT_NEXT_CYCLE

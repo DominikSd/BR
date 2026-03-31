@@ -257,12 +257,15 @@ class DecisionEngine:
                 reason="combat_in_progress",
             )
 
-        if snapshot.hp_ratio < self._combat_config.rest_start_threshold:
+        if (
+            snapshot.hp_ratio < self._combat_config.rest_start_threshold
+            or snapshot.condition_ratio < self._combat_config.rest_start_threshold
+        ):
             return self._build_decision(
                 context=context,
                 next_state=BotState.REST,
                 action="enter_rest",
-                reason="combat_finished_low_hp",
+                reason="combat_finished_low_resources",
             )
 
         return self._build_decision(
@@ -283,12 +286,15 @@ class DecisionEngine:
                 reason="resting_without_snapshot",
             )
 
-        if snapshot.hp_ratio >= self._combat_config.rest_stop_threshold:
+        if (
+            snapshot.hp_ratio >= self._combat_config.rest_stop_threshold
+            and snapshot.condition_ratio >= self._combat_config.rest_stop_threshold
+        ):
             return self._build_decision(
                 context=context,
                 next_state=BotState.WAIT_NEXT_CYCLE,
                 action="finish_rest",
-                reason="rest_completed_hp_restored",
+                reason="rest_completed_resources_restored",
             )
 
         return self._build_decision(

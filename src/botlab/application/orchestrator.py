@@ -544,6 +544,7 @@ class CycleOrchestrator:
             "combat_completed": False,
             "combat_turn_count": 0,
             "combat_final_hp_ratio": None,
+            "combat_final_condition_ratio": None,
             "combat_finished_with_rest": False,
             "rest_tick_count": 0,
         }
@@ -565,6 +566,7 @@ class CycleOrchestrator:
                     "combat_completed": True,
                     "combat_turn_count": len(combat_timeline.snapshots),
                     "combat_final_hp_ratio": timed_snapshot.snapshot.hp_ratio,
+                    "combat_final_condition_ratio": timed_snapshot.snapshot.condition_ratio,
                     "combat_strategy": timed_snapshot.snapshot.strategy,
                     **timed_snapshot.snapshot.metadata,
                 }
@@ -581,8 +583,11 @@ class CycleOrchestrator:
 
         rest_timeline = self._rest_provider.apply_rest(
             cycle_id,
-            rest_started_ts=last_event_ts,
+            rest_started_ts=float(
+                combat_metadata.get("reward_completed_ts", last_event_ts)
+            ),
             starting_hp_ratio=last_snapshot.snapshot.hp_ratio,
+            starting_condition_ratio=last_snapshot.snapshot.condition_ratio,
             observation=observation,
         )
 
@@ -600,6 +605,7 @@ class CycleOrchestrator:
             combat_metadata["combat_finished_with_rest"] = True
             combat_metadata["rest_tick_count"] = len(rest_timeline.snapshots)
             combat_metadata["rest_final_hp_ratio"] = timed_snapshot.snapshot.hp_ratio
+            combat_metadata["rest_final_condition_ratio"] = timed_snapshot.snapshot.condition_ratio
 
         if self._fsm.current_state is not BotState.WAIT_NEXT_CYCLE:
             raise RuntimeError("REST nie zakończył się przejściem do WAIT_NEXT_CYCLE.")

@@ -1,9 +1,9 @@
 plans:
   basic_1_space:
-    description: "Prosty plan startowy: 1 potem space."
-    inputs:
-      - "1"
-      - "space"
+    description: "Domyslny farmer loop: opener 1+space, potem 3+space."
+    rounds:
+      - ["1", "space"]
+      - ["3", "space"]
   spam_1_space:
     description: "Agresywniejszy wariant: dwa razy 1 i na koniec space."
     inputs:

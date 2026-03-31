@@ -65,6 +65,7 @@ class CombatSnapshot:
     in_combat: bool
     combat_started_ts: float | None = None
     combat_finished_ts: float | None = None
+    condition_ratio: float = 1.0
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

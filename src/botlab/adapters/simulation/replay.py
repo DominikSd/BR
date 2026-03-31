@@ -552,9 +552,87 @@ def _build_preset_catalog() -> dict[str, ScenarioReplay]:
         },
     )
 
+    demo_farming_session = ScenarioReplay(
+        name="demo_farming_session",
+        description=(
+            "Pelna sesja farmienia: observation, nearest free target, occupied skip, "
+            "retarget podczas approach, combat, reward, rest i kolejny respawn cycle."
+        ),
+        total_cycles=2,
+        overrides={
+            1: CycleScenario(
+                has_event=True,
+                spawn_zone_visible=True,
+                observation_start_position_xy=(-5.0, 0.0),
+                bot_position_xy=(0.0, 0.0),
+                groups=(
+                    SimulatedGroupState(
+                        group_id="occupied-near",
+                        position_xy=(1.0, 0.0),
+                        engaged_by_other=True,
+                        metadata={"mob_variant": "mob_a"},
+                    ),
+                    SimulatedGroupState(
+                        group_id="front-free",
+                        position_xy=(2.4, 0.0),
+                        metadata={"mob_variant": "mob_b"},
+                    ),
+                    SimulatedGroupState(
+                        group_id="fallback-safe",
+                        position_xy=(4.0, 0.0),
+                        metadata={"mob_variant": "mob_a"},
+                    ),
+                ),
+                approach_revalidation_delay_s=0.450,
+                approach_bot_position_xy=(1.2, 0.0),
+                approach_groups=(
+                    SimulatedGroupState(
+                        group_id="occupied-near",
+                        position_xy=(1.0, 0.0),
+                        engaged_by_other=True,
+                        metadata={"mob_variant": "mob_a"},
+                    ),
+                    SimulatedGroupState(
+                        group_id="front-free",
+                        position_xy=(2.4, 0.0),
+                        engaged_by_other=True,
+                        metadata={"mob_variant": "mob_b"},
+                    ),
+                    SimulatedGroupState(
+                        group_id="fallback-safe",
+                        position_xy=(3.5, 0.0),
+                        metadata={"mob_variant": "mob_a"},
+                    ),
+                ),
+                verify_result="success",
+                combat_turns=4,
+                combat_final_hp_ratio=0.42,
+                combat_final_condition_ratio=0.38,
+                reward_duration_s=0.400,
+                note="session-cycle-1-retarget-reward-rest",
+            ),
+            2: CycleScenario(
+                has_event=True,
+                spawn_zone_visible=True,
+                bot_position_xy=(0.0, 0.0),
+                spawn_circle_center_xy=(3.0, 0.0),
+                spawn_circle_radius=2.5,
+                spawn_group_count=3,
+                spawn_random_seed=42,
+                verify_result="success",
+                combat_turns=4,
+                combat_final_hp_ratio=0.88,
+                combat_final_condition_ratio=0.86,
+                reward_duration_s=0.300,
+                note="session-cycle-2-generated-respawn",
+            ),
+        },
+    )
+
     return {
         baseline.name: baseline,
         demo_farming.name: demo_farming,
+        demo_farming_session.name: demo_farming_session,
         demo_observation_miss.name: demo_observation_miss,
         demo_observation_reposition.name: demo_observation_reposition,
         demo_showcase.name: demo_showcase,

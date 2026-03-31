@@ -246,12 +246,12 @@ def test_runner_executes_combat_then_rest_then_wait_next_cycle(tmp_path: Path) -
     )
     assert any(
         item["state_enter"] == "COMBAT" and item["state_exit"] == "REST"
-        and item["reason"] == "combat_finished_low_hp"
+        and item["reason"] == "combat_finished_low_resources"
         for item in transitions
     )
     assert any(
         item["state_enter"] == "REST" and item["state_exit"] == "WAIT_NEXT_CYCLE"
-        and item["reason"] == "rest_completed_hp_restored"
+        and item["reason"] == "rest_completed_resources_restored"
         for item in transitions
     )
 

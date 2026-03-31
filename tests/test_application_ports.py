@@ -193,6 +193,7 @@ class DummyRestProvider:
         *,
         rest_started_ts: float,
         starting_hp_ratio: float,
+        starting_condition_ratio: float = 1.0,
         observation: Observation,
     ) -> RestTimeline:
         snapshot = CombatSnapshot(
@@ -201,6 +202,7 @@ class DummyRestProvider:
             enemy_count=0,
             strategy="rest",
             in_combat=False,
+            condition_ratio=max(starting_condition_ratio, 0.95),
         )
         return RestTimeline(
             cycle_id=cycle_id,

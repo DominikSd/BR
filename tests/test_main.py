@@ -75,6 +75,7 @@ def test_main_lists_scenario_presets(capsys) -> None:
     assert exit_code == 0
     assert "baseline_mixed_cycle:" in captured.out
     assert "demo_farming_cycle:" in captured.out
+    assert "demo_farming_session:" in captured.out
     assert "demo_observation_miss:" in captured.out
     assert "demo_observation_reposition:" in captured.out
     assert "demo_farming_showcase:" in captured.out
@@ -612,4 +613,65 @@ def test_main_prints_reposition_recovery_trace_for_next_cycle(
     assert "cycle_trace=1 phase=staging_missed reason=arrived_after_ready_window_start" in captured.out
     assert "cycle_trace=2 phase=staging source=carryover_from_previous_missed_cycle start_xy=(0.0, 0.0) observation_xy=(0.0, 0.0) travel_s=0.000" in captured.out
     assert "cycle_trace=2 phase=targeting ts=190.000 selected=clean-near" in captured.out
+    assert "cycle_trace=2 phase=cycle predicted_spawn_ts=190.000 actual_spawn_ts=190.000 result=success" in captured.out
+
+
+def test_main_prints_full_farming_session_trace(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    sqlite_path = tmp_path / "data" / "telemetry" / "botlab.sqlite3"
+    log_path = tmp_path / "logs" / "botlab.log"
+
+    config_path.write_text(
+        "\n".join(
+            [
+                "app:",
+                '  name: "botlab-test"',
+                '  mode: "simulation"',
+                "cycle:",
+                "  interval_s: 45.0",
+                "  prepare_before_s: 5.0",
+                "  ready_before_s: 1.0",
+                "  ready_after_s: 1.0",
+                "  verify_timeout_s: 0.5",
+                "  recover_timeout_s: 2.0",
+                "combat:",
+                "  low_hp_threshold: 0.35",
+                "  rest_start_threshold: 0.50",
+                "  rest_stop_threshold: 0.90",
+                "telemetry:",
+                f'  sqlite_path: "{sqlite_path.as_posix()}"',
+                f'  log_path: "{log_path.as_posix()}"',
+                '  log_level: "INFO"',
+                "vision:",
+                "  enabled: false",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "--scenario-preset",
+            "demo_farming_session",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "scenario_replay=demo_farming_session" in captured.out
+    assert "cycle_trace=1 phase=targeting ts=145.000 selected=front-free" in captured.out
+    assert "cycle_trace=1 phase=targeting rejected=occupied-near reason=engaged_by_other" in captured.out
+    assert "cycle_trace=1 phase=approach_revalidate target=front-free" in captured.out
+    assert "cycle_trace=1 phase=approach ts=145." in captured.out
+    assert "retarget_from=front-free retarget_to=fallback-safe" in captured.out
+    assert "cycle_trace=1 phase=reward reward_started_ts=" in captured.out
+    assert "cycle_trace=1 phase=rest result=completed" in captured.out
+    assert "final_condition_ratio=" in captured.out
+    assert "cycle_trace=2 phase=targeting ts=190.000 selected=" in captured.out
     assert "cycle_trace=2 phase=cycle predicted_spawn_ts=190.000 actual_spawn_ts=190.000 result=success" in captured.out

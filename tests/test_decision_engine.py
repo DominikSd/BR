@@ -224,7 +224,7 @@ def test_decision_engine_combat_to_rest_and_rest_to_wait_next_cycle() -> None:
     combat_decision = engine.decide(combat_context)
 
     assert combat_decision.next_state is BotState.REST
-    assert combat_decision.reason == "combat_finished_low_hp"
+    assert combat_decision.reason == "combat_finished_low_resources"
 
     restored_hp_snapshot = CombatSnapshot(
         hp_ratio=0.95,
@@ -248,4 +248,4 @@ def test_decision_engine_combat_to_rest_and_rest_to_wait_next_cycle() -> None:
     rest_decision = engine.decide(rest_context)
 
     assert rest_decision.next_state is BotState.WAIT_NEXT_CYCLE
-    assert rest_decision.reason == "rest_completed_hp_restored"
+    assert rest_decision.reason == "rest_completed_resources_restored"

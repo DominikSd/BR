@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from math import cos, pi, sin, sqrt
+from random import Random
 from typing import Literal, Mapping
 
 from botlab.types import CyclePrediction, Observation
@@ -38,6 +40,10 @@ class CycleScenario:
         Czas jednej tury walki. Jesli None, uzyta zostanie wartosc domyslna battle engine.
     - combat_final_hp_ratio:
         HP po zakonczeniu walki. Decyduje, czy system przejdzie do REST.
+    - combat_final_condition_ratio:
+        Kondycja po zakonczeniu walki. Takze wplywa na wejscie w REST.
+    - reward_duration_s:
+        Czas trwania ekranu reward po walce.
     - combat_strategy:
         Nazwa strategii wpisywana do CombatSnapshot.
     - combat_profile_name:
@@ -74,6 +80,8 @@ class CycleScenario:
         Opcjonalny widok grupek do koncowej walidacji celu przed interakcja.
     - groups:
         Widok grup PvE dla modelu swiata.
+    - spawn_circle_center_xy / spawn_circle_radius / spawn_group_count:
+        Opcjonalny prosty generator grupek w okregu respawnu.
     - note:
         Dodatkowy opis pomocniczy do testow i telemetry.
     """
@@ -84,6 +92,8 @@ class CycleScenario:
     combat_turns: int = 3
     combat_turn_duration_s: float | None = None
     combat_final_hp_ratio: float = 0.80
+    combat_final_condition_ratio: float = 0.80
+    reward_duration_s: float = 0.350
     combat_strategy: str = "default"
     combat_profile_name: str | None = None
     combat_plan_name: str | None = None
@@ -102,6 +112,10 @@ class CycleScenario:
     approach_groups: tuple[SimulatedGroupState, ...] | None = None
     interaction_groups: tuple[SimulatedGroupState, ...] | None = None
     groups: tuple[SimulatedGroupState, ...] = field(default_factory=tuple)
+    spawn_circle_center_xy: tuple[float, float] | None = None
+    spawn_circle_radius: float | None = None
+    spawn_group_count: int = 0
+    spawn_random_seed: int = 0
     note: str = ""
 
 
@@ -154,6 +168,40 @@ class SimulatedSpawner:
 
     def scenario_for_cycle(self, cycle_id: int) -> CycleScenario:
         return self._overrides.get(cycle_id, self._default_scenario)
+
+    def groups_for_cycle(self, cycle_id: int) -> tuple[SimulatedGroupState, ...]:
+        scenario = self.scenario_for_cycle(cycle_id)
+        if scenario.groups:
+            return scenario.groups
+        if (
+            scenario.spawn_circle_center_xy is None
+            or scenario.spawn_circle_radius is None
+            or scenario.spawn_group_count <= 0
+        ):
+            return ()
+
+        rng = Random(f"{scenario.spawn_random_seed}:{cycle_id}")
+        center_x, center_y = scenario.spawn_circle_center_xy
+        variants = ("mob_a", "mob_b")
+        groups: list[SimulatedGroupState] = []
+        for group_index in range(1, scenario.spawn_group_count + 1):
+            angle = rng.uniform(0.0, 2.0 * pi)
+            radius = scenario.spawn_circle_radius * sqrt(rng.random())
+            position_xy = (
+                round(center_x + (radius * cos(angle)), 6),
+                round(center_y + (radius * sin(angle)), 6),
+            )
+            groups.append(
+                SimulatedGroupState(
+                    group_id=f"spawn-{cycle_id}-{group_index}",
+                    position_xy=position_xy,
+                    metadata={
+                        "mob_variant": variants[(group_index - 1) % len(variants)],
+                        "spawn_source": "generated_circle",
+                    },
+                )
+            )
+        return tuple(groups)
 
     def build_spawn_event(self, prediction: CyclePrediction) -> SpawnEvent:
         scenario = self.scenario_for_cycle(prediction.cycle_id)
