@@ -9,7 +9,7 @@ description = "Minimalny rdzeń projektu PvE cycle controller / simulation frame
 readme = "README.md"
 requires-python = ">=3.12"
 authors = [
-    { name = "OpenAI" }
+    { name = "SOPLARZ Developer" }
 ]
 license = { text = "Proprietary" }
 dependencies = [
