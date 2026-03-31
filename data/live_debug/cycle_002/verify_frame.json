@@ -1,0 +1,12 @@
+{
+  "captured_at_ts": 190.1,
+  "height": 720,
+  "metadata": {
+    "cycle_id": 2,
+    "in_combat": true,
+    "phase": "verify",
+    "reward_visible": false
+  },
+  "source": "dry_run:single_spot_mvp",
+  "width": 1280
+}

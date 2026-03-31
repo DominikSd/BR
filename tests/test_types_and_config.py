@@ -42,6 +42,18 @@ def test_load_default_config_returns_settings() -> None:
     assert settings.telemetry.log_level == "INFO"
 
     assert settings.vision.enabled is False
+    assert settings.live.dry_run is False
+    assert settings.live.stall_timeout_s == 1.0
+
+
+def test_live_config_profile_can_be_loaded_from_yaml() -> None:
+    settings = load_config(PROJECT_ROOT / "config" / "live_dry_run.yaml")
+
+    assert settings.app.mode == "live"
+    assert settings.live.dry_run is True
+    assert settings.live.capture_region == (0, 0, 1280, 720)
+    assert settings.live.spawn_roi == (320, 140, 640, 320)
+    assert settings.live.dry_run_profile == "single_spot_mvp"
 
 
 def test_cycle_prediction_window_methods() -> None:

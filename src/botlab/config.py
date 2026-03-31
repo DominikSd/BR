@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -57,6 +57,24 @@ class VisionConfig:
 
 
 @dataclass(slots=True, frozen=True)
+class LiveConfig:
+    dry_run: bool = False
+    foreground_only: bool = True
+    window_title: str = "Game Window"
+    capture_region: tuple[int, int, int, int] = (0, 0, 1280, 720)
+    spawn_roi: tuple[int, int, int, int] = (320, 140, 640, 320)
+    hp_bar_roi: tuple[int, int, int, int] = (40, 40, 220, 18)
+    condition_bar_roi: tuple[int, int, int, int] = (40, 68, 220, 18)
+    combat_indicator_roi: tuple[int, int, int, int] = (560, 620, 160, 60)
+    reward_roi: tuple[int, int, int, int] = (500, 120, 260, 120)
+    debug_directory: Path = field(default_factory=lambda: PROJECT_ROOT / "data" / "live_debug")
+    save_frames: bool = True
+    save_overlays: bool = True
+    stall_timeout_s: float = 1.0
+    dry_run_profile: str = "single_spot_mvp"
+
+
+@dataclass(slots=True, frozen=True)
 class Settings:
     app: AppConfig
     cycle: CycleConfig
@@ -64,6 +82,7 @@ class Settings:
     telemetry: TelemetryConfig
     vision: VisionConfig
     source_path: Path
+    live: LiveConfig = field(default_factory=LiveConfig)
 
 
 def load_default_config() -> Settings:
@@ -84,6 +103,7 @@ def load_config(config_path: str | Path) -> Settings:
     combat_section = _require_mapping(raw_data, "combat")
     telemetry_section = _require_mapping(raw_data, "telemetry")
     vision_section = _require_mapping(raw_data, "vision")
+    live_section = _optional_mapping(raw_data, "live", {})
 
     app_config = AppConfig(
         name=_require_str(app_section, "name"),
@@ -120,6 +140,29 @@ def load_config(config_path: str | Path) -> Settings:
         enabled=_require_bool(vision_section, "enabled"),
     )
 
+    live_config = LiveConfig(
+        dry_run=_optional_bool(live_section, "dry_run", False),
+        foreground_only=_optional_bool(live_section, "foreground_only", True),
+        window_title=_optional_str(live_section, "window_title", "Game Window"),
+        capture_region=_optional_int_quad(live_section, "capture_region", (0, 0, 1280, 720)),
+        spawn_roi=_optional_int_quad(live_section, "spawn_roi", (320, 140, 640, 320)),
+        hp_bar_roi=_optional_int_quad(live_section, "hp_bar_roi", (40, 40, 220, 18)),
+        condition_bar_roi=_optional_int_quad(live_section, "condition_bar_roi", (40, 68, 220, 18)),
+        combat_indicator_roi=_optional_int_quad(
+            live_section,
+            "combat_indicator_roi",
+            (560, 620, 160, 60),
+        ),
+        reward_roi=_optional_int_quad(live_section, "reward_roi", (500, 120, 260, 120)),
+        debug_directory=_resolve_project_relative_path(
+            _optional_str(live_section, "debug_directory", "data/live_debug")
+        ),
+        save_frames=_optional_bool(live_section, "save_frames", True),
+        save_overlays=_optional_bool(live_section, "save_overlays", True),
+        stall_timeout_s=_optional_positive_float(live_section, "stall_timeout_s", 1.0),
+        dry_run_profile=_optional_str(live_section, "dry_run_profile", "single_spot_mvp"),
+    )
+
     return Settings(
         app=app_config,
         cycle=cycle_config,
@@ -127,6 +170,7 @@ def load_config(config_path: str | Path) -> Settings:
         telemetry=telemetry_config,
         vision=vision_config,
         source_path=path,
+        live=live_config,
     )
 
 
@@ -159,6 +203,17 @@ def _require_mapping(data: Mapping[str, Any], key: str) -> Mapping[str, Any]:
     return value
 
 
+def _optional_mapping(
+    data: Mapping[str, Any],
+    key: str,
+    default: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    value = data.get(key, default)
+    if not isinstance(value, Mapping):
+        raise ConfigError(f"Sekcja '{key}' musi byc mapa.")
+    return value
+
+
 def _require_str(data: Mapping[str, Any], key: str) -> str:
     value = data.get(key)
     if not isinstance(value, str) or not value.strip():
@@ -171,6 +226,16 @@ def _optional_str(data: Mapping[str, Any], key: str, default: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ConfigError(f"Pole '{key}' musi byc niepustym napisem.")
     return value.strip()
+
+
+def _optional_positive_float(data: Mapping[str, Any], key: str, default: float) -> float:
+    value = data.get(key, default)
+    if not isinstance(value, (int, float)):
+        raise ConfigError(f"Pole '{key}' musi byc liczba.")
+    numeric_value = float(value)
+    if numeric_value <= 0.0:
+        raise ConfigError(f"Pole '{key}' musi byc wieksze od 0.")
+    return numeric_value
 
 
 def _optional_nullable_str(
@@ -188,6 +253,13 @@ def _optional_nullable_str(
 
 def _require_bool(data: Mapping[str, Any], key: str) -> bool:
     value = data.get(key)
+    if not isinstance(value, bool):
+        raise ConfigError(f"Pole '{key}' musi byc typu bool.")
+    return value
+
+
+def _optional_bool(data: Mapping[str, Any], key: str, default: bool) -> bool:
+    value = data.get(key, default)
     if not isinstance(value, bool):
         raise ConfigError(f"Pole '{key}' musi byc typu bool.")
     return value
@@ -236,6 +308,27 @@ def _resolve_project_relative_path(path_value: str) -> Path:
     if candidate.is_absolute():
         return candidate.resolve()
     return (PROJECT_ROOT / candidate).resolve()
+
+
+def _optional_int_quad(
+    data: Mapping[str, Any],
+    key: str,
+    default: tuple[int, int, int, int],
+) -> tuple[int, int, int, int]:
+    value = data.get(key, default)
+    if not isinstance(value, (list, tuple)) or len(value) != 4:
+        raise ConfigError(f"Pole '{key}' musi byc czworka [x, y, width, height].")
+    parsed: list[int] = []
+    for item in value:
+        if not isinstance(item, int):
+            raise ConfigError(f"Pole '{key}' musi zawierac liczby calkowite.")
+        parsed.append(item)
+    x, y, width, height = parsed
+    if x < 0 or y < 0 or width <= 0 or height <= 0:
+        raise ConfigError(
+            f"Pole '{key}' musi zawierac nieujemne x/y i dodatnie width/height."
+        )
+    return (x, y, width, height)
 
 
 def _validate_cycle_config(config: CycleConfig) -> None:

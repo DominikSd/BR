@@ -1,0 +1,24 @@
+{
+  "captured_at_ts": 146.0,
+  "height": 720,
+  "metadata": {
+    "cycle_id": 1,
+    "in_combat": false,
+    "interaction_ready": true,
+    "phase": "interaction",
+    "targets": [
+      {
+        "distance": 0.3,
+        "metadata": {},
+        "mob_variant": "mob_a",
+        "occupied": false,
+        "reachable": true,
+        "screen_x": 700,
+        "screen_y": 310,
+        "target_id": "fallback-safe"
+      }
+    ]
+  },
+  "source": "dry_run:single_spot_mvp",
+  "width": 1280
+}

@@ -1,0 +1,44 @@
+{
+  "captured_at_ts": 190.0,
+  "height": 720,
+  "metadata": {
+    "cycle_id": 2,
+    "last_progress_ts": 190.12,
+    "phase": "approach",
+    "stall_after_s": null,
+    "targets": [
+      {
+        "distance": 3.185296,
+        "metadata": {},
+        "mob_variant": "mob_a",
+        "occupied": false,
+        "reachable": true,
+        "screen_x": 697,
+        "screen_y": 305,
+        "target_id": "live-spawn-2-1"
+      },
+      {
+        "distance": 4.246364,
+        "metadata": {},
+        "mob_variant": "mob_b",
+        "occupied": false,
+        "reachable": true,
+        "screen_x": 698,
+        "screen_y": 265,
+        "target_id": "live-spawn-2-2"
+      },
+      {
+        "distance": 5.412793,
+        "metadata": {},
+        "mob_variant": "mob_a",
+        "occupied": false,
+        "reachable": true,
+        "screen_x": 604,
+        "screen_y": 308,
+        "target_id": "live-spawn-2-3"
+      }
+    ]
+  },
+  "source": "dry_run:single_spot_mvp",
+  "width": 1280
+}

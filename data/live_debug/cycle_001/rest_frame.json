@@ -1,0 +1,14 @@
+{
+  "captured_at_ts": 147.2,
+  "height": 720,
+  "metadata": {
+    "condition_ratio": 0.98,
+    "cycle_id": 1,
+    "hp_ratio": 1.0,
+    "phase": "rest",
+    "rest_available": true,
+    "rest_tick_count": 3
+  },
+  "source": "dry_run:single_spot_mvp",
+  "width": 1280
+}

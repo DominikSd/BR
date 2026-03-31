@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Sequence
 
+from botlab.adapters.live import LiveRunner
 from botlab.adapters.simulation.combat_profiles import SimulatedCombatProfileCatalog
 from botlab.adapters.simulation.combat_plans import SimulatedCombatPlanCatalog
 from botlab.adapters.simulation.replay import (
@@ -176,6 +177,17 @@ def _run_simulation(
     combat_profile_name: str | None,
     enable_console: bool,
 ) -> SimulationReport:
+    if settings.app.mode == "live":
+        if replay is not None:
+            raise ValueError("Tryb live nie obsluguje scenario replay. Uzyj konfiguracji live.")
+        runner = LiveRunner.from_settings(
+            settings,
+            initial_anchor_spawn_ts=anchor_spawn_ts,
+            initial_anchor_cycle_id=anchor_cycle_id,
+            enable_console=enable_console,
+        )
+        return runner.run_cycles(cycles)
+
     if replay is None:
         spawner = None
         if combat_plan_name is not None or combat_profile_name is not None:
@@ -350,6 +362,7 @@ def _print_report(
     print(f"failure={report.count_result('failure')}")
     print(f"no_event={report.count_result('no_event')}")
     print(f"no_target_available={report.count_result('no_target_available')}")
+    print(f"approach_failed={report.count_result('approach_failed')}")
     print(f"late_event_missed={report.count_result('late_event_missed')}")
     print(f"verify_timeout={report.count_result('verify_timeout')}")
     print(f"execution_error={report.count_result('execution_error')}")

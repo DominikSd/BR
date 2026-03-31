@@ -1,0 +1,47 @@
+{
+  "captured_at_ts": 145.0,
+  "height": 720,
+  "metadata": {
+    "condition_ratio": 1.0,
+    "cycle_id": 1,
+    "hp_ratio": 1.0,
+    "in_combat": false,
+    "phase": "observation",
+    "rest_available": true,
+    "reward_visible": false,
+    "targets": [
+      {
+        "distance": 1.0,
+        "metadata": {},
+        "mob_variant": "mob_a",
+        "occupied": true,
+        "reachable": true,
+        "screen_x": 520,
+        "screen_y": 280,
+        "target_id": "occupied-near"
+      },
+      {
+        "distance": 2.4,
+        "metadata": {},
+        "mob_variant": "mob_b",
+        "occupied": false,
+        "reachable": true,
+        "screen_x": 620,
+        "screen_y": 300,
+        "target_id": "front-free"
+      },
+      {
+        "distance": 4.0,
+        "metadata": {},
+        "mob_variant": "mob_a",
+        "occupied": false,
+        "reachable": true,
+        "screen_x": 760,
+        "screen_y": 318,
+        "target_id": "fallback-safe"
+      }
+    ]
+  },
+  "source": "dry_run:single_spot_mvp",
+  "width": 1280
+}
