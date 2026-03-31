@@ -3,8 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from botlab.config import Settings, TelemetryConfig, load_default_config
-from botlab.simulation.runner import SimulationRunner
-from botlab.simulation.spawner import CycleScenario, SimulatedSpawner
+from botlab.adapters.simulation.runner import SimulationRunner
+from botlab.adapters.simulation.spawner import CycleScenario, SimulatedSpawner
 from botlab.types import BotState
 
 

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from botlab.config import load_default_config
-from botlab.simulation.battle import SimulatedBattle, SimulatedRest
-from botlab.simulation.spawner import CycleScenario
+from botlab.adapters.simulation.battle import SimulatedBattle, SimulatedRest
+from botlab.adapters.simulation.spawner import CycleScenario
 import pytest
 
 

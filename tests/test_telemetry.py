@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 
 from botlab.config import TelemetryConfig
-from botlab.telemetry.logger import configure_telemetry_logger, log_telemetry_record
-from botlab.telemetry.storage import SQLiteTelemetryStorage
+from botlab.adapters.telemetry.logger import configure_telemetry_logger, log_telemetry_record
+from botlab.adapters.telemetry.storage import SQLiteTelemetryStorage
 from botlab.types import BotState, TelemetryRecord
 
 

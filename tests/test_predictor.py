@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from botlab.config import load_default_config
-from botlab.core.predictor import PredictorError, SpawnPredictor
+from botlab.domain.predictor import PredictorError, SpawnPredictor
 from botlab.types import Observation
 
 

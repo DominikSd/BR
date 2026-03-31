@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from botlab.config import load_default_config
-from botlab.core.decision_engine import DecisionContext, DecisionEngine
-from botlab.core.scheduler import CycleScheduler
+from botlab.domain.decision_engine import DecisionContext, DecisionEngine
+from botlab.domain.scheduler import CycleScheduler
 from botlab.types import BotState, CombatSnapshot, Observation
 
 

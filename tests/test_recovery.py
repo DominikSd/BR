@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from botlab.config import load_default_config
-from botlab.core.recovery import RecoveryManager
-from botlab.core.scheduler import CycleScheduler
+from botlab.domain.recovery import RecoveryManager
+from botlab.domain.scheduler import CycleScheduler
 from botlab.types import BotState
 
 

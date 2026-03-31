@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from botlab.config import load_default_config
-from botlab.core.scheduler import CycleScheduler, SchedulerError
+from botlab.domain.scheduler import CycleScheduler, SchedulerError
 from botlab.types import BotState, Observation
 
 

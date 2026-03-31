@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Sequence
 
 from botlab.config import Settings, load_config, load_default_config
-from botlab.simulation.runner import SimulationReport, SimulationRunner
+from botlab.adapters.simulation.runner import SimulationReport, SimulationRunner
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
