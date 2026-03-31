@@ -211,6 +211,16 @@ class CycleOrchestrator:
                     completed_at_ts=observation_window.window_closed_ts,
                     action_metadata=action_metadata,
                 )
+            if action_result.reason == "approach_failed":
+                return self._complete_cycle_without_target(
+                    cycle_id=cycle_id,
+                    prediction=prediction,
+                    observation_window=observation_window,
+                    completed_at_ts=action_result.executed_at_ts,
+                    action_metadata=action_metadata,
+                    result="approach_failed",
+                    reason="approach_failed",
+                )
             raise RuntimeError(f"action_execution_failed: {action_result.reason}")
 
         attempt_decision = self._tick_and_record_transition(
@@ -445,6 +455,8 @@ class CycleOrchestrator:
         observation_window: ObservationWindow,
         completed_at_ts: float,
         action_metadata: dict[str, object],
+        result: str = "no_target_available",
+        reason: str = "no_target_available",
     ) -> CycleRunResult:
         self._tick_and_record_transition(
             now_ts=completed_at_ts,
@@ -469,10 +481,10 @@ class CycleOrchestrator:
                 expected_spawn_ts=prediction.predicted_spawn_ts,
                 actual_spawn_ts=observation_window.actual_spawn_ts,
                 drift_s=drift_s,
-                reason="no_target_available",
+                reason=reason,
                 reaction_ms=None,
                 verification_ms=None,
-                result="no_target_available",
+                result=result,
                 final_state=final_state,
                 metadata={
                     "note": observation_window.note,
@@ -488,7 +500,7 @@ class CycleOrchestrator:
             predicted_spawn_ts=prediction.predicted_spawn_ts,
             actual_spawn_ts=observation_window.actual_spawn_ts,
             drift_s=drift_s,
-            result="no_target_available",
+            result=result,
             final_state=final_state,
             reaction_ms=None,
             verification_ms=None,

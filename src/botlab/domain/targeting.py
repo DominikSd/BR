@@ -35,8 +35,8 @@ class RetargetDecision:
 
 @dataclass(slots=True, frozen=True)
 class TargetSelectionPolicy:
-    threat_weight: float = 0.5
-    current_target_bonus: float = 0.25
+    threat_weight: float = 0.0
+    current_target_bonus: float = 0.0
 
     def __post_init__(self) -> None:
         if self.threat_weight < 0.0:

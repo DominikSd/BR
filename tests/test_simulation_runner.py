@@ -595,6 +595,46 @@ def test_runner_reports_no_target_available_when_visible_groups_are_not_targetab
     assert cycles[0]["metadata"]["interaction_ready"] is False
 
 
+def test_runner_marks_cycle_as_approach_failed_when_movement_stalls(tmp_path: Path) -> None:
+    settings = _build_settings(tmp_path)
+
+    spawner = SimulatedSpawner(
+        overrides={
+            1: CycleScenario(
+                has_event=True,
+                spawn_zone_visible=True,
+                bot_position_xy=(0.0, 0.0),
+                groups=(
+                    SimulatedGroupState(
+                        group_id="stall-target",
+                        position_xy=(6.0, 0.0),
+                    ),
+                ),
+                approach_stall_after_step=1,
+                approach_stall_timeout_s=1.0,
+                note="approach-stall",
+            ),
+        }
+    )
+
+    runner = SimulationRunner.from_settings(
+        settings,
+        spawner=spawner,
+        initial_anchor_spawn_ts=100.0,
+        enable_console=False,
+    )
+
+    report = runner.run_cycles(1)
+
+    assert report.cycle_results[0].result == "approach_failed"
+    assert report.approach_results[0].arrived is False
+    assert report.approach_results[0].reason == "approach_stalled_no_progress_timeout"
+
+    cycles = runner.storage.fetch_cycles()
+    assert cycles[0]["result"] == "approach_failed"
+    assert cycles[0]["metadata"]["approach_reason"] == "approach_stalled_no_progress_timeout"
+
+
 def test_runner_loses_cycle_before_targeting_when_observation_position_is_reached_too_late(
     tmp_path: Path,
 ) -> None:

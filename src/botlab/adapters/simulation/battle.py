@@ -42,6 +42,8 @@ class SimulatedBattle:
         cycle_id: int,
         combat_started_ts: float,
         scenario: CycleScenario,
+        starting_hp_ratio: float = 1.0,
+        starting_condition_ratio: float = 1.0,
     ) -> list[TimedCombatSnapshot]:
         if scenario.force_battle_error:
             raise RuntimeError("forced_battle_error")
@@ -57,8 +59,13 @@ class SimulatedBattle:
         if turn_duration_s <= 0.0:
             raise ValueError("combat_turn_duration_s musi byc wieksze od 0.")
 
-        final_hp_ratio = min(max(scenario.combat_final_hp_ratio, 0.0), 1.0)
-        final_condition_ratio = min(max(scenario.combat_final_condition_ratio, 0.0), 1.0)
+        hp_start = min(max(starting_hp_ratio, 0.0), 1.0)
+        condition_start = min(max(starting_condition_ratio, 0.0), 1.0)
+        final_hp_ratio = min(hp_start, min(max(scenario.combat_final_hp_ratio, 0.0), 1.0))
+        final_condition_ratio = min(
+            condition_start,
+            min(max(scenario.combat_final_condition_ratio, 0.0), 1.0),
+        )
         total_turns = scenario.combat_turns
         default_input_fallback = (
             scenario.combat_profile_name is None
@@ -102,14 +109,14 @@ class SimulatedBattle:
                     "combat_profile_name": combat_plan_selection.metadata.get("combat_profile_name"),
                     "input_sequence": combat_inputs,
                     "input_key": combat_plan.action_for_turn(1).key,
+                    "starting_hp_ratio": hp_start,
+                    "starting_condition_ratio": condition_start,
                 },
             )
             snapshots.append(TimedCombatSnapshot(event_ts=event_ts, snapshot=final_snapshot))
             return snapshots
 
-        hp_start = 1.0
         hp_drop = hp_start - final_hp_ratio
-        condition_start = 1.0
         condition_drop = condition_start - final_condition_ratio
 
         for turn_index in range(1, total_turns):
@@ -136,6 +143,8 @@ class SimulatedBattle:
                     "combat_profile_name": combat_plan_selection.metadata.get("combat_profile_name"),
                     "input_sequence": combat_inputs,
                     "input_key": planned_action.key,
+                    "starting_hp_ratio": hp_start,
+                    "starting_condition_ratio": condition_start,
                 },
             )
             snapshots.append(TimedCombatSnapshot(event_ts=event_ts, snapshot=snapshot))
@@ -160,6 +169,8 @@ class SimulatedBattle:
                 "combat_profile_name": combat_plan_selection.metadata.get("combat_profile_name"),
                 "input_sequence": combat_inputs,
                 "input_key": combat_plan.action_for_turn(total_turns).key,
+                "starting_hp_ratio": hp_start,
+                "starting_condition_ratio": condition_start,
             },
         )
         snapshots.append(TimedCombatSnapshot(event_ts=combat_finished_ts, snapshot=final_snapshot))

@@ -651,6 +651,12 @@ def _parse_cycle_scenario(raw_scenario: object) -> CycleScenario:
         combat_turns=_optional_positive_int(raw_scenario, "combat_turns", 3),
         combat_turn_duration_s=_optional_nullable_float(raw_scenario, "combat_turn_duration_s", None),
         combat_final_hp_ratio=_optional_float(raw_scenario, "combat_final_hp_ratio", 0.80),
+        combat_final_condition_ratio=_optional_float(
+            raw_scenario,
+            "combat_final_condition_ratio",
+            0.80,
+        ),
+        reward_duration_s=_optional_float(raw_scenario, "reward_duration_s", 0.350),
         combat_strategy=_optional_str(raw_scenario, "combat_strategy", "default"),
         combat_profile_name=_optional_nullable_str(raw_scenario, "combat_profile_name", None),
         combat_plan_name=_optional_nullable_str(raw_scenario, "combat_plan_name", None),
@@ -669,6 +675,16 @@ def _parse_cycle_scenario(raw_scenario: object) -> CycleScenario:
             raw_scenario,
             "approach_revalidation_delay_s",
             0.250,
+        ),
+        approach_stall_after_step=_optional_nullable_non_negative_int(
+            raw_scenario,
+            "approach_stall_after_step",
+            None,
+        ),
+        approach_stall_timeout_s=_optional_float(
+            raw_scenario,
+            "approach_stall_timeout_s",
+            1.0,
         ),
         approach_bot_position_xy=_optional_nullable_point(
             raw_scenario,
@@ -689,6 +705,18 @@ def _parse_cycle_scenario(raw_scenario: object) -> CycleScenario:
         approach_groups=_optional_groups(raw_scenario, "approach_groups", None),
         interaction_groups=_optional_groups(raw_scenario, "interaction_groups", None),
         groups=_optional_groups(raw_scenario, "groups", ()),
+        spawn_circle_center_xy=_optional_nullable_point(
+            raw_scenario,
+            "spawn_circle_center_xy",
+            None,
+        ),
+        spawn_circle_radius=_optional_nullable_float(
+            raw_scenario,
+            "spawn_circle_radius",
+            None,
+        ),
+        spawn_group_count=_optional_non_negative_int(raw_scenario, "spawn_group_count", 0),
+        spawn_random_seed=_optional_non_negative_int(raw_scenario, "spawn_random_seed", 0),
         note=_optional_str(raw_scenario, "note", ""),
     )
 
@@ -789,6 +817,21 @@ def _optional_non_negative_int(data: Mapping[str, object], key: str, default: in
     value = data.get(key, default)
     if not isinstance(value, int):
         raise ValueError(f"Pole '{key}' musi byc liczba calkowita.")
+    if value < 0:
+        raise ValueError(f"Pole '{key}' nie moze byc ujemne.")
+    return value
+
+
+def _optional_nullable_non_negative_int(
+    data: Mapping[str, object],
+    key: str,
+    default: int | None,
+) -> int | None:
+    value = data.get(key, default)
+    if value is None:
+        return None
+    if not isinstance(value, int):
+        raise ValueError(f"Pole '{key}' musi byc liczba calkowita albo null.")
     if value < 0:
         raise ValueError(f"Pole '{key}' nie moze byc ujemne.")
     return value

@@ -288,6 +288,7 @@ class SimulatedTargetApproachProvider:
 
     def approach_target(self, target_resolution: TargetResolution) -> TargetApproachResult:
         world_snapshot = target_resolution.world_snapshot
+        scenario = self._runtime.context_for_cycle(target_resolution.cycle_id).spawn_event.scenario
         started_at_ts = world_snapshot.observed_at_ts
         target_id = target_resolution.selected_target_id
 
@@ -327,6 +328,17 @@ class SimulatedTargetApproachProvider:
             started_at_ts=started_at_ts,
             travel_distance=travel_distance,
         )
+        stall_result = self._build_stall_result(
+            cycle_id=target_resolution.cycle_id,
+            target_id=target_id,
+            started_at_ts=started_at_ts,
+            travel_distance=travel_distance,
+            movement_steps=movement_steps,
+            decision_reason=target_resolution.decision.reason,
+            scenario=scenario,
+        )
+        if stall_result is not None:
+            return stall_result
 
         return TargetApproachResult(
             cycle_id=target_resolution.cycle_id,
@@ -347,6 +359,59 @@ class SimulatedTargetApproachProvider:
                 "step_distance_units": self._step_distance_units,
                 "movement_step_count": len(movement_steps),
                 "movement_steps": movement_steps,
+            },
+        )
+
+    def _build_stall_result(
+        self,
+        *,
+        cycle_id: int,
+        target_id: str,
+        started_at_ts: float,
+        travel_distance: float,
+        movement_steps: list[dict[str, float | int]],
+        decision_reason: str,
+        scenario,
+    ) -> TargetApproachResult | None:
+        stall_after_step = scenario.approach_stall_after_step
+        if stall_after_step is None or travel_distance <= 0.0:
+            return None
+        if stall_after_step < 0:
+            raise ValueError("approach_stall_after_step nie moze byc ujemny.")
+        if scenario.approach_stall_timeout_s <= 0.0:
+            raise ValueError("approach_stall_timeout_s musi byc wieksze od 0.")
+        if stall_after_step >= len(movement_steps):
+            return None
+
+        completed_steps = movement_steps[:stall_after_step]
+        last_progress_ts = started_at_ts
+        if completed_steps:
+            last_step_arrived_ts = completed_steps[-1].get("arrived_ts")
+            if isinstance(last_step_arrived_ts, (int, float)):
+                last_progress_ts = float(last_step_arrived_ts)
+        stalled_at_ts = last_progress_ts + scenario.approach_stall_timeout_s
+
+        return TargetApproachResult(
+            cycle_id=cycle_id,
+            target_id=target_id,
+            started_at_ts=started_at_ts,
+            completed_at_ts=stalled_at_ts,
+            travel_s=max(0.0, stalled_at_ts - started_at_ts),
+            arrived=False,
+            reason="approach_stalled_no_progress_timeout",
+            initial_target_id=target_id,
+            retargeted=False,
+            metadata={
+                "decision_reason": decision_reason,
+                "movement_speed_units_per_s": self._movement_speed_units_per_s,
+                "interaction_range": self._interaction_range,
+                "travel_distance": travel_distance,
+                "step_distance_units": self._step_distance_units,
+                "movement_step_count": len(completed_steps),
+                "movement_steps": completed_steps,
+                "stall_after_step": stall_after_step,
+                "stall_timeout_s": scenario.approach_stall_timeout_s,
+                "stalled_at_ts": stalled_at_ts,
             },
         )
 

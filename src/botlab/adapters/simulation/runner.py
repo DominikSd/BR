@@ -74,6 +74,12 @@ class SimulatedCycleContext:
     trace: CycleTrace
 
 
+@dataclass(slots=True)
+class SimulatedSessionState:
+    hp_ratio: float = 1.0
+    condition_ratio: float = 1.0
+
+
 class SimulatedCycleRuntime:
     """Współdzielona materializacja cyklu dla wszystkich adapterów portów."""
 
@@ -87,6 +93,7 @@ class SimulatedCycleRuntime:
         self._scheduler = scheduler
         self._spawner = spawner
         self._world = world
+        self._session_state = SimulatedSessionState()
         self._contexts: dict[int, SimulatedCycleContext] = {}
         self._observation_preparations: dict[int, ObservationPreparationResult] = {}
         self._target_resolutions: dict[int, TargetResolution] = {}
@@ -134,6 +141,19 @@ class SimulatedCycleRuntime:
 
     def groups_for_cycle(self, cycle_id: int) -> tuple[object, ...]:
         return self._spawner.groups_for_cycle(cycle_id)
+
+    @property
+    def session_state(self) -> SimulatedSessionState:
+        return self._session_state
+
+    def update_session_resources(
+        self,
+        *,
+        hp_ratio: float,
+        condition_ratio: float,
+    ) -> None:
+        self._session_state.hp_ratio = min(max(hp_ratio, 0.0), 1.0)
+        self._session_state.condition_ratio = min(max(condition_ratio, 0.0), 1.0)
 
     def set_observation_preparation(
         self,
@@ -340,6 +360,7 @@ class SimulationRunner:
                     initial_cycle_id=cycle_id,
                 )
             )
+            self._update_session_resources_from_cycle(cycle_id)
 
         cycle_records = [
             record
@@ -445,6 +466,26 @@ class SimulationRunner:
 
         raise RuntimeError("Logger nie ma skonfigurowanego FileHandler.")
 
+    def _update_session_resources_from_cycle(self, cycle_id: int) -> None:
+        cycle_records = [
+            record for record in self._storage.fetch_cycles() if int(record["cycle_id"]) == cycle_id
+        ]
+        if not cycle_records:
+            return
+
+        metadata = cycle_records[-1].get("metadata", {})
+        hp_ratio = metadata.get("rest_final_hp_ratio", metadata.get("combat_final_hp_ratio"))
+        condition_ratio = metadata.get(
+            "rest_final_condition_ratio",
+            metadata.get("combat_final_condition_ratio"),
+        )
+        if hp_ratio is None or condition_ratio is None:
+            return
+        self._runtime.update_session_resources(
+            hp_ratio=float(hp_ratio),
+            condition_ratio=float(condition_ratio),
+        )
+
 
 class SimulatedObservationProvider(ObservationProvider):
     def __init__(self, runtime: SimulatedCycleRuntime) -> None:
@@ -509,6 +550,19 @@ class SimulatedActionExecutor(ActionExecutor):
             selected_target_id = None if approach_result is None else approach_result.target_id
         if interaction_result is None and approach_result is None and target_resolution is not None:
             selected_target_id = target_resolution.selected_target_id
+
+        if interaction_result is not None and not interaction_result.ready:
+            return ActionResult(
+                cycle_id=context.cycle_id,
+                success=False,
+                executed_at_ts=interaction_result.observed_at_ts,
+                reason=(
+                    "no_target_available"
+                    if interaction_result.target_id is None
+                    else "approach_failed"
+                ),
+                metadata=engagement_metadata,
+            )
 
         if selected_target_id is None:
             return ActionResult(
@@ -588,6 +642,8 @@ class SimulatedActionExecutor(ActionExecutor):
 
         return {
             **combat_metadata,
+            "session_hp_ratio_before_cycle": self._runtime.session_state.hp_ratio,
+            "session_condition_ratio_before_cycle": self._runtime.session_state.condition_ratio,
             "initial_target_id": initial_target_id,
             "selected_target_id": selected_target_id,
             "target_decision_reason": (
@@ -691,10 +747,13 @@ class SimulatedCombatResolver(CombatResolver):
         observation: Observation,
     ) -> CombatTimeline:
         context = self._runtime.context_for_cycle(cycle_id)
+        session_state = self._runtime.session_state
         snapshots = self._battle.build_timeline(
             cycle_id=cycle_id,
             combat_started_ts=combat_started_ts,
             scenario=context.spawn_event.scenario,
+            starting_hp_ratio=session_state.hp_ratio,
+            starting_condition_ratio=session_state.condition_ratio,
         )
         return CombatTimeline(
             cycle_id=cycle_id,

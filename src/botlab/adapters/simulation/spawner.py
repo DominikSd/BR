@@ -66,6 +66,9 @@ class CycleScenario:
         Pozycja bota uzywana do obliczen dystansu widocznych grupek.
     - approach_revalidation_delay_s:
         Offset czasowy snapshotu rewalidacji celu podczas dojscia.
+    - approach_stall_after_step / approach_stall_timeout_s:
+        Opcjonalny model zaciecia podejscia. Po ostatnim kroku postepu,
+        brak dalszego postepu przez timeout oznacza failed approach.
     - approach_bot_position_xy:
         Opcjonalna pozycja bota dla snapshotu w fazie dojscia.
     - interaction_revalidation_delay_s:
@@ -105,6 +108,8 @@ class CycleScenario:
     observation_start_position_xy: tuple[float, float] | None = None
     bot_position_xy: tuple[float, float] = (0.0, 0.0)
     approach_revalidation_delay_s: float = 0.250
+    approach_stall_after_step: int | None = None
+    approach_stall_timeout_s: float = 1.0
     approach_bot_position_xy: tuple[float, float] | None = None
     interaction_revalidation_delay_s: float = 0.450
     interaction_bot_position_xy: tuple[float, float] | None = None

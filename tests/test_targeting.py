@@ -46,6 +46,13 @@ def test_select_best_target_returns_none_when_no_targetable_groups() -> None:
     assert policy.select_best_target(world) is None
 
 
+def test_target_selection_policy_defaults_to_nearest_free_without_biases() -> None:
+    policy = TargetSelectionPolicy()
+
+    assert policy.threat_weight == 0.0
+    assert policy.current_target_bonus == 0.0
+
+
 def test_select_best_target_prefers_nearest_reachable_group() -> None:
     policy = TargetSelectionPolicy(threat_weight=0.0, current_target_bonus=0.0)
     world = _world(
