@@ -19,4 +19,6 @@ logs/*.log
 data/telemetry/*.sqlite3
 data/live_debug/
 data/perception*/
-screenshots/enemies
+data/template-candidates/
+screenshots/
+assets/live/sample_frames/raw/*.png
