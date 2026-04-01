@@ -11,6 +11,15 @@
       "max_target_count": 2,
       "min_free_target_count": 1,
       "max_occupied_target_count": 0,
+      "expected_candidates": [
+        {
+          "screen_xy": [1128, 826],
+          "max_error_px": 48,
+          "occupied": false,
+          "selected": true
+        }
+      ],
+      "occupied_target_screen_xy": [],
       "selected_target_required": true,
       "selected_target_must_be_free": true,
       "selected_target_screen_xy": [1132, 822],

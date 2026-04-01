@@ -6,8 +6,7 @@ from pathlib import Path
 
 from botlab.adapters.live.capture import (
     DebugArtifactWriter,
-    DryRunWindowCapture,
-    ForegroundWindowCapture,
+    create_capture,
 )
 from botlab.adapters.live.input import LiveInputDriver
 from botlab.adapters.live.models import LiveFrame, LiveSessionState, LiveTargetDetection
@@ -844,7 +843,7 @@ class LiveRunner:
             logger_name=logger_name,
             enable_console=enable_console,
         )
-        capture = DryRunWindowCapture(settings.live) if settings.live.dry_run else ForegroundWindowCapture(settings.live)
+        capture = create_capture(settings.live)
         runtime = LiveRuntime(
             settings=settings,
             scheduler=scheduler,

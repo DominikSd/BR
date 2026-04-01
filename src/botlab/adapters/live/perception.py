@@ -253,8 +253,34 @@ class PerceptionSessionSummary:
     selection_latency: LatencyAggregate
     total_reaction_latency: LatencyAggregate
 
+    def real_scene_regression_entries(self) -> tuple[dict[str, Any], ...]:
+        entries: list[dict[str, Any]] = []
+        for result in self.frame_results:
+            if not str(result.frame_source).startswith("live_spot_scene_"):
+                continue
+            selected_target = result.selected_target
+            entries.append(
+                {
+                    "frame_source": result.frame_source,
+                    "target_count": len(result.detections),
+                    "free_target_count": len(result.free_detections),
+                    "occupied_target_count": len(result.occupied_detections),
+                    "selected_target_id": result.selected_target_id,
+                    "selected_target_xy": None
+                    if selected_target is None
+                    else [selected_target.screen_x, selected_target.screen_y],
+                    "occupied_target_xy": [
+                        [target.screen_x, target.screen_y] for target in result.occupied_detections
+                    ],
+                    "detection_latency_ms": result.timings.detection_latency_ms,
+                    "selection_latency_ms": result.timings.selection_latency_ms,
+                    "total_reaction_latency_ms": result.timings.total_reaction_latency_ms,
+                }
+            )
+        return tuple(entries)
+
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "frame_count": len(self.frame_results),
             "candidate_hits": self.candidate_hits.to_dict(),
             "merged_hits": self.merged_hits.to_dict(),
@@ -264,6 +290,10 @@ class PerceptionSessionSummary:
             "total_reaction_latency": self.total_reaction_latency.to_dict(),
             "frames": [result.to_dict() for result in self.frame_results],
         }
+        real_scene_regression = self.real_scene_regression_entries()
+        if real_scene_regression:
+            payload["real_scene_regression"] = list(real_scene_regression)
+        return payload
 
 
 class TemplatePackLoader:
@@ -495,18 +525,28 @@ class PerceptionAnalyzer:
                 frame_width=frame.width,
                 frame_height=frame.height,
             )
-            occupied_hits = _match_local_variants(
-                image=image,
-                box=occupied_roi_box,
-                variants=template_pack.occupied_variants,
-                confidence_threshold=self._live_config.occupied_confidence_threshold,
-                stride_px=local_stride_px,
-            )
             occupied_color_hits = _detect_green_swords_hits(
                 image=image,
                 box=occupied_roi_box,
                 live_config=self._live_config,
             )
+            occupied_green_ratio = _estimate_green_pixel_ratio(
+                image=image,
+                box=occupied_roi_box,
+                live_config=self._live_config,
+            )
+            should_run_occupied_template_match = bool(occupied_color_hits) or (
+                occupied_green_ratio >= self._live_config.occupied_template_match_min_green_ratio
+            )
+            occupied_hits = ()
+            if should_run_occupied_template_match:
+                occupied_hits = _match_local_variants(
+                    image=image,
+                    box=occupied_roi_box,
+                    variants=template_pack.occupied_variants,
+                    confidence_threshold=self._live_config.occupied_confidence_threshold,
+                    stride_px=local_stride_px,
+                )
             all_occupied_hits = tuple((*occupied_hits, *occupied_color_hits))
             raw_hits.extend(all_occupied_hits)
 
@@ -531,6 +571,7 @@ class PerceptionAnalyzer:
             best_confirmation = _select_best_confirmation_hit(
                 marker_hit=marker_hit,
                 confirmation_hits=confirmation_hits,
+                image=image,
                 live_config=self._live_config,
             )
             if best_confirmation is None:
@@ -564,11 +605,16 @@ class PerceptionAnalyzer:
                         "marker_confidence": marker_hit.confidence,
                         "marker_pixel_count": int(marker_hit.metadata.get("pixel_count", 0)),
                         "occupied_confidence": occupied_confidence,
+                        "occupied_green_ratio": occupied_green_ratio,
+                        "occupied_template_match_enabled": should_run_occupied_template_match,
                         "occupied_roi": list(occupied_roi_box),
                         "confirmation_roi": list(confirmation_roi_box),
                         "confirmation_confidence": best_confirmation.confidence,
                         "confirmation_alignment_score": float(
                             best_confirmation.metadata.get("alignment_score", 0.0)
+                        ),
+                        "confirmation_foreground_score": float(
+                            best_confirmation.metadata.get("foreground_score", 0.0)
                         ),
                         "confirmation_horizontal_gap_px": float(
                             best_confirmation.metadata.get("horizontal_gap_px", 0.0)
@@ -1331,11 +1377,15 @@ def _select_best_confirmation_hit(
     *,
     marker_hit: TemplateHit,
     confirmation_hits: tuple[TemplateHit, ...],
+    image: Any,
     live_config: LiveConfig,
 ) -> TemplateHit | None:
     if not confirmation_hits:
         return None
     marker_center_x, marker_center_y = marker_hit.center_xy
+    alignment_weight = max(0.0, min(1.0, float(live_config.confirmation_alignment_weight)))
+    foreground_weight = max(0.0, min(1.0, float(live_config.confirmation_foreground_weight)))
+    template_weight = max(0.0, 1.0 - alignment_weight - foreground_weight)
     scored_hits: list[tuple[float, TemplateHit]] = []
     for hit in confirmation_hits:
         hit_center_x, hit_center_y = hit.center_xy
@@ -1365,7 +1415,15 @@ def _select_best_confirmation_hit(
         )
         vertical_penalty = abs(vertical_gap - vertical_midpoint) / vertical_span
         alignment_score = max(0.0, 1.0 - ((horizontal_penalty * 0.6) + (vertical_penalty * 0.4)))
-        combined_score = (hit.confidence * 0.75) + (alignment_score * 0.25)
+        foreground_score = _estimate_confirmation_foreground_score(
+            image=image,
+            bbox=hit.bbox,
+        )
+        combined_score = (
+            (hit.confidence * template_weight)
+            + (alignment_score * alignment_weight)
+            + (foreground_score * foreground_weight)
+        )
         scored_hits.append(
             (
                 combined_score,
@@ -1374,6 +1432,7 @@ def _select_best_confirmation_hit(
                     metadata={
                         **hit.metadata,
                         "alignment_score": alignment_score,
+                        "foreground_score": foreground_score,
                         "horizontal_gap_px": horizontal_gap,
                         "vertical_gap_px": vertical_gap,
                         "combined_confirmation_score": combined_score,
@@ -1392,6 +1451,33 @@ def _select_best_confirmation_hit(
         reverse=True,
     )
     return scored_hits[0][1]
+
+
+def _estimate_confirmation_foreground_score(
+    *,
+    image: Any,
+    bbox: tuple[int, int, int, int],
+) -> float:
+    if ImageStat is None or ImageOps is None or Image is None:
+        return 0.0
+    left, top, width, height = bbox
+    if width <= 0 or height <= 0:
+        return 0.0
+    candidate_image = image.crop((left, top, left + width, top + height)).convert("RGB")
+    if candidate_image.size[0] == 0 or candidate_image.size[1] == 0:
+        return 0.0
+
+    grayscale_image = ImageOps.grayscale(candidate_image)
+    grayscale_stat = ImageStat.Stat(grayscale_image)
+    brightness_stddev = float(grayscale_stat.stddev[0]) if grayscale_stat.stddev else 0.0
+
+    hsv_image = candidate_image.convert("HSV")
+    hsv_stat = ImageStat.Stat(hsv_image)
+    saturation_mean = float(hsv_stat.mean[1]) if len(hsv_stat.mean) > 1 else 0.0
+
+    brightness_score = max(0.0, min(1.0, brightness_stddev / 64.0))
+    saturation_score = max(0.0, min(1.0, saturation_mean / 160.0))
+    return (brightness_score * 0.55) + (saturation_score * 0.45)
 
 
 def _detect_green_swords_hits(
@@ -1493,6 +1579,30 @@ def _detect_green_swords_hits(
                 )
             )
     return tuple(hits)
+
+
+def _estimate_green_pixel_ratio(
+    *,
+    image: Any,
+    box: tuple[int, int, int, int],
+    live_config: LiveConfig,
+) -> float:
+    left, top, width, height = box
+    if width <= 0 or height <= 0:
+        return 0.0
+    roi_image = image.crop((left, top, left + width, top + height)).convert("RGB")
+    pixels = list(roi_image.getdata())
+    if not pixels:
+        return 0.0
+    matching_pixels = 0
+    for red_value, green_value, blue_value in pixels:
+        if (
+            green_value >= live_config.swords_min_green
+            and (green_value - red_value) >= live_config.swords_green_red_delta
+            and (green_value - blue_value) >= live_config.swords_green_blue_delta
+        ):
+            matching_pixels += 1
+    return matching_pixels / float(len(pixels))
 
 
 def _compute_swords_pixel_strength(

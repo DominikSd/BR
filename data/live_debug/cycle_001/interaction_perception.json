@@ -64,13 +64,13 @@
   },
   "selected_target_id": "fallback-safe",
   "timings": {
-    "action_ready_ts": 164.6506966897657,
-    "detection_finished_ts": 164.6506930897674,
-    "detection_latency_ms": 0.06890000076964498,
+    "action_ready_ts": 164.650675489768,
+    "detection_finished_ts": 164.65067298976714,
+    "detection_latency_ms": 0.048800000513438135,
     "detection_started_ts": 164.65062418976663,
     "frame_captured_ts": 164.65062418976663,
-    "selection_latency_ms": 0.0035999983083456755,
-    "target_selected_ts": 164.6506966897657,
-    "total_reaction_latency_ms": 0.07249999907799065
+    "selection_latency_ms": 0.0025000008463393897,
+    "target_selected_ts": 164.650675489768,
+    "total_reaction_latency_ms": 0.051300001359777525
   }
 }

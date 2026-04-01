@@ -246,6 +246,37 @@ def test_main_can_run_perception_batch_analysis(tmp_path: Path, capsys) -> None:
     assert (output_dir / "batch_frame_a_perception.json").exists() is True
     assert (output_dir / "batch_frame_b_perception.json").exists() is True
     assert (output_dir / "perception_session_summary.json").exists() is True
+    assert "real_scene_regression=" not in captured.out
+
+
+def test_main_can_route_to_live_preview(monkeypatch, capsys) -> None:
+    calls = {"count": 0}
+
+    class PreviewStub:
+        def __init__(self, *, settings, enable_console):
+            self.settings = settings
+            self.enable_console = enable_console
+
+        def run(self):
+            calls["count"] += 1
+            print(f"preview_mode=live source_mode={self.settings.app.mode}")
+            return 0
+
+    monkeypatch.setattr("botlab.main.LiveVisionPreview", PreviewStub)
+
+    exit_code = main(
+        [
+            "--config",
+            "config/live_dry_run.yaml",
+            "--live-preview",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert calls["count"] == 1
+    assert "preview_mode=live" in captured.out
 
 
 def test_main_lists_combat_plans(capsys) -> None:

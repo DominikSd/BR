@@ -8,15 +8,22 @@ import pytest
 
 from botlab.adapters.live import (
     LiveRunner,
+    LiveVisionPreviewRenderer,
     PerceptionAnalysisRunner,
     StallDetector,
+    build_live_preview_state,
     filter_occupied_targets,
     merge_template_hits,
     select_nearest_target,
     should_start_rest,
 )
-from botlab.adapters.live.models import LiveTargetDetection
-from botlab.adapters.live.perception import PerceptionFrameLoader, TemplateHit, TemplatePackLoader
+from botlab.adapters.live.models import LiveFrame, LiveTargetDetection
+from botlab.adapters.live.perception import (
+    PerceptionFrameLoader,
+    ReactionLatency,
+    TemplateHit,
+    TemplatePackLoader,
+)
 from botlab.adapters.live.vision import extract_named_roi
 from botlab.config import Settings, TelemetryConfig, load_config, load_default_config
 
@@ -107,6 +114,32 @@ def _build_marker_first_settings(tmp_path: Path) -> Settings:
         confirmation_roi_offset_y_px=0,
     )
     return replace(settings, live=live)
+
+
+def _euclidean_distance(
+    *,
+    left_xy: tuple[float, float],
+    right_xy: tuple[float, float],
+) -> float:
+    return ((left_xy[0] - right_xy[0]) ** 2 + (left_xy[1] - right_xy[1]) ** 2) ** 0.5
+
+
+def _find_closest_detection(
+    *,
+    detections: tuple[LiveTargetDetection, ...] | list[LiveTargetDetection],
+    expected_xy: tuple[float, float],
+) -> tuple[LiveTargetDetection | None, float]:
+    closest_target: LiveTargetDetection | None = None
+    closest_distance = float("inf")
+    for detection in detections:
+        distance = _euclidean_distance(
+            left_xy=(float(detection.screen_x), float(detection.screen_y)),
+            right_xy=expected_xy,
+        )
+        if distance < closest_distance:
+            closest_distance = distance
+            closest_target = detection
+    return closest_target, closest_distance
 
 
 def test_filter_occupied_targets_excludes_busy_groups() -> None:
@@ -264,6 +297,81 @@ def test_perception_batch_analysis_aggregates_session_metrics_from_fixtures(tmp_
     assert (output_directory / "batch_frame_a_perception.json").exists() is True
     assert (output_directory / "batch_frame_b_perception.json").exists() is True
     assert (output_directory / "perception_session_summary.json").exists() is True
+    assert summary.real_scene_regression_entries() == ()
+
+
+def test_perception_session_summary_can_emit_real_scene_regression_entries() -> None:
+    settings = load_config("config/live_dry_run.yaml")
+    analyzer = PerceptionAnalysisRunner(
+        live_config=settings.live,
+        output_directory=Path("data") / "unused-perception-summary-test",
+    )._analyzer
+    result = analyzer.analyze_frame(
+        LiveFrame(
+            width=1280,
+            height=720,
+            captured_at_ts=0.0,
+            source="live_spot_scene_1",
+            metadata={
+                "reference_point_xy": [640, 360],
+                "template_hits": [
+                    {
+                        "label": "mob_a",
+                        "x": 600,
+                        "y": 260,
+                        "width": 40,
+                        "height": 52,
+                        "confidence": 0.93,
+                        "target_id": "free-near",
+                    },
+                    {
+                        "label": "mob_b",
+                        "x": 720,
+                        "y": 280,
+                        "width": 42,
+                        "height": 54,
+                        "confidence": 0.91,
+                        "target_id": "busy-mid",
+                    },
+                    {
+                        "label": "occupied_swords",
+                        "x": 722,
+                        "y": 244,
+                        "width": 28,
+                        "height": 18,
+                        "confidence": 0.95,
+                        "target_id": "busy-mid",
+                    },
+                ],
+            },
+            image=None,
+        ),
+        cycle_id=1,
+        phase="live_spot_scene_1",
+    )
+    result = replace(
+        result,
+        timings=ReactionLatency(
+            frame_captured_ts=0.0,
+            detection_started_ts=0.0,
+            detection_finished_ts=0.012,
+            target_selected_ts=0.016,
+            action_ready_ts=0.018,
+        ),
+    )
+    summary = analyzer.summarize_session((result,))
+
+    entries = summary.real_scene_regression_entries()
+
+    assert len(entries) == 1
+    assert entries[0]["frame_source"] == "live_spot_scene_1"
+    assert entries[0]["target_count"] == 2
+    assert entries[0]["free_target_count"] == 1
+    assert entries[0]["occupied_target_count"] == 1
+    assert entries[0]["selected_target_id"] == "free-near"
+    assert entries[0]["selected_target_xy"] == [620, 286]
+    assert entries[0]["occupied_target_xy"] == [[741, 307]]
+    assert "real_scene_regression" in summary.to_dict()
 
 
 def test_template_pack_loader_reads_real_template_directories(tmp_path: Path) -> None:
@@ -383,7 +491,64 @@ def test_marker_first_perception_detects_occupied_and_selects_nearest_free_targe
     assert "marker_bbox" in result.selected_target.metadata
     assert "confirmation_roi" in result.selected_target.metadata
     assert "occupied_roi" in result.selected_target.metadata
+    assert "occupied_green_ratio" in result.selected_target.metadata
+    assert "occupied_template_match_enabled" in result.selected_target.metadata
+    assert "confirmation_foreground_score" in result.selected_target.metadata
     assert (output_directory / "marker_frame_perception.json").exists() is True
+
+
+def test_live_preview_state_and_renderer_prepare_debug_overlay(tmp_path: Path) -> None:
+    from PIL import Image, ImageDraw
+
+    settings = _build_marker_first_settings(tmp_path)
+    output_directory = tmp_path / "perception-preview"
+    frame_path = tmp_path / "preview_frame.png"
+    sidecar_path = tmp_path / "preview_frame.json"
+
+    frame_image = Image.new("RGB", (320, 240), color=(40, 40, 40))
+    draw = ImageDraw.Draw(frame_image)
+    mob_a_template = Image.open(settings.live.mobs_template_directory / "mob_a" / "base.png").convert("RGB")
+    frame_image.paste(mob_a_template, (150, 102))
+    draw.polygon([(159, 90), (163, 84), (167, 90), (163, 96)], fill=(225, 55, 55))
+    frame_image.save(frame_path)
+    sidecar_path.write_text(
+        json.dumps(
+            {
+                "captured_at_ts": 100.0,
+                "source": "preview-render-test",
+                "metadata": {
+                    "spawn_roi": [0, 0, 320, 240],
+                    "reference_point_xy": [160, 210],
+                    "perception_profile": {
+                        "detection_duration_s": 0.010,
+                        "selection_duration_s": 0.003,
+                        "action_ready_duration_s": 0.002,
+                    },
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    runner = PerceptionAnalysisRunner(
+        live_config=settings.live,
+        output_directory=output_directory,
+    )
+    summary = runner.analyze_frame_path(frame_path)
+    result = summary.frame_results[0]
+    frame = PerceptionFrameLoader().load_frame(frame_path)
+    state = build_live_preview_state(frame=frame, result=result)
+    renderer = LiveVisionPreviewRenderer(max_width_px=200, max_height_px=160)
+    image = renderer.render(frame=frame, result=result, state=state)
+
+    assert state.candidate_count == len(result.detections)
+    assert state.free_target_count == len(result.free_detections)
+    assert state.selected_target_id == result.selected_target_id
+    assert any("reaction=" in line for line in state.headline_lines)
+    assert image.size[0] <= 200
+    assert image.size[1] <= 160
 
 
 def test_marker_first_pipeline_can_smoke_test_real_sample_frame_if_present(tmp_path: Path) -> None:
@@ -491,10 +656,61 @@ def test_live_spot_scenes_match_expected_perception_contracts(tmp_path: Path) ->
             and all(isinstance(item, (int, float)) for item in selected_target_screen_xy)
         ):
             assert result.selected_target is not None, frame_name
-            delta = ((result.selected_target.screen_x - float(selected_target_screen_xy[0])) ** 2 + (
-                result.selected_target.screen_y - float(selected_target_screen_xy[1])
-            ) ** 2) ** 0.5
+            delta = _euclidean_distance(
+                left_xy=(float(result.selected_target.screen_x), float(result.selected_target.screen_y)),
+                right_xy=(float(selected_target_screen_xy[0]), float(selected_target_screen_xy[1])),
+            )
             assert delta <= float(selected_target_max_error_px), frame_name
+
+        occupied_target_screen_xy = expected.get("occupied_target_screen_xy")
+        occupied_target_max_error_px = expected.get("occupied_target_max_error_px", 56)
+        if isinstance(occupied_target_screen_xy, list):
+            actual_occupied_points = [
+                (float(target.screen_x), float(target.screen_y))
+                for target in result.occupied_detections
+            ]
+            if len(occupied_target_screen_xy) == 0:
+                assert len(actual_occupied_points) == 0, frame_name
+            else:
+                for expected_xy in occupied_target_screen_xy:
+                    assert isinstance(expected_xy, list), frame_name
+                    assert len(expected_xy) == 2, frame_name
+                    assert any(
+                        _euclidean_distance(
+                            left_xy=(float(expected_xy[0]), float(expected_xy[1])),
+                            right_xy=actual_xy,
+                        ) <= float(occupied_target_max_error_px)
+                        for actual_xy in actual_occupied_points
+                    ), frame_name
+
+        expected_candidates = expected.get("expected_candidates")
+        if isinstance(expected_candidates, list):
+            for candidate_expectation in expected_candidates:
+                assert isinstance(candidate_expectation, dict), frame_name
+                raw_screen_xy = candidate_expectation.get("screen_xy")
+                assert isinstance(raw_screen_xy, list), frame_name
+                assert len(raw_screen_xy) == 2, frame_name
+                assert all(isinstance(item, (int, float)) for item in raw_screen_xy), frame_name
+                max_error_px = float(candidate_expectation.get("max_error_px", 48))
+
+                matched_target, matched_distance = _find_closest_detection(
+                    detections=result.detections,
+                    expected_xy=(float(raw_screen_xy[0]), float(raw_screen_xy[1])),
+                )
+                assert matched_target is not None, frame_name
+                assert matched_distance <= max_error_px, frame_name
+
+                expected_occupied = candidate_expectation.get("occupied")
+                if isinstance(expected_occupied, bool):
+                    assert matched_target.occupied is expected_occupied, frame_name
+
+                expected_selected = candidate_expectation.get("selected")
+                if isinstance(expected_selected, bool):
+                    if expected_selected:
+                        assert result.selected_target is not None, frame_name
+                        assert matched_target.target_id == result.selected_target.target_id, frame_name
+                    elif result.selected_target is not None:
+                        assert matched_target.target_id != result.selected_target.target_id, frame_name
 
 
 def test_live_runner_dry_run_executes_minimal_vertical_slice(tmp_path: Path) -> None:

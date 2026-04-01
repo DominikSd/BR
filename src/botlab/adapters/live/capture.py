@@ -420,6 +420,10 @@ class DryRunWindowCapture:
         }
 
 
+def create_capture(live_config: LiveConfig):
+    return DryRunWindowCapture(live_config) if live_config.dry_run else ForegroundWindowCapture(live_config)
+
+
 def _targets_to_metadata(targets: tuple[LiveTargetDetection, ...]) -> list[dict[str, Any]]:
     return [
         {

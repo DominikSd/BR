@@ -62,13 +62,19 @@ def test_load_default_config_returns_settings() -> None:
     assert settings.live.marker_confidence_threshold == 0.55
     assert settings.live.swords_min_green == 120
     assert settings.live.swords_confidence_threshold == 0.25
+    assert settings.live.occupied_template_match_min_green_ratio == 0.01
     assert settings.live.occupied_local_roi_width_px == 64
     assert settings.live.confirmation_roi_width_px == 88
+    assert settings.live.confirmation_alignment_weight == 0.25
+    assert settings.live.confirmation_foreground_weight == 0.10
     assert settings.live.confirmation_max_horizontal_offset_px == 56
     assert settings.live.confirmation_min_vertical_offset_px == 12
     assert settings.live.confirmation_max_vertical_offset_px == 180
     assert settings.live.candidate_confirmation_frames == 1
     assert settings.live.candidate_loss_frames == 2
+    assert settings.live.preview_refresh_interval_ms == 120
+    assert settings.live.preview_max_width_px == 1600
+    assert settings.live.preview_max_height_px == 900
 
 
 def test_live_config_profile_can_be_loaded_from_yaml() -> None:
@@ -84,9 +90,13 @@ def test_live_config_profile_can_be_loaded_from_yaml() -> None:
     assert settings.live.marker_red_green_delta == 35
     assert settings.live.swords_green_red_delta == 20
     assert settings.live.swords_min_blob_pixels == 2
+    assert settings.live.occupied_template_match_min_green_ratio == 0.01
     assert settings.live.occupied_local_roi_offset_y_px == -42
     assert settings.live.confirmation_confidence_threshold == 0.60
+    assert settings.live.confirmation_alignment_weight == 0.25
+    assert settings.live.confirmation_foreground_weight == 0.10
     assert settings.live.confirmation_max_horizontal_offset_px == 56
+    assert settings.live.preview_refresh_interval_ms == 120
 
 
 def test_cycle_prediction_window_methods() -> None:

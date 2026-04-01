@@ -102,6 +102,7 @@ class LiveConfig:
     swords_min_blob_pixels: int = 2
     swords_max_blob_pixels: int = 220
     swords_confidence_threshold: float = 0.25
+    occupied_template_match_min_green_ratio: float = 0.01
     occupied_local_roi_width_px: int = 64
     occupied_local_roi_height_px: int = 72
     occupied_local_roi_offset_y_px: int = -42
@@ -109,12 +110,17 @@ class LiveConfig:
     confirmation_roi_height_px: int = 120
     confirmation_roi_offset_y_px: int = 4
     confirmation_confidence_threshold: float = 0.60
+    confirmation_alignment_weight: float = 0.25
+    confirmation_foreground_weight: float = 0.10
     confirmation_max_horizontal_offset_px: int = 56
     confirmation_min_vertical_offset_px: int = 12
     confirmation_max_vertical_offset_px: int = 180
     candidate_confirmation_frames: int = 1
     candidate_loss_frames: int = 2
     occupied_confirmation_frames: int = 1
+    preview_refresh_interval_ms: int = 120
+    preview_max_width_px: int = 1600
+    preview_max_height_px: int = 900
 
 
 @dataclass(slots=True, frozen=True)
@@ -296,6 +302,11 @@ def load_config(config_path: str | Path) -> Settings:
             "swords_confidence_threshold",
             0.25,
         ),
+        occupied_template_match_min_green_ratio=_optional_ratio_float(
+            live_section,
+            "occupied_template_match_min_green_ratio",
+            0.01,
+        ),
         occupied_local_roi_width_px=_optional_positive_int(
             live_section,
             "occupied_local_roi_width_px",
@@ -331,6 +342,16 @@ def load_config(config_path: str | Path) -> Settings:
             "confirmation_confidence_threshold",
             0.60,
         ),
+        confirmation_alignment_weight=_optional_ratio_float(
+            live_section,
+            "confirmation_alignment_weight",
+            0.25,
+        ),
+        confirmation_foreground_weight=_optional_ratio_float(
+            live_section,
+            "confirmation_foreground_weight",
+            0.10,
+        ),
         confirmation_max_horizontal_offset_px=_optional_positive_int(
             live_section,
             "confirmation_max_horizontal_offset_px",
@@ -360,6 +381,21 @@ def load_config(config_path: str | Path) -> Settings:
             live_section,
             "occupied_confirmation_frames",
             1,
+        ),
+        preview_refresh_interval_ms=_optional_positive_int(
+            live_section,
+            "preview_refresh_interval_ms",
+            120,
+        ),
+        preview_max_width_px=_optional_positive_int(
+            live_section,
+            "preview_max_width_px",
+            1600,
+        ),
+        preview_max_height_px=_optional_positive_int(
+            live_section,
+            "preview_max_height_px",
+            900,
         ),
     )
 

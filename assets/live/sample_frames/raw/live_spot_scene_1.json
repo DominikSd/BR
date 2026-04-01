@@ -11,6 +11,31 @@
       "max_target_count": 6,
       "min_free_target_count": 2,
       "min_occupied_target_count": 2,
+      "expected_candidates": [
+        {
+          "screen_xy": [1454, 455],
+          "max_error_px": 48,
+          "occupied": false,
+          "selected": true
+        },
+        {
+          "screen_xy": [1865, 871],
+          "max_error_px": 56,
+          "occupied": true,
+          "selected": false
+        },
+        {
+          "screen_xy": [1862, 960],
+          "max_error_px": 56,
+          "occupied": true,
+          "selected": false
+        }
+      ],
+      "occupied_target_screen_xy": [
+        [1865, 871],
+        [1862, 960]
+      ],
+      "occupied_target_max_error_px": 56,
       "selected_target_required": true,
       "selected_target_must_be_free": true,
       "selected_target_screen_xy": [1449, 432],

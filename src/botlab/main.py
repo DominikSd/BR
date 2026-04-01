@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Sequence
 
-from botlab.adapters.live import LiveRunner, PerceptionAnalysisRunner
+from botlab.adapters.live import LiveRunner, LiveVisionPreview, PerceptionAnalysisRunner
 from botlab.adapters.simulation.combat_profiles import SimulatedCombatProfileCatalog
 from botlab.adapters.simulation.combat_plans import SimulatedCombatPlanCatalog
 from botlab.adapters.simulation.replay import (
@@ -125,6 +125,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
         default=None,
         help="Opcjonalny katalog wyjsciowy dla artefaktow perception. Domyslnie: live.debug_directory/perception.",
     )
+    parser.add_argument(
+        "--live-preview",
+        action="store_true",
+        help="Uruchamia osobne okno preview/debug dla live vision bez wykonywania akcji w grze.",
+    )
 
     return parser
 
@@ -157,6 +162,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
 
     settings = _load_settings(args.config)
+    if args.live_preview:
+        _validate_live_preview_args(
+            settings=settings,
+            scenario_preset=args.scenario_preset,
+            scenario_file=args.scenario_file,
+            analyze_frame=args.analyze_frame,
+            analyze_batch_dir=args.analyze_batch_dir,
+        )
+        preview = LiveVisionPreview(
+            settings=settings,
+            enable_console=args.console_log,
+        )
+        return preview.run()
     if args.analyze_frame is not None or args.analyze_batch_dir is not None:
         summary, output_directory = _run_perception_analysis(
             settings=settings,
@@ -324,6 +342,22 @@ def _validate_perception_args(
         scenario_preset is not None or scenario_file is not None
     ):
         raise ValueError("Tryb perception-only nie obsluguje scenario replay.")
+
+
+def _validate_live_preview_args(
+    *,
+    settings: Settings,
+    scenario_preset: str | None,
+    scenario_file: str | None,
+    analyze_frame: str | None,
+    analyze_batch_dir: str | None,
+) -> None:
+    if settings.app.mode != "live":
+        raise ValueError("--live-preview wymaga konfiguracji z app.mode=live.")
+    if scenario_preset is not None or scenario_file is not None:
+        raise ValueError("--live-preview nie obsluguje scenario replay.")
+    if analyze_frame is not None or analyze_batch_dir is not None:
+        raise ValueError("--live-preview nie moze byc laczony z trybem perception-only.")
 
 
 def _resolve_total_cycles(cycles: int | None, replay: ScenarioReplay | None) -> int:
@@ -551,6 +585,20 @@ def _print_perception_report(*, summary, output_directory: Path) -> None:
             f"p50_ms={p50_repr} "
             f"p95_ms={p95_repr} "
             f"max_ms={max_repr}"
+        )
+    for entry in summary.real_scene_regression_entries():
+        print(
+            "real_scene_regression="
+            f"{entry['frame_source']} "
+            f"targets={entry['target_count']} "
+            f"free_targets={entry['free_target_count']} "
+            f"occupied_targets={entry['occupied_target_count']} "
+            f"selected_target={entry['selected_target_id']} "
+            f"selected_xy={entry['selected_target_xy']} "
+            f"occupied_xy={entry['occupied_target_xy']} "
+            f"detection_latency_ms={entry['detection_latency_ms']:.3f} "
+            f"selection_latency_ms={entry['selection_latency_ms']:.3f} "
+            f"total_reaction_latency_ms={entry['total_reaction_latency_ms']:.3f}"
         )
 
 
