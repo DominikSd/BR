@@ -6,7 +6,12 @@ from botlab.adapters.live.engage import (
     classify_engage_outcome,
 )
 from botlab.adapters.live.runner import LiveRunner
-from botlab.adapters.live.preview import LiveVisionPreview, LiveVisionPreviewRenderer, build_live_preview_state
+from botlab.adapters.live.preview import (
+    LiveEngageObserve,
+    LiveVisionPreview,
+    LiveVisionPreviewRenderer,
+    build_live_preview_state,
+)
 from botlab.adapters.live.perception import (
     PerceptionAnalysisRunner,
     PerceptionAnalyzer,
@@ -24,6 +29,7 @@ from botlab.adapters.live.vision import (
 
 __all__ = [
     "LiveEngageArtifactWriter",
+    "LiveEngageObserve",
     "LiveEngageRunReport",
     "LiveEngageService",
     "LiveEngageSessionSummary",

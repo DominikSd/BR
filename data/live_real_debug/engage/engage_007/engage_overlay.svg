@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+<rect width="100%" height="100%" fill="#111827" />
+<rect x="320" y="140" width="640" height="320" fill="none" stroke="#60a5fa" stroke-width="2" />
+<rect x="684" y="335" width="40" height="52" fill="none" stroke="#22c55e" stroke-width="2" />
+<text x="684" y="331" fill="#f9fafb" font-size="14">live-spawn-7-3 free</text>
+<rect x="615" y="240" width="40" height="52" fill="none" stroke="#22c55e" stroke-width="4" />
+<text x="615" y="236" fill="#f9fafb" font-size="14">live-spawn-7-2 free</text>
+<rect x="768" y="269" width="40" height="52" fill="none" stroke="#22c55e" stroke-width="2" />
+<text x="768" y="265" fill="#f9fafb" font-size="14">live-spawn-7-1 free</text>
+<line x1="623" y1="266" x2="647" y2="266" stroke="#fde047" stroke-width="3" />
+<line x1="635" y1="254" x2="635" y2="278" stroke="#fde047" stroke-width="3" />
+<text x="651" y="258" fill="#fde047" font-size="14">click</text>
+<rect x="615" y="240" width="40" height="52" fill="none" stroke="#38bdf8" stroke-dasharray="4 4" stroke-width="2" />
+<text x="16" y="24" fill="#f9fafb" font-size="18">engage outcome=engaged reason=entered_combat_detected</text>
+</svg>

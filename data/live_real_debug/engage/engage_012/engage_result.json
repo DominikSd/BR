@@ -1,0 +1,63 @@
+{
+  "artifact_paths": {},
+  "click_screen_xy": null,
+  "completed_at_ts": 640.0,
+  "cycle_id": 12,
+  "detection_latency_ms": 29.26889999798732,
+  "final_target_id": null,
+  "input_events": [],
+  "metadata": {
+    "approach_reason": "no_target_selected",
+    "interaction_reason": "interaction_not_ready"
+  },
+  "observation_perception": {
+    "artifact_paths": {
+      "input_image": "C:\\Users\\d-sad\\Desktop\\Fun\\boty\\SOPLARZ\\data\\live_real_debug\\cycle_012\\observation_input.png",
+      "perception_json": "C:\\Users\\d-sad\\Desktop\\Fun\\boty\\SOPLARZ\\data\\live_real_debug\\cycle_012\\observation_perception.json",
+      "perception_overlay_svg": "C:\\Users\\d-sad\\Desktop\\Fun\\boty\\SOPLARZ\\data\\live_real_debug\\cycle_012\\observation_perception_overlay.svg"
+    },
+    "candidate_hit_count": 0,
+    "cycle_id": 12,
+    "detections": [],
+    "expectations": {},
+    "frame_height": 720,
+    "frame_source": "foreground_window_capture",
+    "frame_width": 1280,
+    "free_target_count": 0,
+    "merged_hit_count": 0,
+    "phase": "observation",
+    "raw_hits": [],
+    "reference_point_xy": [
+      640.0,
+      360.0
+    ],
+    "roi": {
+      "frame_height": 720,
+      "frame_width": 1280,
+      "height": 320,
+      "name": "spawn_roi",
+      "width": 640,
+      "x": 320,
+      "y": 140
+    },
+    "selected_target_id": null,
+    "timings": {
+      "action_ready_ts": 640.0292721000005,
+      "detection_finished_ts": 640.029268899998,
+      "detection_latency_ms": 29.26889999798732,
+      "detection_started_ts": 640.0,
+      "frame_captured_ts": 640.0,
+      "selection_latency_ms": 0.0032000025385059416,
+      "target_selected_ts": 640.0292721000005,
+      "total_reaction_latency_ms": 29.272100000525825
+    }
+  },
+  "outcome": "no_target_available",
+  "reason": "no_selectable_target",
+  "selected_target_id": null,
+  "selection_latency_ms": 0.0032000025385059416,
+  "started_at_ts": 640.0,
+  "total_reaction_latency_ms": 29.272100000525825,
+  "verification_latency_ms": 0.0,
+  "verification_perception": null
+}

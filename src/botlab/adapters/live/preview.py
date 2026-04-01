@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable
 
 from botlab.adapters.live.capture import create_capture
-from botlab.adapters.live.models import LiveFrame, LiveSessionState
+from botlab.adapters.live.models import LiveEngageResult, LiveFrame, LiveSessionState
 from botlab.adapters.live.perception import PerceptionAnalyzer, PerceptionFrameResult
+from botlab.adapters.live.runner import LiveRunner
 from botlab.adapters.telemetry.logger import configure_telemetry_logger
 from botlab.config import Settings
 
@@ -42,9 +43,10 @@ def build_live_preview_state(
     *,
     frame: LiveFrame,
     result: PerceptionFrameResult,
+    engage_result: LiveEngageResult | None = None,
 ) -> LiveVisionPreviewState:
     selected_target = result.selected_target
-    headline_lines = (
+    headline_lines = [
         f"source={frame.source}",
         f"targets={len(result.detections)} free={len(result.free_detections)} occupied={len(result.occupied_detections)}",
         f"selected={result.selected_target_id or 'None'}",
@@ -56,7 +58,14 @@ def build_live_preview_state(
             if selected_target is not None
             else "selected_info=None"
         ),
-    )
+    ]
+    if engage_result is not None:
+        headline_lines.append(
+            "engage="
+            f"{engage_result.outcome.value} "
+            f"click={None if engage_result.click_screen_xy is None else list(engage_result.click_screen_xy)} "
+            f"verify={engage_result.verification_latency_ms if engage_result.verification_latency_ms is not None else 0.0:.1f}ms"
+        )
     return LiveVisionPreviewState(
         frame_source=frame.source,
         frame_width=frame.width,
@@ -68,7 +77,7 @@ def build_live_preview_state(
         detection_latency_ms=result.timings.detection_latency_ms,
         selection_latency_ms=result.timings.selection_latency_ms,
         total_reaction_latency_ms=result.timings.total_reaction_latency_ms,
-        headline_lines=headline_lines,
+        headline_lines=tuple(headline_lines),
     )
 
 
@@ -88,6 +97,8 @@ class LiveVisionPreviewRenderer:
         frame: LiveFrame,
         result: PerceptionFrameResult,
         state: LiveVisionPreviewState,
+        engage_result: LiveEngageResult | None = None,
+        verification_result: PerceptionFrameResult | None = None,
     ):
         if Image is None or ImageDraw is None or ImageFont is None:
             raise RuntimeError("Preview vision wymaga Pillow.")
@@ -198,6 +209,32 @@ class LiveVisionPreviewRenderer:
                     fill=(253, 224, 71),
                     font=font,
                 )
+
+        if verification_result is not None:
+            for detection in verification_result.detections:
+                bbox = detection.bbox or (
+                    max(0, detection.screen_x - 18),
+                    max(0, detection.screen_y - 24),
+                    36,
+                    48,
+                )
+                color = (249, 115, 22) if detection.occupied else (56, 189, 248)
+                draw.rectangle(
+                    (bbox[0], bbox[1], bbox[0] + bbox[2], bbox[1] + bbox[3]),
+                    outline=color,
+                    width=2,
+                )
+
+        if engage_result is not None and engage_result.click_screen_xy is not None:
+            click_x, click_y = engage_result.click_screen_xy
+            draw.line((click_x - 12, click_y, click_x + 12, click_y), fill=(253, 224, 71), width=3)
+            draw.line((click_x, click_y - 12, click_x, click_y + 12), fill=(253, 224, 71), width=3)
+            draw.text(
+                (click_x + 16, max(8, click_y - 12)),
+                f"engage:{engage_result.outcome.value}",
+                fill=(253, 224, 71),
+                font=font,
+            )
 
         self._draw_headline_box(draw=draw, font=font, state=state)
         return self._resize_to_fit(canvas)
@@ -320,6 +357,143 @@ class LiveVisionPreview:
             if not running["value"]:
                 return
             state, image = self.render_next_frame()
+            photo = ImageTk.PhotoImage(image)
+            image_label.configure(image=photo)
+            image_label.image = photo
+            status_label.configure(text="\n".join(state.headline_lines))
+            root.after(self._settings.live.preview_refresh_interval_ms, tick)
+
+        tick()
+        root.mainloop()
+        return 0
+
+
+class LiveEngageObserve:
+    def __init__(
+        self,
+        *,
+        settings: Settings,
+        logger_name: str = "botlab.live.engage.observe",
+        enable_console: bool = True,
+    ) -> None:
+        self._safe_dry_run_enabled = not settings.live.dry_run
+        if self._safe_dry_run_enabled:
+            settings = replace(
+                settings,
+                live=replace(settings.live, dry_run=True),
+            )
+        self._settings = settings
+        self._logger = logging.getLogger(logger_name)
+        self._runner = LiveRunner.from_settings(
+            settings,
+            logger_name=logger_name,
+            enable_console=enable_console,
+        )
+        self._renderer = LiveVisionPreviewRenderer(
+            max_width_px=settings.live.preview_max_width_px,
+            max_height_px=settings.live.preview_max_height_px,
+        )
+        if self._safe_dry_run_enabled:
+            self._logger.warning(
+                "live_engage_observe forced dry_run input for safety; preview keeps real capture but disables real clicks."
+            )
+
+    @property
+    def safe_dry_run_enabled(self) -> bool:
+        return self._safe_dry_run_enabled
+
+    def render_next_attempt(self):
+        report = self._runner.run_engage_attempts(1)
+        result = report.results[0]
+        observation_result = self._runner.runtime.perception_result(
+            cycle_id=result.cycle_id,
+            phase="observation",
+        )
+        if observation_result is None:
+            raise RuntimeError("Brak observation perception result dla engage observe.")
+        verification_result = self._runner.runtime.perception_result(
+            cycle_id=result.cycle_id,
+            phase="engage_verify",
+        )
+        frame = self._runner.runtime.capture_frame(
+            cycle_id=result.cycle_id,
+            phase="observation",
+            default_ts=observation_result.timings.frame_captured_ts,
+        )
+        state = build_live_preview_state(
+            frame=frame,
+            result=observation_result,
+            engage_result=result,
+        )
+        if self._safe_dry_run_enabled:
+            state = LiveVisionPreviewState(
+                frame_source=state.frame_source,
+                frame_width=state.frame_width,
+                frame_height=state.frame_height,
+                selected_target_id=state.selected_target_id,
+                candidate_count=state.candidate_count,
+                free_target_count=state.free_target_count,
+                occupied_target_count=state.occupied_target_count,
+                detection_latency_ms=state.detection_latency_ms,
+                selection_latency_ms=state.selection_latency_ms,
+                total_reaction_latency_ms=state.total_reaction_latency_ms,
+                headline_lines=state.headline_lines + ("input_mode=dry_run_safe",),
+            )
+        image = self._renderer.render(
+            frame=frame,
+            result=observation_result,
+            state=state,
+            engage_result=result,
+            verification_result=verification_result,
+        )
+        self._logger.info(
+            "live_engage_observe cycle_id=%s outcome=%s selected=%s click=%s",
+            result.cycle_id,
+            result.outcome.value,
+            result.selected_target_id,
+            result.click_screen_xy,
+        )
+        return state, image
+
+    def run(self) -> int:
+        try:
+            import tkinter as tk
+        except Exception as exc:  # pragma: no cover - GUI environment specific
+            raise RuntimeError("Live engage observe wymaga tkinter.") from exc
+        if ImageTk is None:
+            raise RuntimeError("Live engage observe wymaga Pillow.ImageTk.")
+
+        root = tk.Tk()
+        root.title("botlab live engage observe")
+        root.configure(bg="#111827")
+
+        image_label = tk.Label(root, bg="#111827")
+        image_label.pack()
+
+        status_label = tk.Label(
+            root,
+            bg="#111827",
+            fg="#f9fafb",
+            justify="left",
+            anchor="w",
+            font=("Consolas", 10),
+        )
+        status_label.pack(fill="x", padx=8, pady=8)
+
+        running = {"value": True}
+
+        def stop_preview(event=None):
+            running["value"] = False
+            root.destroy()
+
+        root.bind("<Escape>", stop_preview)
+        root.bind("q", stop_preview)
+        root.bind("Q", stop_preview)
+
+        def tick():
+            if not running["value"]:
+                return
+            state, image = self.render_next_attempt()
             photo = ImageTk.PhotoImage(image)
             image_label.configure(image=photo)
             image_label.image = photo

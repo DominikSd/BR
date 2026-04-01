@@ -1,0 +1,38 @@
+{
+  "artifact_paths": {},
+  "candidate_hit_count": 0,
+  "cycle_id": 50,
+  "detections": [],
+  "expectations": {},
+  "frame_height": 720,
+  "frame_source": "foreground_window_capture",
+  "frame_width": 1280,
+  "free_target_count": 0,
+  "merged_hit_count": 0,
+  "phase": "observation",
+  "raw_hits": [],
+  "reference_point_xy": [
+    640.0,
+    360.0
+  ],
+  "roi": {
+    "frame_height": 720,
+    "frame_width": 1280,
+    "height": 320,
+    "name": "spawn_roi",
+    "width": 640,
+    "x": 320,
+    "y": 140
+  },
+  "selected_target_id": null,
+  "timings": {
+    "action_ready_ts": 2350.032996400005,
+    "detection_finished_ts": 2350.032992500004,
+    "detection_latency_ms": 32.99250000418397,
+    "detection_started_ts": 2350.0,
+    "frame_captured_ts": 2350.0,
+    "selection_latency_ms": 0.0039000005926936865,
+    "target_selected_ts": 2350.032996400005,
+    "total_reaction_latency_ms": 32.99640000477666
+  }
+}

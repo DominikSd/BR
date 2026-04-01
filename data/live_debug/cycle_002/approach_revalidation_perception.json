@@ -139,13 +139,13 @@
   },
   "selected_target_id": "live-spawn-2-3",
   "timings": {
-    "action_ready_ts": 190.2501160000029,
-    "detection_finished_ts": 190.2501129000011,
-    "detection_latency_ms": 0.112900001113303,
+    "action_ready_ts": 190.25009249999857,
+    "detection_finished_ts": 190.25008949999756,
+    "detection_latency_ms": 0.08949999755714089,
     "detection_started_ts": 190.25,
     "frame_captured_ts": 190.25,
-    "selection_latency_ms": 0.0031000017770566046,
-    "target_selected_ts": 190.2501160000029,
-    "total_reaction_latency_ms": 0.11600000289035961
+    "selection_latency_ms": 0.0030000010156072676,
+    "target_selected_ts": 190.25009249999857,
+    "total_reaction_latency_ms": 0.09249999857274815
   }
 }

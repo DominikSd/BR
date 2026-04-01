@@ -12,6 +12,11 @@ from botlab.adapters.live.models import (
 from botlab.config import CombatConfig, LiveConfig
 from botlab.domain.world import GroupSnapshot, Position, WorldSnapshot
 
+try:
+    from PIL import Image
+except Exception:  # pragma: no cover - optional dependency path
+    Image = None
+
 
 def extract_named_roi(frame: LiveFrame, *, roi_name: str, live_config: LiveConfig) -> dict[str, Any]:
     metadata_override = frame.metadata.get(roi_name)
@@ -158,14 +163,23 @@ class LiveResourceProvider:
 
 
 class SimpleStateDetector:
-    def __init__(self, template_matcher: SimpleTemplateMatcher | None = None) -> None:
+    def __init__(
+        self,
+        live_config: LiveConfig | None = None,
+        template_matcher: SimpleTemplateMatcher | None = None,
+    ) -> None:
+        self._live_config = live_config
         self._template_matcher = template_matcher or SimpleTemplateMatcher()
 
     def detect_state(self, frame: LiveFrame) -> LiveStateSnapshot:
-        in_combat = bool(frame.metadata.get("in_combat", False)) or self._template_matcher.match_flag(
-            frame,
-            flag_name="combat_indicator",
-            default=False,
+        in_combat = (
+            bool(frame.metadata.get("in_combat", False))
+            or self._template_matcher.match_flag(
+                frame,
+                flag_name="combat_indicator",
+                default=False,
+            )
+            or self._detect_in_combat_from_pixels(frame)
         )
         reward_visible = bool(frame.metadata.get("reward_visible", False)) or self._template_matcher.match_flag(
             frame,
@@ -178,6 +192,31 @@ class SimpleStateDetector:
             reward_visible=reward_visible,
             rest_available=rest_available,
         )
+
+    def _detect_in_combat_from_pixels(self, frame: LiveFrame) -> bool:
+        if self._live_config is None or Image is None or frame.image is None:
+            return False
+        roi = extract_named_roi(frame, roi_name="combat_indicator_roi", live_config=self._live_config)
+        left = int(roi["x"])
+        top = int(roi["y"])
+        right = left + int(roi["width"])
+        bottom = top + int(roi["height"])
+        if right <= left or bottom <= top:
+            return False
+        roi_image = frame.image.crop((left, top, right, bottom)).convert("RGB")
+        pixels = list(roi_image.getdata())
+        if not pixels:
+            return False
+        matching_pixels = 0
+        for red_value, green_value, blue_value in pixels:
+            if (
+                red_value >= self._live_config.combat_indicator_min_red
+                and (red_value - green_value) >= self._live_config.combat_indicator_red_green_delta
+                and (red_value - blue_value) >= self._live_config.combat_indicator_red_blue_delta
+            ):
+                matching_pixels += 1
+        active_ratio = matching_pixels / float(len(pixels))
+        return active_ratio >= self._live_config.combat_indicator_min_ratio
 
 
 def build_world_snapshot(

@@ -96,6 +96,10 @@ class LiveConfig:
     marker_min_height_px: int = 3
     marker_max_height_px: int = 36
     marker_confidence_threshold: float = 0.55
+    combat_indicator_min_red: int = 170
+    combat_indicator_red_green_delta: int = 35
+    combat_indicator_red_blue_delta: int = 25
+    combat_indicator_min_ratio: float = 0.01
     swords_min_green: int = 120
     swords_green_red_delta: int = 20
     swords_green_blue_delta: int = 10
@@ -268,6 +272,32 @@ def load_config(config_path: str | Path) -> Settings:
             live_section,
             "marker_confidence_threshold",
             0.55,
+        ),
+        combat_indicator_min_red=_optional_int_range(
+            live_section,
+            "combat_indicator_min_red",
+            170,
+            min_value=0,
+            max_value=255,
+        ),
+        combat_indicator_red_green_delta=_optional_int_range(
+            live_section,
+            "combat_indicator_red_green_delta",
+            35,
+            min_value=0,
+            max_value=255,
+        ),
+        combat_indicator_red_blue_delta=_optional_int_range(
+            live_section,
+            "combat_indicator_red_blue_delta",
+            25,
+            min_value=0,
+            max_value=255,
+        ),
+        combat_indicator_min_ratio=_optional_ratio_float(
+            live_section,
+            "combat_indicator_min_ratio",
+            0.01,
         ),
         swords_min_green=_optional_int_range(
             live_section,

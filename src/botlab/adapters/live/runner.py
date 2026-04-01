@@ -835,6 +835,7 @@ class LiveRunner:
         self._runtime = runtime
         self._storage = storage
         self._logger = logger
+        self._next_live_cycle_id = runtime.initial_cycle_id
 
     @classmethod
     def from_settings(
@@ -961,6 +962,10 @@ class LiveRunner:
     def storage(self) -> SQLiteTelemetryStorage:
         return self._storage
 
+    @property
+    def runtime(self) -> LiveRuntime:
+        return self._runtime
+
     def run_cycles(self, total_cycles: int) -> SimulationReport:
         if total_cycles <= 0:
             raise ValueError("total_cycles musi byc wieksze od 0.")
@@ -989,13 +994,13 @@ class LiveRunner:
         if total_attempts <= 0:
             raise ValueError("total_attempts musi byc wieksze od 0.")
         self._storage.initialize()
-        initial_cycle_id = self._runtime.initial_cycle_id
         results: list[LiveEngageResult] = []
         for offset in range(total_attempts):
-            cycle_id = initial_cycle_id + offset
+            cycle_id = self._next_live_cycle_id + offset
             result = self._engage_service.attempt_engage(cycle_id=cycle_id)
             record_engage_attempt(storage=self._storage, result=result)
             results.append(result)
+        self._next_live_cycle_id += total_attempts
         self._runtime.write_perception_session_summary()
         summary = LiveEngageSessionSummary.from_results(results)
         LiveEngageArtifactWriter(self._runtime.settings.live.debug_directory).write_session_summary(summary)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable
@@ -102,6 +103,9 @@ class LiveEngageSessionSummary:
             "approach_stalled_count": self.approach_stalled_count,
             "approach_timeout_count": self.approach_timeout_count,
             "no_target_available_count": self.no_target_available_count,
+            "engage_success_rate": 0.0
+            if self.total_attempts == 0
+            else self.engaged_count / float(self.total_attempts),
             "detection_latency": self.detection_latency.to_dict(),
             "selection_latency": self.selection_latency.to_dict(),
             "total_reaction_latency": self.total_reaction_latency.to_dict(),
@@ -332,6 +336,8 @@ class LiveEngageService:
             )
 
         verify_default_ts = engagement.interaction_result.observed_at_ts + self._verify_delay_s
+        if not self._input_driver.dry_run and self._verify_delay_s > 0.0:
+            time.sleep(self._verify_delay_s)
         verify_frame = self._runtime.capture_frame(
             cycle_id=cycle_id,
             phase="engage_verify",

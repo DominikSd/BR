@@ -8,6 +8,7 @@ import pytest
 
 from botlab.adapters.live import (
     LiveEngageSessionSummary,
+    LiveEngageObserve,
     LiveRunner,
     LiveVisionPreviewRenderer,
     PerceptionAnalysisRunner,
@@ -19,6 +20,7 @@ from botlab.adapters.live import (
     select_nearest_target,
     should_start_rest,
 )
+from botlab.adapters.live.input import LiveInputDriver
 from botlab.adapters.live.models import LiveEngageOutcome, LiveFrame, LiveStateSnapshot, LiveTargetDetection
 from botlab.adapters.live.perception import (
     PerceptionFrameLoader,
@@ -26,7 +28,7 @@ from botlab.adapters.live.perception import (
     TemplateHit,
     TemplatePackLoader,
 )
-from botlab.adapters.live.vision import extract_named_roi
+from botlab.adapters.live.vision import SimpleStateDetector, extract_named_roi
 from botlab.application.dto import (
     TargetApproachResult,
     TargetEngagementResult,
@@ -445,6 +447,33 @@ def test_frame_loader_and_roi_extraction_use_sidecar_override(tmp_path: Path) ->
     assert roi["height"] == 120
 
 
+def test_perception_frame_loader_loads_nested_directory_structure(tmp_path: Path) -> None:
+    nested_directory = tmp_path / "nested" / "hard"
+    nested_directory.mkdir(parents=True)
+    frame_path = nested_directory / "frame.json"
+    frame_path.write_text(
+        json.dumps(
+            {
+                "width": 640,
+                "height": 360,
+                "captured_at_ts": 1.0,
+                "source": "nested-frame",
+                "metadata": {},
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    loader = PerceptionFrameLoader()
+    entries = loader.load_directory(tmp_path)
+
+    assert len(entries) == 1
+    assert entries[0][0] == "nested__hard__frame"
+    assert entries[0][1].source == "nested-frame"
+
+
 def test_marker_first_perception_detects_occupied_and_selects_nearest_free_target(
     tmp_path: Path,
 ) -> None:
@@ -573,6 +602,87 @@ def test_live_preview_state_and_renderer_prepare_debug_overlay(tmp_path: Path) -
     assert any("reaction=" in line for line in state.headline_lines)
     assert image.size[0] <= 200
     assert image.size[1] <= 160
+
+
+def test_live_engage_observe_can_render_next_attempt(tmp_path: Path) -> None:
+    settings = _build_live_settings(tmp_path)
+    observe = LiveEngageObserve(settings=settings, enable_console=False)
+
+    state, image = observe.render_next_attempt()
+
+    assert state.selected_target_id is not None
+    assert any("engage=" in line for line in state.headline_lines)
+    assert image.size[0] > 0
+    assert image.size[1] > 0
+
+
+def test_live_engage_observe_forces_safe_dry_run_even_for_real_live_settings(tmp_path: Path) -> None:
+    settings = _build_live_settings(tmp_path)
+    settings = replace(settings, live=replace(settings.live, dry_run=False))
+
+    observe = LiveEngageObserve(settings=settings, enable_console=False)
+    state, _image = observe.render_next_attempt()
+
+    assert observe.safe_dry_run_enabled is True
+    assert any("input_mode=dry_run_safe" in line for line in state.headline_lines)
+
+
+def test_simple_state_detector_can_detect_combat_indicator_from_pixels(tmp_path: Path) -> None:
+    from PIL import Image, ImageDraw
+
+    settings = _build_live_settings(tmp_path)
+    image = Image.new("RGB", (1280, 720), color=(10, 10, 10))
+    draw = ImageDraw.Draw(image)
+    roi = settings.live.combat_indicator_roi
+    draw.rectangle(
+        (
+            roi[0] + 10,
+            roi[1] + 10,
+            roi[0] + 70,
+            roi[1] + 28,
+        ),
+        fill=(230, 40, 40),
+    )
+    frame = LiveFrame(
+        width=1280,
+        height=720,
+        captured_at_ts=1.0,
+        source="combat-indicator-pixels",
+        metadata={},
+        image=image,
+    )
+
+    state = SimpleStateDetector(settings.live).detect_state(frame)
+
+    assert state.in_combat is True
+    assert state.reward_visible is False
+
+
+def test_live_input_driver_real_path_plumbing_can_be_mocked(monkeypatch) -> None:
+    import logging
+
+    logger = logging.getLogger("botlab.live.test.input")
+    driver = LiveInputDriver(logger=logger, dry_run=False, screen_offset_xy=(100, 200))
+    calls: list[tuple[int, int]] = []
+
+    def fake_perform_right_click(*, absolute_x: int, absolute_y: int) -> str:
+        calls.append((absolute_x, absolute_y))
+        return "real_click_sent"
+
+    monkeypatch.setattr(driver, "_perform_right_click", fake_perform_right_click)
+    driver.right_click_target(
+        LiveTargetDetection(
+            target_id="front-free",
+            screen_x=620,
+            screen_y=300,
+            distance=1.5,
+        )
+    )
+
+    assert calls == [(720, 500)]
+    assert driver.events[-1].payload["execution_status"] == "real_click_sent"
+    assert driver.events[-1].payload["absolute_x"] == 720
+    assert driver.events[-1].payload["absolute_y"] == 500
 
 
 def test_marker_first_pipeline_can_smoke_test_real_sample_frame_if_present(tmp_path: Path) -> None:

@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Sequence
 
-from botlab.adapters.live import LiveRunner, LiveVisionPreview, PerceptionAnalysisRunner
+from botlab.adapters.live import LiveEngageObserve, LiveRunner, LiveVisionPreview, PerceptionAnalysisRunner
 from botlab.adapters.simulation.combat_profiles import SimulatedCombatProfileCatalog
 from botlab.adapters.simulation.combat_plans import SimulatedCombatPlanCatalog
 from botlab.adapters.simulation.replay import (
@@ -131,6 +131,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Uruchamia osobne okno preview/debug dla live vision bez wykonywania akcji w grze.",
     )
     parser.add_argument(
+        "--live-engage-observe",
+        action="store_true",
+        help="Uruchamia okno debugowe dla pionu detect -> select -> engage -> verify na zywo.",
+    )
+    parser.add_argument(
         "--live-engage-mvp",
         action="store_true",
         help="Uruchamia minimalny pion live engage: perception -> nearest free target -> engage attempt -> outcome verification.",
@@ -180,6 +185,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             enable_console=args.console_log,
         )
         return preview.run()
+    if args.live_engage_observe:
+        _validate_live_engage_observe_args(
+            settings=settings,
+            scenario_preset=args.scenario_preset,
+            scenario_file=args.scenario_file,
+            analyze_frame=args.analyze_frame,
+            analyze_batch_dir=args.analyze_batch_dir,
+        )
+        observe = LiveEngageObserve(
+            settings=settings,
+            enable_console=args.console_log,
+        )
+        return observe.run()
     if args.live_engage_mvp:
         _validate_live_engage_args(
             settings=settings,
@@ -399,6 +417,22 @@ def _validate_live_preview_args(
         raise ValueError("--live-preview nie obsluguje scenario replay.")
     if analyze_frame is not None or analyze_batch_dir is not None:
         raise ValueError("--live-preview nie moze byc laczony z trybem perception-only.")
+
+
+def _validate_live_engage_observe_args(
+    *,
+    settings: Settings,
+    scenario_preset: str | None,
+    scenario_file: str | None,
+    analyze_frame: str | None,
+    analyze_batch_dir: str | None,
+) -> None:
+    if settings.app.mode != "live":
+        raise ValueError("--live-engage-observe wymaga konfiguracji z app.mode=live.")
+    if scenario_preset is not None or scenario_file is not None:
+        raise ValueError("--live-engage-observe nie obsluguje scenario replay.")
+    if analyze_frame is not None or analyze_batch_dir is not None:
+        raise ValueError("--live-engage-observe nie moze byc laczony z trybem perception-only.")
 
 
 def _validate_live_engage_args(
@@ -671,6 +705,10 @@ def _print_live_engage_report(report) -> None:
     print("engage_mode=mvp")
     print(f"total_attempts={report.summary.total_attempts}")
     print(f"engaged={report.summary.engaged_count}")
+    success_rate = 0.0
+    if report.summary.total_attempts > 0:
+        success_rate = report.summary.engaged_count / float(report.summary.total_attempts)
+    print(f"engage_success_rate={success_rate:.3f}")
     print(f"target_stolen={report.summary.target_stolen_count}")
     print(f"misclick={report.summary.misclick_count}")
     print(f"approach_stalled={report.summary.approach_stalled_count}")

@@ -1,0 +1,46 @@
+{
+  "approach_stalled_count": 0,
+  "approach_timeout_count": 0,
+  "detection_latency": {
+    "avg_ms": 10.999999999967258,
+    "count": 1,
+    "max_ms": 10.999999999967258,
+    "min_ms": 10.999999999967258,
+    "name": "engage_detection_latency_ms",
+    "p50_ms": 10.999999999967258,
+    "p95_ms": 10.999999999967258
+  },
+  "engage_success_rate": 1.0,
+  "engaged_count": 1,
+  "misclick_count": 0,
+  "no_target_available_count": 0,
+  "selection_latency": {
+    "avg_ms": 3.0000000000427463,
+    "count": 1,
+    "max_ms": 3.0000000000427463,
+    "min_ms": 3.0000000000427463,
+    "name": "engage_selection_latency_ms",
+    "p50_ms": 3.0000000000427463,
+    "p95_ms": 3.0000000000427463
+  },
+  "target_stolen_count": 0,
+  "total_attempts": 1,
+  "total_reaction_latency": {
+    "avg_ms": 15.99999999996271,
+    "count": 1,
+    "max_ms": 15.99999999996271,
+    "min_ms": 15.99999999996271,
+    "name": "engage_total_reaction_latency_ms",
+    "p50_ms": 15.99999999996271,
+    "p95_ms": 15.99999999996271
+  },
+  "verification_latency": {
+    "avg_ms": 200.00000000004547,
+    "count": 1,
+    "max_ms": 200.00000000004547,
+    "min_ms": 200.00000000004547,
+    "name": "engage_verification_latency_ms",
+    "p50_ms": 200.00000000004547,
+    "p95_ms": 200.00000000004547
+  }
+}

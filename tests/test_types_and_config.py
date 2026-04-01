@@ -60,6 +60,8 @@ def test_load_default_config_returns_settings() -> None:
     assert settings.live.template_rotations_deg == (0, 90, 180, 270)
     assert settings.live.marker_min_red == 170
     assert settings.live.marker_confidence_threshold == 0.55
+    assert settings.live.combat_indicator_min_red == 170
+    assert settings.live.combat_indicator_min_ratio == 0.01
     assert settings.live.swords_min_green == 120
     assert settings.live.swords_confidence_threshold == 0.25
     assert settings.live.occupied_template_match_min_green_ratio == 0.01
@@ -91,6 +93,7 @@ def test_live_config_profile_can_be_loaded_from_yaml() -> None:
     assert settings.live.perception_confidence_threshold == 0.75
     assert settings.live.sample_frames_directory.name == "raw"
     assert settings.live.marker_red_green_delta == 35
+    assert settings.live.combat_indicator_red_green_delta == 35
     assert settings.live.swords_green_red_delta == 20
     assert settings.live.swords_min_blob_pixels == 2
     assert settings.live.occupied_template_match_min_green_ratio == 0.01
@@ -102,6 +105,16 @@ def test_live_config_profile_can_be_loaded_from_yaml() -> None:
     assert settings.live.engage_verify_delay_s == 0.20
     assert settings.live.engage_target_match_max_distance_px == 72
     assert settings.live.preview_refresh_interval_ms == 120
+
+
+def test_live_real_mvp_config_can_be_loaded_from_yaml() -> None:
+    settings = load_config(PROJECT_ROOT / "config" / "live_real_mvp.yaml")
+
+    assert settings.app.mode == "live"
+    assert settings.live.dry_run is False
+    assert settings.live.debug_directory.name == "live_real_debug"
+    assert settings.live.combat_indicator_min_ratio == 0.01
+    assert settings.live.engage_verify_delay_s == 0.20
 
 
 def test_cycle_prediction_window_methods() -> None:

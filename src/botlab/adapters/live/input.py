@@ -36,6 +36,10 @@ class LiveInputDriver:
     def events(self) -> tuple[LiveInputEvent, ...]:
         return tuple(self._events)
 
+    @property
+    def dry_run(self) -> bool:
+        return self._dry_run
+
     def right_click_target(self, target: LiveTargetDetection) -> None:
         click_x = int(target.screen_x)
         click_y = int(target.screen_y)

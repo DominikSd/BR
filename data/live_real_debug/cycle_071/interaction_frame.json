@@ -1,0 +1,16 @@
+{
+  "captured_at_ts": 3295.0,
+  "height": 720,
+  "metadata": {
+    "condition_ratio": 1.0,
+    "cycle_id": 71,
+    "hp_ratio": 1.0,
+    "in_combat": false,
+    "phase": "interaction",
+    "rest_available": true,
+    "reward_visible": false,
+    "targets": []
+  },
+  "source": "foreground_window_capture",
+  "width": 1280
+}

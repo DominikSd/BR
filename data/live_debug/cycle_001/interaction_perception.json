@@ -65,13 +65,13 @@
   },
   "selected_target_id": "front-free",
   "timings": {
-    "action_ready_ts": 160.6864269008375,
-    "detection_finished_ts": 160.68642500083757,
-    "detection_latency_ms": 0.03669999568955973,
+    "action_ready_ts": 160.68642830084087,
+    "detection_finished_ts": 160.68642620083943,
+    "detection_latency_ms": 0.03789999755099416,
     "detection_started_ts": 160.68638830084188,
     "frame_captured_ts": 160.68638830084188,
-    "selection_latency_ms": 0.0018999999156221747,
-    "target_selected_ts": 160.6864269008375,
-    "total_reaction_latency_ms": 0.0385999956051819
+    "selection_latency_ms": 0.0021000014385208488,
+    "target_selected_ts": 160.68642830084087,
+    "total_reaction_latency_ms": 0.03999999898951501
   }
 }

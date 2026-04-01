@@ -57,6 +57,10 @@ live:
   marker_min_height_px: 3
   marker_max_height_px: 36
   marker_confidence_threshold: 0.55
+  combat_indicator_min_red: 170
+  combat_indicator_red_green_delta: 35
+  combat_indicator_red_blue_delta: 25
+  combat_indicator_min_ratio: 0.01
   swords_min_green: 120
   swords_green_red_delta: 20
   swords_green_blue_delta: 10

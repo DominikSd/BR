@@ -1012,7 +1012,7 @@ class PerceptionFrameLoader:
         if not root.exists():
             raise FileNotFoundError(f"Katalog z klatkami nie istnieje: {root}")
         loaded_frames: list[tuple[str, LiveFrame]] = []
-        for path in sorted(root.iterdir()):
+        for path in sorted(root.rglob("*")):
             if not path.is_file():
                 continue
             if path.suffix.lower() not in {".json", ".png", ".jpg", ".jpeg"}:
@@ -1029,7 +1029,9 @@ class PerceptionFrameLoader:
                 continue
             if path.name == "perception_session_summary.json":
                 continue
-            loaded_frames.append((path.stem, self.load_frame(path)))
+            relative_stem = path.relative_to(root).with_suffix("")
+            frame_name = "__".join(relative_stem.parts)
+            loaded_frames.append((frame_name, self.load_frame(path)))
         return tuple(loaded_frames)
 
     def _load_frame_spec(self, path: Path) -> LiveFrame:

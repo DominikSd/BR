@@ -1,0 +1,56 @@
+{
+  "captured_at_ts": 640.25,
+  "height": 720,
+  "metadata": {
+    "condition_ratio": 1.0,
+    "cycle_id": 12,
+    "hp_ratio": 1.0,
+    "phase": "approach_revalidation",
+    "targets": [
+      {
+        "bbox_height": null,
+        "bbox_width": null,
+        "confidence": 1.0,
+        "distance": 4.415612,
+        "metadata": {},
+        "mob_variant": "mob_a",
+        "occupied": false,
+        "orientation_deg": 0,
+        "reachable": true,
+        "screen_x": 672,
+        "screen_y": 265,
+        "target_id": "live-spawn-12-1"
+      },
+      {
+        "bbox_height": null,
+        "bbox_width": null,
+        "confidence": 1.0,
+        "distance": 5.34842,
+        "metadata": {},
+        "mob_variant": "mob_b",
+        "occupied": false,
+        "orientation_deg": 0,
+        "reachable": true,
+        "screen_x": 662,
+        "screen_y": 360,
+        "target_id": "live-spawn-12-2"
+      },
+      {
+        "bbox_height": null,
+        "bbox_width": null,
+        "confidence": 1.0,
+        "distance": 4.999566,
+        "metadata": {},
+        "mob_variant": "mob_a",
+        "occupied": false,
+        "orientation_deg": 0,
+        "reachable": true,
+        "screen_x": 647,
+        "screen_y": 258,
+        "target_id": "live-spawn-12-3"
+      }
+    ]
+  },
+  "source": "dry_run:single_spot_mvp",
+  "width": 1280
+}

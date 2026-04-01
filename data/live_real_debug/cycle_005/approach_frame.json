@@ -1,0 +1,56 @@
+{
+  "captured_at_ts": 325.0,
+  "height": 720,
+  "metadata": {
+    "cycle_id": 5,
+    "last_progress_ts": 325.12,
+    "phase": "approach",
+    "stall_after_s": null,
+    "targets": [
+      {
+        "bbox_height": null,
+        "bbox_width": null,
+        "confidence": 1.0,
+        "distance": 4.274604,
+        "metadata": {},
+        "mob_variant": "mob_a",
+        "occupied": false,
+        "orientation_deg": 0,
+        "reachable": true,
+        "screen_x": 664,
+        "screen_y": 275,
+        "target_id": "live-spawn-5-1"
+      },
+      {
+        "bbox_height": null,
+        "bbox_width": null,
+        "confidence": 1.0,
+        "distance": 4.099379,
+        "metadata": {},
+        "mob_variant": "mob_b",
+        "occupied": false,
+        "orientation_deg": 0,
+        "reachable": true,
+        "screen_x": 697,
+        "screen_y": 331,
+        "target_id": "live-spawn-5-2"
+      },
+      {
+        "bbox_height": null,
+        "bbox_width": null,
+        "confidence": 1.0,
+        "distance": 5.066643,
+        "metadata": {},
+        "mob_variant": "mob_a",
+        "occupied": false,
+        "orientation_deg": 0,
+        "reachable": true,
+        "screen_x": 734,
+        "screen_y": 353,
+        "target_id": "live-spawn-5-3"
+      }
+    ]
+  },
+  "source": "dry_run:single_spot_mvp",
+  "width": 1280
+}

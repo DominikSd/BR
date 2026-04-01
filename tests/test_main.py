@@ -279,6 +279,36 @@ def test_main_can_route_to_live_preview(monkeypatch, capsys) -> None:
     assert "preview_mode=live" in captured.out
 
 
+def test_main_can_route_to_live_engage_observe(monkeypatch, capsys) -> None:
+    calls = {"count": 0}
+
+    class ObserveStub:
+        def __init__(self, *, settings, enable_console):
+            self.settings = settings
+            self.enable_console = enable_console
+
+        def run(self):
+            calls["count"] += 1
+            print(f"engage_observe_mode=live source_mode={self.settings.app.mode}")
+            return 0
+
+    monkeypatch.setattr("botlab.main.LiveEngageObserve", ObserveStub)
+
+    exit_code = main(
+        [
+            "--config",
+            "config/live_dry_run.yaml",
+            "--live-engage-observe",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert calls["count"] == 1
+    assert "engage_observe_mode=live" in captured.out
+
+
 def test_main_can_run_live_engage_mvp(monkeypatch, capsys) -> None:
     from botlab.adapters.live.models import LiveEngageOutcome, LiveEngageResult
     from botlab.adapters.live.engage import LiveEngageRunReport, LiveEngageSessionSummary

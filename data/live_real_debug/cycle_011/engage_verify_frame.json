@@ -1,0 +1,33 @@
+{
+  "captured_at_ts": 612.9360085101598,
+  "height": 720,
+  "metadata": {
+    "cycle_id": 11,
+    "in_combat": true,
+    "perception_profile": {
+      "action_ready_duration_s": 0.001,
+      "detection_duration_s": 0.008,
+      "selection_duration_s": 0.002
+    },
+    "phase": "engage_verify",
+    "reward_visible": false,
+    "targets": [
+      {
+        "bbox_height": null,
+        "bbox_width": null,
+        "confidence": 1.0,
+        "distance": 0.2,
+        "metadata": {},
+        "mob_variant": "mob_b",
+        "occupied": false,
+        "orientation_deg": 0,
+        "reachable": true,
+        "screen_x": 713,
+        "screen_y": 316,
+        "target_id": "live-spawn-11-2"
+      }
+    ]
+  },
+  "source": "dry_run:single_spot_mvp",
+  "width": 1280
+}

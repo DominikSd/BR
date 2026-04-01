@@ -196,7 +196,8 @@ Repo ma tez cienka warstwe `src/botlab/adapters/live`, ktora wykorzystuje ten sa
 - capture foreground albo dry-run,
 - pixel-based perception i batch analysis,
 - preview/debug window dla live vision,
-- minimalny engage MVP.
+- minimalny engage MVP,
+- pixel-based verify dla `combat_indicator`.
 
 ### Co juz dziala
 
@@ -236,6 +237,12 @@ Batch katalogu screenshotow:
 python -m botlab.main --config config/live_dry_run.yaml --analyze-batch-dir assets/live/sample_frames/raw --perception-output-dir data/perception_batch
 ```
 
+Batch analysis dziala rekurencyjnie, wiec mozesz tez analizowac wieksza strukture katalogow, np.:
+
+```bash
+python -m botlab.main --config config/live_dry_run.yaml --analyze-batch-dir assets/live/sample_frames --perception-output-dir data/perception_batch
+```
+
 Batch wypisuje:
 
 - wynik per frame,
@@ -257,6 +264,33 @@ Preview pokazuje:
 - occupied/free,
 - selected target,
 - podstawowe latency vision.
+
+### Live Engage Observe
+
+```bash
+python -m botlab.main --config config/live_dry_run.yaml --live-engage-observe
+```
+
+Tryb `live engage observe` pokazuje w osobnym oknie debugowym pelny pion:
+
+- capture,
+- perception,
+- selected target,
+- punkt kliku,
+- wynik verify po probie engage.
+
+To jest tryb pomostowy miedzy samym preview vision a `live-engage-mvp`:
+
+- korzysta z tego samego live stacku,
+- nie buduje osobnego pipeline'u,
+- pozwala na zywo zobaczyc `detect -> select -> engage -> verify`.
+
+Wazne:
+
+- `live-engage-observe` wymusza `dry_run` input dla bezpieczenstwa,
+- moze korzystac z realnego capture,
+- ale nie powinien wysylac realnych klikniec do gry,
+- do rzeczywistej proby PPM sluzy `live-engage-mvp`.
 
 ### Engage MVP
 
@@ -291,6 +325,24 @@ Tryb realny:
 python -m botlab.main --config path/to/live.yaml --live-engage-mvp --cycles 3
 ```
 
+Minimalny gotowy config pod realny preview/engage:
+
+```bash
+python -m botlab.main --config config/live_real_mvp.yaml --live-preview
+```
+
+albo:
+
+```bash
+python -m botlab.main --config config/live_real_mvp.yaml --live-engage-observe
+```
+
+albo:
+
+```bash
+python -m botlab.main --config config/live_real_mvp.yaml --live-engage-mvp --cycles 3
+```
+
 Na tym etapie realna sciezka kliku jest przygotowana tylko dla PPM na Windows i nadal powinna byc traktowana jako ostrozny MVP.
 
 Artefakty engage trafiaja do:
@@ -306,7 +358,19 @@ Artefakty engage trafiaja do:
 - brak OCR i brak ciezkiego ML/CV,
 - full combat/reward/rest loop nie jest jeszcze celem warstwy live,
 - real input execution poza PPM nie jest jeszcze domkniete,
+- pixel-based verify dotyczy na razie glownie `combat_indicator`,
 - najlepszy feedback do strojenia daje obecnie batch na realnych scenach referencyjnych.
+
+### Organizacja scen live
+
+W `assets/live/sample_frames` mozna juz rozdzielac material na:
+
+- `raw`
+- `tuning`
+- `regression`
+- `holdout`
+
+Batch loader czyta te katalogi rekurencyjnie, wiec nie trzeba splaszczac wszystkiego do jednego poziomu.
 
 Domyslna konfiguracja zapisuje telemetry do:
 

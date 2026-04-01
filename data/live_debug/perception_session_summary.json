@@ -9,10 +9,10 @@
     "p95_ms": 2.0
   },
   "detection_latency": {
-    "avg_ms": 7.009174998920287,
+    "avg_ms": 7.009474999385645,
     "count": 4,
     "max_ms": 10.99999999999568,
-    "min_ms": 0.03669999568955973,
+    "min_ms": 0.03789999755099416,
     "name": "detection_latency_ms",
     "p50_ms": 8.000000000009777,
     "p95_ms": 10.99999999999568
@@ -247,14 +247,14 @@
       },
       "selected_target_id": "front-free",
       "timings": {
-        "action_ready_ts": 160.6864269008375,
-        "detection_finished_ts": 160.68642500083757,
-        "detection_latency_ms": 0.03669999568955973,
+        "action_ready_ts": 160.68642830084087,
+        "detection_finished_ts": 160.68642620083943,
+        "detection_latency_ms": 0.03789999755099416,
         "detection_started_ts": 160.68638830084188,
         "frame_captured_ts": 160.68638830084188,
-        "selection_latency_ms": 0.0018999999156221747,
-        "target_selected_ts": 160.6864269008375,
-        "total_reaction_latency_ms": 0.0385999956051819
+        "selection_latency_ms": 0.0021000014385208488,
+        "target_selected_ts": 160.68642830084087,
+        "total_reaction_latency_ms": 0.03999999898951501
       }
     },
     {
@@ -394,19 +394,19 @@
     "p95_ms": 2.0
   },
   "selection_latency": {
-    "avg_ms": 2.0004749999742444,
+    "avg_ms": 2.000525000354969,
     "count": 4,
     "max_ms": 2.999999999985903,
-    "min_ms": 0.0018999999156221747,
+    "min_ms": 0.0021000014385208488,
     "name": "selection_latency_ms",
     "p50_ms": 2.0000000000095497,
     "p95_ms": 2.999999999985903
   },
   "total_reaction_latency": {
-    "avg_ms": 10.009649998899306,
+    "avg_ms": 10.00999999974539,
     "count": 4,
     "max_ms": 15.999999999991132,
-    "min_ms": 0.0385999956051819,
+    "min_ms": 0.03999999898951501,
     "name": "total_reaction_latency_ms",
     "p50_ms": 11.000000000024102,
     "p95_ms": 15.999999999991132

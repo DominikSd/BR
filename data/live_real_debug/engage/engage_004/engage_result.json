@@ -1,0 +1,285 @@
+{
+  "artifact_paths": {},
+  "click_screen_xy": [
+    714,
+    315
+  ],
+  "completed_at_ts": 292.88612797531897,
+  "cycle_id": 4,
+  "detection_latency_ms": 11.000000000024102,
+  "final_target_id": "live-spawn-4-2",
+  "input_events": [
+    {
+      "action": "right_click_target",
+      "payload": {
+        "absolute_x": 691,
+        "absolute_y": 355,
+        "dry_run": true,
+        "execution_status": "dry_run",
+        "screen_x": 691,
+        "screen_y": 355,
+        "target_id": "live-spawn-4-1"
+      }
+    },
+    {
+      "action": "right_click_target",
+      "payload": {
+        "absolute_x": 714,
+        "absolute_y": 315,
+        "dry_run": true,
+        "execution_status": "dry_run",
+        "screen_x": 714,
+        "screen_y": 315,
+        "target_id": "live-spawn-4-2"
+      }
+    }
+  ],
+  "metadata": {
+    "approach_reason": "target_reached_in_live_adapter",
+    "interaction_reason": "interaction_ready",
+    "verify_frame_source": "dry_run:single_spot_mvp",
+    "verify_in_combat": true,
+    "verify_selected_target_id": "live-spawn-4-2"
+  },
+  "observation_perception": {
+    "artifact_paths": {
+      "perception_json": "C:\\Users\\d-sad\\Desktop\\Fun\\boty\\SOPLARZ\\data\\live_real_debug\\cycle_004\\observation_perception.json",
+      "perception_overlay_svg": "C:\\Users\\d-sad\\Desktop\\Fun\\boty\\SOPLARZ\\data\\live_real_debug\\cycle_004\\observation_perception_overlay.svg"
+    },
+    "candidate_hit_count": 3,
+    "cycle_id": 4,
+    "detections": [
+      {
+        "bbox": [
+          671,
+          329,
+          40,
+          52
+        ],
+        "confidence": 1.0,
+        "distance": 51.24451190127583,
+        "metadata": {
+          "occupied_confidence": 0.0,
+          "occupied_seen_frames": 0,
+          "raw_hit_count": 1,
+          "seen_frames": 1,
+          "stable_candidate": true,
+          "track_id": "track-0010"
+        },
+        "mob_variant": "mob_a",
+        "occupied": false,
+        "orientation_deg": 0,
+        "reachable": true,
+        "screen_x": 691,
+        "screen_y": 355,
+        "target_id": "live-spawn-4-1"
+      },
+      {
+        "bbox": [
+          694,
+          289,
+          40,
+          52
+        ],
+        "confidence": 1.0,
+        "distance": 86.6083136886985,
+        "metadata": {
+          "occupied_confidence": 0.0,
+          "occupied_seen_frames": 0,
+          "raw_hit_count": 1,
+          "seen_frames": 1,
+          "stable_candidate": true,
+          "track_id": "track-0011"
+        },
+        "mob_variant": "mob_b",
+        "occupied": false,
+        "orientation_deg": 0,
+        "reachable": true,
+        "screen_x": 714,
+        "screen_y": 315,
+        "target_id": "live-spawn-4-2"
+      },
+      {
+        "bbox": [
+          710,
+          316,
+          40,
+          52
+        ],
+        "confidence": 1.0,
+        "distance": 91.78235124467012,
+        "metadata": {
+          "occupied_confidence": 0.0,
+          "occupied_seen_frames": 0,
+          "raw_hit_count": 1,
+          "seen_frames": 1,
+          "stable_candidate": true,
+          "track_id": "track-0012"
+        },
+        "mob_variant": "mob_a",
+        "occupied": false,
+        "orientation_deg": 0,
+        "reachable": true,
+        "screen_x": 730,
+        "screen_y": 342,
+        "target_id": "live-spawn-4-3"
+      }
+    ],
+    "expectations": {},
+    "frame_height": 720,
+    "frame_source": "dry_run:single_spot_mvp",
+    "frame_width": 1280,
+    "free_target_count": 3,
+    "merged_hit_count": 3,
+    "phase": "observation",
+    "raw_hits": [
+      {
+        "confidence": 1.0,
+        "height": 52,
+        "label": "mob_a",
+        "metadata": {},
+        "rotation_deg": 0,
+        "source": "synthetic_target",
+        "target_id": "live-spawn-4-1",
+        "width": 40,
+        "x": 671,
+        "y": 329
+      },
+      {
+        "confidence": 1.0,
+        "height": 52,
+        "label": "mob_b",
+        "metadata": {},
+        "rotation_deg": 0,
+        "source": "synthetic_target",
+        "target_id": "live-spawn-4-2",
+        "width": 40,
+        "x": 694,
+        "y": 289
+      },
+      {
+        "confidence": 1.0,
+        "height": 52,
+        "label": "mob_a",
+        "metadata": {},
+        "rotation_deg": 0,
+        "source": "synthetic_target",
+        "target_id": "live-spawn-4-3",
+        "width": 40,
+        "x": 710,
+        "y": 316
+      }
+    ],
+    "reference_point_xy": [
+      640.0,
+      360.0
+    ],
+    "roi": {
+      "frame_height": 720,
+      "frame_width": 1280,
+      "height": 320,
+      "name": "spawn_roi",
+      "width": 640,
+      "x": 320,
+      "y": 140
+    },
+    "selected_target_id": "live-spawn-4-1",
+    "timings": {
+      "action_ready_ts": 280.016,
+      "detection_finished_ts": 280.011,
+      "detection_latency_ms": 11.000000000024102,
+      "detection_started_ts": 280.0,
+      "frame_captured_ts": 280.0,
+      "selection_latency_ms": 2.999999999985903,
+      "target_selected_ts": 280.014,
+      "total_reaction_latency_ms": 16.000000000019554
+    }
+  },
+  "outcome": "engaged",
+  "reason": "entered_combat_detected",
+  "selected_target_id": "live-spawn-4-2",
+  "selection_latency_ms": 2.999999999985903,
+  "started_at_ts": 280.0,
+  "total_reaction_latency_ms": 16.000000000019554,
+  "verification_latency_ms": 199.99999999998863,
+  "verification_perception": {
+    "artifact_paths": {
+      "perception_json": "C:\\Users\\d-sad\\Desktop\\Fun\\boty\\SOPLARZ\\data\\live_real_debug\\cycle_004\\engage_verify_perception.json",
+      "perception_overlay_svg": "C:\\Users\\d-sad\\Desktop\\Fun\\boty\\SOPLARZ\\data\\live_real_debug\\cycle_004\\engage_verify_perception_overlay.svg"
+    },
+    "candidate_hit_count": 1,
+    "cycle_id": 4,
+    "detections": [
+      {
+        "bbox": [
+          694,
+          289,
+          40,
+          52
+        ],
+        "confidence": 1.0,
+        "distance": 86.6083136886985,
+        "metadata": {
+          "occupied_confidence": 0.0,
+          "occupied_seen_frames": 0,
+          "raw_hit_count": 1,
+          "seen_frames": 4,
+          "stable_candidate": true,
+          "track_id": "track-0011"
+        },
+        "mob_variant": "mob_b",
+        "occupied": false,
+        "orientation_deg": 0,
+        "reachable": true,
+        "screen_x": 714,
+        "screen_y": 315,
+        "target_id": "live-spawn-4-2"
+      }
+    ],
+    "expectations": {},
+    "frame_height": 720,
+    "frame_source": "dry_run:single_spot_mvp",
+    "frame_width": 1280,
+    "free_target_count": 1,
+    "merged_hit_count": 1,
+    "phase": "engage_verify",
+    "raw_hits": [
+      {
+        "confidence": 1.0,
+        "height": 52,
+        "label": "mob_b",
+        "metadata": {},
+        "rotation_deg": 0,
+        "source": "synthetic_target",
+        "target_id": "live-spawn-4-2",
+        "width": 40,
+        "x": 694,
+        "y": 289
+      }
+    ],
+    "reference_point_xy": [
+      640.0,
+      360.0
+    ],
+    "roi": {
+      "frame_height": 720,
+      "frame_width": 1280,
+      "height": 320,
+      "name": "spawn_roi",
+      "width": 640,
+      "x": 320,
+      "y": 140
+    },
+    "selected_target_id": "live-spawn-4-2",
+    "timings": {
+      "action_ready_ts": 292.89712797531894,
+      "detection_finished_ts": 292.89412797531895,
+      "detection_latency_ms": 7.999999999981355,
+      "detection_started_ts": 292.88612797531897,
+      "frame_captured_ts": 292.88612797531897,
+      "selection_latency_ms": 2.0000000000095497,
+      "target_selected_ts": 292.89612797531896,
+      "total_reaction_latency_ms": 10.999999999967258
+    }
+  }
+}
