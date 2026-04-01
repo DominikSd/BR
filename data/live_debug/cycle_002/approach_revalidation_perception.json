@@ -14,7 +14,11 @@
       "distance": 63.245553203367585,
       "metadata": {
         "occupied_confidence": 0.0,
-        "raw_hit_count": 1
+        "occupied_seen_frames": 0,
+        "raw_hit_count": 1,
+        "seen_frames": 4,
+        "stable_candidate": true,
+        "track_id": "track-0001"
       },
       "mob_variant": "mob_a",
       "occupied": false,
@@ -35,7 +39,11 @@
       "distance": 79.20858539325141,
       "metadata": {
         "occupied_confidence": 0.0,
-        "raw_hit_count": 1
+        "occupied_seen_frames": 0,
+        "raw_hit_count": 1,
+        "seen_frames": 4,
+        "stable_candidate": true,
+        "track_id": "track-0004"
       },
       "mob_variant": "mob_a",
       "occupied": false,
@@ -56,7 +64,11 @@
       "distance": 111.30588483993108,
       "metadata": {
         "occupied_confidence": 0.0,
-        "raw_hit_count": 1
+        "occupied_seen_frames": 0,
+        "raw_hit_count": 1,
+        "seen_frames": 2,
+        "stable_candidate": true,
+        "track_id": "track-0005"
       },
       "mob_variant": "mob_b",
       "occupied": false,
@@ -126,13 +138,13 @@
   },
   "selected_target_id": "live-spawn-2-3",
   "timings": {
-    "action_ready_ts": 190.2500581000004,
-    "detection_finished_ts": 190.25005529999999,
-    "detection_latency_ms": 0.05529999998543644,
+    "action_ready_ts": 190.250128700005,
+    "detection_finished_ts": 190.25012490000154,
+    "detection_latency_ms": 0.12490000153775327,
     "detection_started_ts": 190.25,
     "frame_captured_ts": 190.25,
-    "selection_latency_ms": 0.0028000004022032954,
-    "target_selected_ts": 190.2500581000004,
-    "total_reaction_latency_ms": 0.05810000038763974
+    "selection_latency_ms": 0.0038000034692231566,
+    "target_selected_ts": 190.250128700005,
+    "total_reaction_latency_ms": 0.12870000500697643
   }
 }

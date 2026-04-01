@@ -4,19 +4,24 @@
 <text x="324" y="158" fill="#93c5fd" font-size="14">spawn_roi</text>
 <line x1="630.0" y1="360.0" x2="650.0" y2="360.0" stroke="#fde047" stroke-width="2" />
 <line x1="640.0" y1="350.0" x2="640.0" y2="370.0" stroke="#fde047" stroke-width="2" />
-<rect x="500" y="254" width="40" height="52" fill="none" stroke="#9ca3af" stroke-dasharray="4 4" stroke-width="1" />
+<rect x="500" y="254" width="40" height="52" fill="none" stroke="#38bdf8" stroke-dasharray="4 4" stroke-width="1" />
+<text x="500" y="252" fill="#38bdf8" font-size="11">mob_a 1.00</text>
 <rect x="504" y="230" width="32" height="20" fill="none" stroke="#f97316" stroke-dasharray="4 4" stroke-width="1" />
-<rect x="600" y="274" width="40" height="52" fill="none" stroke="#9ca3af" stroke-dasharray="4 4" stroke-width="1" />
-<rect x="598" y="273" width="42" height="54" fill="none" stroke="#9ca3af" stroke-dasharray="4 4" stroke-width="1" />
-<rect x="740" y="292" width="40" height="52" fill="none" stroke="#9ca3af" stroke-dasharray="4 4" stroke-width="1" />
+<text x="504" y="228" fill="#f97316" font-size="11">occupied_swords 0.98</text>
+<rect x="600" y="274" width="40" height="52" fill="none" stroke="#38bdf8" stroke-dasharray="4 4" stroke-width="1" />
+<text x="600" y="272" fill="#38bdf8" font-size="11">mob_b 0.94</text>
+<rect x="598" y="273" width="42" height="54" fill="none" stroke="#38bdf8" stroke-dasharray="4 4" stroke-width="1" />
+<text x="598" y="271" fill="#38bdf8" font-size="11">mob_b 0.88</text>
+<rect x="740" y="292" width="40" height="52" fill="none" stroke="#38bdf8" stroke-dasharray="4 4" stroke-width="1" />
+<text x="740" y="290" fill="#38bdf8" font-size="11">mob_a 0.91</text>
 <rect x="598" y="273" width="42" height="54" fill="none" stroke="#22c55e" stroke-width="4" />
 <circle cx="619" cy="300" r="4" fill="#22c55e" />
-<text x="598" y="267" fill="#f9fafb" font-size="14">front-free free conf=0.94 dist=63.6</text>
+<text x="598" y="267" fill="#f9fafb" font-size="14">front-free free conf=0.94 dist=63.6 marker=0.00</text>
 <text x="598" y="345" fill="#fde047" font-size="14">selected</text>
 <rect x="740" y="292" width="40" height="52" fill="none" stroke="#22c55e" stroke-width="2" />
 <circle cx="760" cy="318" r="4" fill="#22c55e" />
-<text x="740" y="286" fill="#f9fafb" font-size="14">fallback-safe free conf=0.91 dist=127.1</text>
+<text x="740" y="286" fill="#f9fafb" font-size="14">fallback-safe free conf=0.91 dist=127.1 marker=0.00</text>
 <rect x="500" y="254" width="40" height="52" fill="none" stroke="#ef4444" stroke-width="2" />
 <circle cx="520" cy="280" r="4" fill="#ef4444" />
-<text x="500" y="248" fill="#f9fafb" font-size="14">occupied-near occupied conf=1.00 dist=144.2</text>
+<text x="500" y="248" fill="#f9fafb" font-size="14">occupied-near occupied conf=1.00 dist=144.2 marker=0.00</text>
 </svg>

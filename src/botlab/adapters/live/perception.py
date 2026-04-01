@@ -74,6 +74,16 @@ class TemplatePack:
     occupied_variants: tuple[TemplateVariant, ...]
 
 
+@dataclass(slots=True)
+class TrackedDetectionState:
+    track_id: str
+    screen_x: float
+    screen_y: float
+    seen_frames: int
+    occupied_seen_frames: int
+    missed_frames: int
+
+
 @dataclass(slots=True, frozen=True)
 class ReactionLatency:
     frame_captured_ts: float
@@ -271,7 +281,13 @@ class TemplatePackLoader:
         if mobs_root.exists():
             for label_directory in sorted(path for path in mobs_root.iterdir() if path.is_dir()):
                 label = label_directory.name
-                for template_path in sorted(label_directory.glob("*.png")):
+                template_paths = sorted(label_directory.glob("*.png"))
+                preferred_paths = [
+                    path for path in template_paths if "upper" in path.stem.lower()
+                ]
+                if preferred_paths:
+                    template_paths = preferred_paths
+                for template_path in template_paths:
                     base_image = Image.open(template_path).convert("RGB")
                     mob_variants.extend(
                         _build_template_variants(
@@ -311,6 +327,8 @@ class PerceptionAnalyzer:
         self._live_config = live_config
         self._clock = clock or time.perf_counter
         self._template_pack_loader = TemplatePackLoader(live_config)
+        self._track_states: dict[str, TrackedDetectionState] = {}
+        self._track_sequence = 0
 
     def analyze_frame(
         self,
@@ -324,12 +342,20 @@ class PerceptionAnalyzer:
 
         detection_started_ts = frame.captured_at_ts
         detection_perf_started = self._clock()
-        raw_hits = self._load_template_hits(frame)
-        roi_hits = self._filter_hits_to_roi(raw_hits=raw_hits, roi=roi)
-        detections = self._build_detections(
-            hits=roi_hits,
-            reference_point_xy=reference_point_xy,
-        )
+        if frame.image is not None:
+            roi_hits, detections = self._run_marker_first_pipeline(
+                frame=frame,
+                roi=roi,
+                reference_point_xy=reference_point_xy,
+            )
+        else:
+            raw_hits = self._load_metadata_template_hits(frame)
+            roi_hits = self._filter_hits_to_roi(raw_hits=raw_hits, roi=roi)
+            detections = self._build_detections_from_template_hits(
+                hits=roi_hits,
+                reference_point_xy=reference_point_xy,
+            )
+        detections = self._smooth_detections(detections)
         detection_finished_ts = detection_started_ts + self._resolve_duration_s(
             frame=frame,
             phase_key="detection_duration_s",
@@ -402,11 +428,7 @@ class PerceptionAnalyzer:
             ),
         )
 
-    def _load_template_hits(self, frame: LiveFrame) -> tuple[TemplateHit, ...]:
-        if frame.image is not None:
-            pixel_hits = self._load_pixel_template_hits(frame)
-            if pixel_hits:
-                return pixel_hits
+    def _load_metadata_template_hits(self, frame: LiveFrame) -> tuple[TemplateHit, ...]:
         raw_hits = frame.metadata.get("template_hits")
         if isinstance(raw_hits, list):
             parsed_hits: list[TemplateHit] = []
@@ -430,15 +452,17 @@ class PerceptionAnalyzer:
             return tuple(parsed_hits)
         return _synthesize_hits_from_targets(frame)
 
-    def _load_pixel_template_hits(self, frame: LiveFrame) -> tuple[TemplateHit, ...]:
-        if Image is None or ImageChops is None or ImageOps is None or ImageStat is None:
-            return ()
-        template_pack = self._template_pack_loader.load()
-        if not template_pack.mob_variants and not template_pack.occupied_variants:
-            return ()
+    def _run_marker_first_pipeline(
+        self,
+        *,
+        frame: LiveFrame,
+        roi: dict[str, Any],
+        reference_point_xy: tuple[float, float],
+    ) -> tuple[tuple[TemplateHit, ...], tuple[LiveTargetDetection, ...]]:
+        if Image is None or frame.image is None:
+            return (), ()
         image = frame.image.convert("RGB")
-        roi = extract_named_roi(frame, roi_name="spawn_roi", live_config=self._live_config)
-        stride_px = self._resolve_match_stride_px(frame)
+        template_pack = self._template_pack_loader.load()
         roi_box = (
             int(roi["x"]),
             int(roi["y"]),
@@ -446,21 +470,120 @@ class PerceptionAnalyzer:
             int(roi["y"]) + int(roi["height"]),
         )
         roi_image = image.crop(roi_box)
-        mob_hits = _match_template_variants(
+        stride_px = self._resolve_match_stride_px(frame)
+
+        marker_hits = _detect_red_marker_hits(
             roi_image=roi_image,
             roi_offset_xy=(roi_box[0], roi_box[1]),
-            variants=template_pack.mob_variants,
-            confidence_threshold=self._live_config.perception_confidence_threshold,
-            stride_px=stride_px,
+            live_config=self._live_config,
         )
-        occupied_hits = _match_template_variants(
-            roi_image=roi_image,
-            roi_offset_xy=(roi_box[0], roi_box[1]),
-            variants=template_pack.occupied_variants,
-            confidence_threshold=self._live_config.occupied_confidence_threshold,
-            stride_px=stride_px,
+        merged_marker_hits = merge_template_hits(
+            marker_hits,
+            merge_distance_px=self._live_config.merge_distance_px,
         )
-        return tuple((*mob_hits, *occupied_hits))
+
+        raw_hits: list[TemplateHit] = list(marker_hits)
+        detections: list[LiveTargetDetection] = []
+        local_stride_px = max(1, min(4, stride_px))
+        for index, marker_hit in enumerate(merged_marker_hits, start=1):
+            occupied_roi_box = _build_local_roi_box(
+                anchor_x=marker_hit.x + (marker_hit.width / 2.0),
+                anchor_y=marker_hit.y + (marker_hit.height / 2.0),
+                width=self._live_config.occupied_local_roi_width_px,
+                height=self._live_config.occupied_local_roi_height_px,
+                offset_y=self._live_config.occupied_local_roi_offset_y_px,
+                frame_width=frame.width,
+                frame_height=frame.height,
+            )
+            occupied_hits = _match_local_variants(
+                image=image,
+                box=occupied_roi_box,
+                variants=template_pack.occupied_variants,
+                confidence_threshold=self._live_config.occupied_confidence_threshold,
+                stride_px=local_stride_px,
+            )
+            occupied_color_hits = _detect_green_swords_hits(
+                image=image,
+                box=occupied_roi_box,
+                live_config=self._live_config,
+            )
+            all_occupied_hits = tuple((*occupied_hits, *occupied_color_hits))
+            raw_hits.extend(all_occupied_hits)
+
+            confirmation_roi_box = _build_local_roi_box(
+                anchor_x=marker_hit.x + (marker_hit.width / 2.0),
+                anchor_y=marker_hit.y + marker_hit.height,
+                width=self._live_config.confirmation_roi_width_px,
+                height=self._live_config.confirmation_roi_height_px,
+                offset_y=self._live_config.confirmation_roi_offset_y_px,
+                frame_width=frame.width,
+                frame_height=frame.height,
+            )
+            confirmation_hits = _match_local_variants(
+                image=image,
+                box=confirmation_roi_box,
+                variants=template_pack.mob_variants,
+                confidence_threshold=self._live_config.confirmation_confidence_threshold,
+                stride_px=local_stride_px,
+            )
+            raw_hits.extend(confirmation_hits)
+
+            best_confirmation = _select_best_confirmation_hit(
+                marker_hit=marker_hit,
+                confirmation_hits=confirmation_hits,
+                live_config=self._live_config,
+            )
+            if best_confirmation is None:
+                continue
+
+            occupied, occupied_confidence = classify_occupied(
+                mob_hit=best_confirmation,
+                occupied_hits=all_occupied_hits,
+            )
+            center_x, center_y = best_confirmation.center_xy
+            distance = math.dist(reference_point_xy, (center_x, center_y))
+            detection_confidence = (
+                marker_hit.confidence * 0.45
+                + best_confirmation.confidence * 0.55
+            )
+            detections.append(
+                LiveTargetDetection(
+                    target_id=f"{best_confirmation.label}-marker-{index:03d}",
+                    screen_x=int(round(center_x)),
+                    screen_y=int(round(center_y)),
+                    distance=distance,
+                    occupied=occupied,
+                    mob_variant=best_confirmation.label,
+                    reachable=True,
+                    confidence=max(marker_hit.confidence, detection_confidence),
+                    bbox=best_confirmation.bbox,
+                    orientation_deg=best_confirmation.rotation_deg,
+                    metadata={
+                        "detection_pipeline": "marker_first",
+                        "marker_bbox": list(marker_hit.bbox),
+                        "marker_confidence": marker_hit.confidence,
+                        "marker_pixel_count": int(marker_hit.metadata.get("pixel_count", 0)),
+                        "occupied_confidence": occupied_confidence,
+                        "occupied_roi": list(occupied_roi_box),
+                        "confirmation_roi": list(confirmation_roi_box),
+                        "confirmation_confidence": best_confirmation.confidence,
+                        "confirmation_alignment_score": float(
+                            best_confirmation.metadata.get("alignment_score", 0.0)
+                        ),
+                        "confirmation_horizontal_gap_px": float(
+                            best_confirmation.metadata.get("horizontal_gap_px", 0.0)
+                        ),
+                        "confirmation_vertical_gap_px": float(
+                            best_confirmation.metadata.get("vertical_gap_px", 0.0)
+                        ),
+                        "confirmation_template": best_confirmation.metadata.get("template_path"),
+                        "variant_name": best_confirmation.metadata.get("variant_name"),
+                        "raw_hit_count": int(best_confirmation.metadata.get("raw_hit_count", 1)),
+                    },
+                )
+            )
+        ordered_detections = tuple(sorted(detections, key=lambda item: (item.distance, item.target_id)))
+        return tuple(raw_hits), ordered_detections
 
     def _resolve_match_stride_px(self, frame: LiveFrame) -> int:
         override = frame.metadata.get("template_match_stride_px")
@@ -485,7 +608,7 @@ class PerceptionAnalyzer:
                 filtered_hits.append(hit)
         return tuple(filtered_hits)
 
-    def _build_detections(
+    def _build_detections_from_template_hits(
         self,
         *,
         hits: tuple[TemplateHit, ...],
@@ -537,6 +660,89 @@ class PerceptionAnalyzer:
                 )
             )
         return tuple(sorted(detections, key=lambda item: (item.distance, item.target_id)))
+
+    def _smooth_detections(
+        self,
+        detections: tuple[LiveTargetDetection, ...],
+    ) -> tuple[LiveTargetDetection, ...]:
+        if not detections and not self._track_states:
+            return ()
+        matched_track_ids: set[str] = set()
+        smoothed: list[LiveTargetDetection] = []
+        for detection in detections:
+            track_id = self._match_track_id(detection, matched_track_ids)
+            if track_id is None:
+                self._track_sequence += 1
+                track_id = f"track-{self._track_sequence:04d}"
+                seen_frames = 1
+                occupied_seen_frames = 1 if detection.occupied else 0
+            else:
+                previous = self._track_states[track_id]
+                seen_frames = previous.seen_frames + 1
+                occupied_seen_frames = (
+                    previous.occupied_seen_frames + 1 if detection.occupied else 0
+                )
+            self._track_states[track_id] = TrackedDetectionState(
+                track_id=track_id,
+                screen_x=float(detection.screen_x),
+                screen_y=float(detection.screen_y),
+                seen_frames=seen_frames,
+                occupied_seen_frames=occupied_seen_frames,
+                missed_frames=0,
+            )
+            matched_track_ids.add(track_id)
+            stable = seen_frames >= self._live_config.candidate_confirmation_frames
+            if not stable:
+                continue
+            smoothed_occupied = detection.occupied and (
+                occupied_seen_frames >= self._live_config.occupied_confirmation_frames
+            )
+            smoothed.append(
+                replace(
+                    detection,
+                    occupied=smoothed_occupied,
+                    metadata={
+                        **detection.metadata,
+                        "track_id": track_id,
+                        "seen_frames": seen_frames,
+                        "occupied_seen_frames": occupied_seen_frames,
+                        "stable_candidate": stable,
+                    },
+                )
+            )
+
+        stale_track_ids: list[str] = []
+        for track_id, state in self._track_states.items():
+            if track_id in matched_track_ids:
+                continue
+            state.missed_frames += 1
+            if state.missed_frames >= self._live_config.candidate_loss_frames:
+                stale_track_ids.append(track_id)
+        for track_id in stale_track_ids:
+            del self._track_states[track_id]
+        return tuple(sorted(smoothed, key=lambda item: (item.distance, item.target_id)))
+
+    def _match_track_id(
+        self,
+        detection: LiveTargetDetection,
+        matched_track_ids: set[str],
+    ) -> str | None:
+        best_track_id: str | None = None
+        best_distance: float | None = None
+        max_distance = float(self._live_config.merge_distance_px * 1.5)
+        for track_id, state in self._track_states.items():
+            if track_id in matched_track_ids:
+                continue
+            distance = math.dist(
+                (float(detection.screen_x), float(detection.screen_y)),
+                (state.screen_x, state.screen_y),
+            )
+            if distance > max_distance:
+                continue
+            if best_distance is None or distance < best_distance:
+                best_distance = distance
+                best_track_id = track_id
+        return best_track_id
 
     def _resolve_duration_s(
         self,
@@ -669,9 +875,18 @@ class PerceptionArtifactWriter:
             f'<line x1="{reference_x}" y1="{reference_y - 10}" x2="{reference_x}" y2="{reference_y + 10}" stroke="#fde047" stroke-width="2" />'
         )
         for hit in result.raw_hits:
-            hit_color = "#9ca3af" if hit.label != "occupied_swords" else "#f97316"
+            hit_color = "#9ca3af"
+            if hit.label == "red_marker":
+                hit_color = "#ef4444"
+            elif hit.label == "occupied_swords":
+                hit_color = "#f97316"
+            elif hit.label in {"mob_a", "mob_b"}:
+                hit_color = "#38bdf8"
             lines.append(
                 f'<rect x="{hit.x}" y="{hit.y}" width="{hit.width}" height="{hit.height}" fill="none" stroke="{hit_color}" stroke-dasharray="4 4" stroke-width="1" />'
+            )
+            lines.append(
+                f'<text x="{hit.x}" y="{max(12, hit.y - 2)}" fill="{hit_color}" font-size="11">{hit.label} {hit.confidence:.2f}</text>'
             )
         for detection in result.detections:
             bbox = detection.bbox or (
@@ -684,6 +899,21 @@ class PerceptionArtifactWriter:
             color = "#ef4444" if detection.occupied else "#22c55e"
             stroke_width = 4 if selected else 2
             label = "occupied" if detection.occupied else "free"
+            marker_bbox = detection.metadata.get("marker_bbox")
+            occupied_roi = detection.metadata.get("occupied_roi")
+            confirmation_roi = detection.metadata.get("confirmation_roi")
+            if isinstance(marker_bbox, list) and len(marker_bbox) == 4:
+                lines.append(
+                    f'<rect x="{marker_bbox[0]}" y="{marker_bbox[1]}" width="{marker_bbox[2]}" height="{marker_bbox[3]}" fill="none" stroke="#ef4444" stroke-width="2" />'
+                )
+            if isinstance(occupied_roi, list) and len(occupied_roi) == 4:
+                lines.append(
+                    f'<rect x="{occupied_roi[0]}" y="{occupied_roi[1]}" width="{occupied_roi[2]}" height="{occupied_roi[3]}" fill="none" stroke="#f97316" stroke-dasharray="3 3" stroke-width="1" />'
+                )
+            if isinstance(confirmation_roi, list) and len(confirmation_roi) == 4:
+                lines.append(
+                    f'<rect x="{confirmation_roi[0]}" y="{confirmation_roi[1]}" width="{confirmation_roi[2]}" height="{confirmation_roi[3]}" fill="none" stroke="#38bdf8" stroke-dasharray="3 3" stroke-width="1" />'
+                )
             lines.append(
                 f'<rect x="{bbox[0]}" y="{bbox[1]}" width="{bbox[2]}" height="{bbox[3]}" fill="none" stroke="{color}" stroke-width="{stroke_width}" />'
             )
@@ -691,7 +921,7 @@ class PerceptionArtifactWriter:
                 f'<circle cx="{detection.screen_x}" cy="{detection.screen_y}" r="4" fill="{color}" />'
             )
             lines.append(
-                f'<text x="{bbox[0]}" y="{max(14, bbox[1] - 6)}" fill="#f9fafb" font-size="14">{detection.target_id} {label} conf={detection.confidence:.2f} dist={detection.distance:.1f}</text>'
+                f'<text x="{bbox[0]}" y="{max(14, bbox[1] - 6)}" fill="#f9fafb" font-size="14">{detection.target_id} {label} conf={detection.confidence:.2f} dist={detection.distance:.1f} marker={float(detection.metadata.get("marker_confidence", 0.0)):.2f}</text>'
             )
             if selected:
                 lines.append(
@@ -718,6 +948,14 @@ class PerceptionFrameLoader:
                 continue
             if path.suffix.lower() not in {".json", ".png", ".jpg", ".jpeg"}:
                 continue
+            if path.suffix.lower() == ".json":
+                sibling_images = (
+                    path.with_suffix(".png"),
+                    path.with_suffix(".jpg"),
+                    path.with_suffix(".jpeg"),
+                )
+                if any(candidate.exists() for candidate in sibling_images):
+                    continue
             if path.name.endswith("_perception.json"):
                 continue
             if path.name == "perception_session_summary.json":
@@ -913,6 +1151,370 @@ def build_world_snapshot_from_perception(
             "total_reaction_latency_ms": perception_result.timings.total_reaction_latency_ms,
         },
     )
+
+
+def _detect_red_marker_hits(
+    *,
+    roi_image: Any,
+    roi_offset_xy: tuple[int, int],
+    live_config: LiveConfig,
+) -> tuple[TemplateHit, ...]:
+    if Image is None:
+        return ()
+    rgb_image = roi_image.convert("RGB")
+    width, height = rgb_image.size
+    pixels = rgb_image.load()
+    red_mask = bytearray(width * height)
+    for y in range(height):
+        for x in range(width):
+            red, green, blue = pixels[x, y]
+            if (
+                red >= live_config.marker_min_red
+                and (red - green) >= live_config.marker_red_green_delta
+                and (red - blue) >= live_config.marker_red_blue_delta
+            ):
+                red_mask[(y * width) + x] = 1
+
+    hits: list[TemplateHit] = []
+    visited = bytearray(width * height)
+    for y in range(height):
+        for x in range(width):
+            index = (y * width) + x
+            if red_mask[index] == 0 or visited[index] == 1:
+                continue
+            queue: list[tuple[int, int]] = [(x, y)]
+            visited[index] = 1
+            component_pixels: list[tuple[int, int]] = []
+            min_x = x
+            max_x = x
+            min_y = y
+            max_y = y
+            red_strength_sum = 0.0
+            while queue:
+                current_x, current_y = queue.pop()
+                component_pixels.append((current_x, current_y))
+                min_x = min(min_x, current_x)
+                max_x = max(max_x, current_x)
+                min_y = min(min_y, current_y)
+                max_y = max(max_y, current_y)
+                red, green, blue = pixels[current_x, current_y]
+                red_strength_sum += _compute_marker_pixel_strength(
+                    red=red,
+                    green=green,
+                    blue=blue,
+                    live_config=live_config,
+                )
+                for neighbor_x, neighbor_y in (
+                    (current_x - 1, current_y),
+                    (current_x + 1, current_y),
+                    (current_x, current_y - 1),
+                    (current_x, current_y + 1),
+                    (current_x - 1, current_y - 1),
+                    (current_x + 1, current_y - 1),
+                    (current_x - 1, current_y + 1),
+                    (current_x + 1, current_y + 1),
+                ):
+                    if not (0 <= neighbor_x < width and 0 <= neighbor_y < height):
+                        continue
+                    neighbor_index = (neighbor_y * width) + neighbor_x
+                    if red_mask[neighbor_index] == 0 or visited[neighbor_index] == 1:
+                        continue
+                    visited[neighbor_index] = 1
+                    queue.append((neighbor_x, neighbor_y))
+
+            pixel_count = len(component_pixels)
+            component_width = max_x - min_x + 1
+            component_height = max_y - min_y + 1
+            if pixel_count < live_config.marker_min_blob_pixels:
+                continue
+            if pixel_count > live_config.marker_max_blob_pixels:
+                continue
+            if component_width < live_config.marker_min_width_px:
+                continue
+            if component_width > live_config.marker_max_width_px:
+                continue
+            if component_height < live_config.marker_min_height_px:
+                continue
+            if component_height > live_config.marker_max_height_px:
+                continue
+            confidence = min(1.0, red_strength_sum / max(1.0, float(pixel_count)))
+            if confidence < live_config.marker_confidence_threshold:
+                continue
+            hits.append(
+                TemplateHit(
+                    label="red_marker",
+                    x=roi_offset_xy[0] + min_x,
+                    y=roi_offset_xy[1] + min_y,
+                    width=component_width,
+                    height=component_height,
+                    confidence=confidence,
+                    rotation_deg=0,
+                    target_id=None,
+                    source="pixel_marker",
+                    metadata={
+                        "pixel_count": pixel_count,
+                        "mean_marker_strength": confidence,
+                    },
+                )
+            )
+    return tuple(hits)
+
+
+def _compute_marker_pixel_strength(
+    *,
+    red: int,
+    green: int,
+    blue: int,
+    live_config: LiveConfig,
+) -> float:
+    red_term = max(0.0, float(red - live_config.marker_min_red)) / max(
+        1.0,
+        float(255 - live_config.marker_min_red),
+    )
+    green_delta_term = max(
+        0.0,
+        float((red - green) - live_config.marker_red_green_delta),
+    ) / max(1.0, float(255 - live_config.marker_red_green_delta))
+    blue_delta_term = max(
+        0.0,
+        float((red - blue) - live_config.marker_red_blue_delta),
+    ) / max(1.0, float(255 - live_config.marker_red_blue_delta))
+    return min(1.0, (red_term + green_delta_term + blue_delta_term) / 3.0)
+
+
+def _build_local_roi_box(
+    *,
+    anchor_x: float,
+    anchor_y: float,
+    width: int,
+    height: int,
+    offset_y: int,
+    frame_width: int,
+    frame_height: int,
+) -> tuple[int, int, int, int]:
+    left = int(round(anchor_x - (width / 2.0)))
+    top = int(round(anchor_y + offset_y))
+    left = max(0, min(left, max(0, frame_width - width)))
+    top = max(0, min(top, max(0, frame_height - height)))
+    return (
+        left,
+        top,
+        min(width, frame_width - left),
+        min(height, frame_height - top),
+    )
+
+
+def _match_local_variants(
+    *,
+    image: Any,
+    box: tuple[int, int, int, int],
+    variants: tuple[TemplateVariant, ...],
+    confidence_threshold: float,
+    stride_px: int,
+) -> tuple[TemplateHit, ...]:
+    if not variants:
+        return ()
+    left, top, width, height = box
+    if width <= 0 or height <= 0:
+        return ()
+    roi_image = image.crop((left, top, left + width, top + height))
+    return _match_template_variants(
+        roi_image=roi_image,
+        roi_offset_xy=(left, top),
+        variants=variants,
+        confidence_threshold=confidence_threshold,
+        stride_px=stride_px,
+    )
+
+
+def _select_best_confirmation_hit(
+    *,
+    marker_hit: TemplateHit,
+    confirmation_hits: tuple[TemplateHit, ...],
+    live_config: LiveConfig,
+) -> TemplateHit | None:
+    if not confirmation_hits:
+        return None
+    marker_center_x, marker_center_y = marker_hit.center_xy
+    scored_hits: list[tuple[float, TemplateHit]] = []
+    for hit in confirmation_hits:
+        hit_center_x, hit_center_y = hit.center_xy
+        horizontal_gap = abs(hit_center_x - marker_center_x)
+        vertical_gap = hit_center_y - marker_center_y
+        if horizontal_gap > live_config.confirmation_max_horizontal_offset_px:
+            continue
+        if vertical_gap < live_config.confirmation_min_vertical_offset_px:
+            continue
+        if vertical_gap > live_config.confirmation_max_vertical_offset_px:
+            continue
+        horizontal_penalty = horizontal_gap / max(
+            1.0,
+            float(live_config.confirmation_max_horizontal_offset_px),
+        )
+        vertical_midpoint = (
+            live_config.confirmation_min_vertical_offset_px
+            + live_config.confirmation_max_vertical_offset_px
+        ) / 2.0
+        vertical_span = max(
+            1.0,
+            float(
+                live_config.confirmation_max_vertical_offset_px
+                - live_config.confirmation_min_vertical_offset_px
+            )
+            / 2.0,
+        )
+        vertical_penalty = abs(vertical_gap - vertical_midpoint) / vertical_span
+        alignment_score = max(0.0, 1.0 - ((horizontal_penalty * 0.6) + (vertical_penalty * 0.4)))
+        combined_score = (hit.confidence * 0.75) + (alignment_score * 0.25)
+        scored_hits.append(
+            (
+                combined_score,
+                replace(
+                    hit,
+                    metadata={
+                        **hit.metadata,
+                        "alignment_score": alignment_score,
+                        "horizontal_gap_px": horizontal_gap,
+                        "vertical_gap_px": vertical_gap,
+                        "combined_confirmation_score": combined_score,
+                    },
+                ),
+            )
+        )
+    if not scored_hits:
+        return None
+    scored_hits.sort(
+        key=lambda item: (
+            item[0],
+            item[1].confidence,
+            -float(item[1].metadata.get("horizontal_gap_px", 0.0)),
+        ),
+        reverse=True,
+    )
+    return scored_hits[0][1]
+
+
+def _detect_green_swords_hits(
+    *,
+    image: Any,
+    box: tuple[int, int, int, int],
+    live_config: LiveConfig,
+) -> tuple[TemplateHit, ...]:
+    if Image is None:
+        return ()
+    left, top, width, height = box
+    if width <= 0 or height <= 0:
+        return ()
+    roi_image = image.crop((left, top, left + width, top + height)).convert("RGB")
+    roi_width, roi_height = roi_image.size
+    pixels = roi_image.load()
+    green_mask = bytearray(roi_width * roi_height)
+    for y in range(roi_height):
+        for x in range(roi_width):
+            red, green, blue = pixels[x, y]
+            if (
+                green >= live_config.swords_min_green
+                and (green - red) >= live_config.swords_green_red_delta
+                and (green - blue) >= live_config.swords_green_blue_delta
+            ):
+                green_mask[(y * roi_width) + x] = 1
+
+    hits: list[TemplateHit] = []
+    visited = bytearray(roi_width * roi_height)
+    for y in range(roi_height):
+        for x in range(roi_width):
+            index = (y * roi_width) + x
+            if green_mask[index] == 0 or visited[index] == 1:
+                continue
+            queue: list[tuple[int, int]] = [(x, y)]
+            visited[index] = 1
+            min_x = x
+            max_x = x
+            min_y = y
+            max_y = y
+            pixel_count = 0
+            green_strength_sum = 0.0
+            while queue:
+                current_x, current_y = queue.pop()
+                pixel_count += 1
+                min_x = min(min_x, current_x)
+                max_x = max(max_x, current_x)
+                min_y = min(min_y, current_y)
+                max_y = max(max_y, current_y)
+                red, green, blue = pixels[current_x, current_y]
+                green_strength_sum += _compute_swords_pixel_strength(
+                    red=red,
+                    green=green,
+                    blue=blue,
+                    live_config=live_config,
+                )
+                for neighbor_x, neighbor_y in (
+                    (current_x - 1, current_y),
+                    (current_x + 1, current_y),
+                    (current_x, current_y - 1),
+                    (current_x, current_y + 1),
+                    (current_x - 1, current_y - 1),
+                    (current_x + 1, current_y - 1),
+                    (current_x - 1, current_y + 1),
+                    (current_x + 1, current_y + 1),
+                ):
+                    if not (0 <= neighbor_x < roi_width and 0 <= neighbor_y < roi_height):
+                        continue
+                    neighbor_index = (neighbor_y * roi_width) + neighbor_x
+                    if green_mask[neighbor_index] == 0 or visited[neighbor_index] == 1:
+                        continue
+                    visited[neighbor_index] = 1
+                    queue.append((neighbor_x, neighbor_y))
+
+            if pixel_count < live_config.swords_min_blob_pixels:
+                continue
+            if pixel_count > live_config.swords_max_blob_pixels:
+                continue
+            component_width = max_x - min_x + 1
+            component_height = max_y - min_y + 1
+            confidence = min(1.0, green_strength_sum / max(1.0, float(pixel_count)))
+            if confidence < live_config.swords_confidence_threshold:
+                continue
+            hits.append(
+                TemplateHit(
+                    label="occupied_swords",
+                    x=left + min_x,
+                    y=top + min_y,
+                    width=component_width,
+                    height=component_height,
+                    confidence=confidence,
+                    rotation_deg=0,
+                    target_id=None,
+                    source="pixel_green_swords",
+                    metadata={
+                        "pixel_count": pixel_count,
+                        "mean_swords_strength": confidence,
+                    },
+                )
+            )
+    return tuple(hits)
+
+
+def _compute_swords_pixel_strength(
+    *,
+    red: int,
+    green: int,
+    blue: int,
+    live_config: LiveConfig,
+) -> float:
+    green_term = max(0.0, float(green - live_config.swords_min_green)) / max(
+        1.0,
+        float(255 - live_config.swords_min_green),
+    )
+    red_delta_term = max(
+        0.0,
+        float((green - red) - live_config.swords_green_red_delta),
+    ) / max(1.0, float(255 - live_config.swords_green_red_delta))
+    blue_delta_term = max(
+        0.0,
+        float((green - blue) - live_config.swords_green_blue_delta),
+    ) / max(1.0, float(255 - live_config.swords_green_blue_delta))
+    return min(1.0, (green_term + red_delta_term + blue_delta_term) / 3.0)
 
 
 def _percentile(sorted_values: list[float], percentile: int) -> float:

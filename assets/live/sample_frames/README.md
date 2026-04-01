@@ -17,6 +17,11 @@ Dodatkowo:
   - `reference_point_xy`
   - `spawn_roi`
   - inne lekkie metadane pomocne przy analizie.
+- sidecary moga tez zawierac `expected_perception`,
+  czyli lekki kontrakt regresyjny dla realnych klatek referencyjnych:
+  - ile targetow powinno byc widocznych,
+  - ile powinno byc occupied/free,
+  - czy target powinien zostac wybrany.
 
 Obecny folder `screenshots/enemies` moze jeszcze istniec pomocniczo,
 ale docelowo analiza perception powinna operowac na `assets/live/sample_frames/raw`.

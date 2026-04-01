@@ -14,7 +14,11 @@
       "distance": 78.10249675906654,
       "metadata": {
         "occupied_confidence": 0.0,
-        "raw_hit_count": 1
+        "occupied_seen_frames": 0,
+        "raw_hit_count": 1,
+        "seen_frames": 2,
+        "stable_candidate": true,
+        "track_id": "track-0004"
       },
       "mob_variant": "mob_a",
       "occupied": false,
@@ -60,13 +64,13 @@
   },
   "selected_target_id": "fallback-safe",
   "timings": {
-    "action_ready_ts": 164.6506530897666,
-    "detection_finished_ts": 164.65065118976668,
-    "detection_latency_ms": 0.02700000004551839,
+    "action_ready_ts": 164.6506966897657,
+    "detection_finished_ts": 164.6506930897674,
+    "detection_latency_ms": 0.06890000076964498,
     "detection_started_ts": 164.65062418976663,
     "frame_captured_ts": 164.65062418976663,
-    "selection_latency_ms": 0.0018999999156221747,
-    "target_selected_ts": 164.6506530897666,
-    "total_reaction_latency_ms": 0.028899999961140566
+    "selection_latency_ms": 0.0035999983083456755,
+    "target_selected_ts": 164.6506966897657,
+    "total_reaction_latency_ms": 0.07249999907799065
   }
 }

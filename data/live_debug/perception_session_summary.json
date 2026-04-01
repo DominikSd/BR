@@ -9,12 +9,12 @@
     "p95_ms": 5.0
   },
   "detection_latency": {
-    "avg_ms": 5.517683333375582,
+    "avg_ms": 5.540883333589856,
     "count": 6,
     "max_ms": 12.000000000000455,
-    "min_ms": 0.023800000235496555,
+    "min_ms": 0.05149999924469739,
     "name": "detection_latency_ms",
-    "p50_ms": 0.05529999998543644,
+    "p50_ms": 0.12490000153775327,
     "p95_ms": 12.000000000000455
   },
   "frame_count": 6,
@@ -38,7 +38,11 @@
           "distance": 63.245553203367585,
           "metadata": {
             "occupied_confidence": 0.98,
-            "raw_hit_count": 1
+            "occupied_seen_frames": 1,
+            "raw_hit_count": 1,
+            "seen_frames": 2,
+            "stable_candidate": true,
+            "track_id": "track-0001"
           },
           "mob_variant": "mob_b",
           "occupied": true,
@@ -59,7 +63,11 @@
           "distance": 78.10249675906654,
           "metadata": {
             "occupied_confidence": 0.0,
-            "raw_hit_count": 1
+            "occupied_seen_frames": 0,
+            "raw_hit_count": 1,
+            "seen_frames": 1,
+            "stable_candidate": true,
+            "track_id": "track-0004"
           },
           "mob_variant": "mob_a",
           "occupied": false,
@@ -80,7 +88,11 @@
           "distance": 144.22205101855957,
           "metadata": {
             "occupied_confidence": 0.98,
-            "raw_hit_count": 1
+            "occupied_seen_frames": 2,
+            "raw_hit_count": 1,
+            "seen_frames": 2,
+            "stable_candidate": true,
+            "track_id": "track-0003"
           },
           "mob_variant": "mob_a",
           "occupied": true,
@@ -203,7 +215,11 @@
           "distance": 78.10249675906654,
           "metadata": {
             "occupied_confidence": 0.0,
-            "raw_hit_count": 1
+            "occupied_seen_frames": 0,
+            "raw_hit_count": 1,
+            "seen_frames": 2,
+            "stable_candidate": true,
+            "track_id": "track-0004"
           },
           "mob_variant": "mob_a",
           "occupied": false,
@@ -249,14 +265,14 @@
       },
       "selected_target_id": "fallback-safe",
       "timings": {
-        "action_ready_ts": 164.6506530897666,
-        "detection_finished_ts": 164.65065118976668,
-        "detection_latency_ms": 0.02700000004551839,
+        "action_ready_ts": 164.6506966897657,
+        "detection_finished_ts": 164.6506930897674,
+        "detection_latency_ms": 0.06890000076964498,
         "detection_started_ts": 164.65062418976663,
         "frame_captured_ts": 164.65062418976663,
-        "selection_latency_ms": 0.0018999999156221747,
-        "target_selected_ts": 164.6506530897666,
-        "total_reaction_latency_ms": 0.028899999961140566
+        "selection_latency_ms": 0.0035999983083456755,
+        "target_selected_ts": 164.6506966897657,
+        "total_reaction_latency_ms": 0.07249999907799065
       }
     },
     {
@@ -289,7 +305,11 @@
               }
             ],
             "occupied_confidence": 0.0,
-            "raw_hit_count": 2
+            "occupied_seen_frames": 0,
+            "raw_hit_count": 2,
+            "seen_frames": 1,
+            "stable_candidate": true,
+            "track_id": "track-0001"
           },
           "mob_variant": "mob_b",
           "occupied": false,
@@ -310,7 +330,11 @@
           "distance": 127.13772060250254,
           "metadata": {
             "occupied_confidence": 0.0,
-            "raw_hit_count": 1
+            "occupied_seen_frames": 0,
+            "raw_hit_count": 1,
+            "seen_frames": 1,
+            "stable_candidate": true,
+            "track_id": "track-0002"
           },
           "mob_variant": "mob_a",
           "occupied": false,
@@ -331,7 +355,11 @@
           "distance": 144.22205101855957,
           "metadata": {
             "occupied_confidence": 0.98,
-            "raw_hit_count": 1
+            "occupied_seen_frames": 1,
+            "raw_hit_count": 1,
+            "seen_frames": 1,
+            "stable_candidate": true,
+            "track_id": "track-0003"
           },
           "mob_variant": "mob_a",
           "occupied": true,
@@ -478,7 +506,11 @@
           "distance": 63.245553203367585,
           "metadata": {
             "occupied_confidence": 0.0,
-            "raw_hit_count": 1
+            "occupied_seen_frames": 0,
+            "raw_hit_count": 1,
+            "seen_frames": 4,
+            "stable_candidate": true,
+            "track_id": "track-0001"
           },
           "mob_variant": "mob_a",
           "occupied": false,
@@ -499,7 +531,11 @@
           "distance": 79.20858539325141,
           "metadata": {
             "occupied_confidence": 0.0,
-            "raw_hit_count": 1
+            "occupied_seen_frames": 0,
+            "raw_hit_count": 1,
+            "seen_frames": 4,
+            "stable_candidate": true,
+            "track_id": "track-0004"
           },
           "mob_variant": "mob_a",
           "occupied": false,
@@ -520,7 +556,11 @@
           "distance": 111.30588483993108,
           "metadata": {
             "occupied_confidence": 0.0,
-            "raw_hit_count": 1
+            "occupied_seen_frames": 0,
+            "raw_hit_count": 1,
+            "seen_frames": 2,
+            "stable_candidate": true,
+            "track_id": "track-0005"
           },
           "mob_variant": "mob_b",
           "occupied": false,
@@ -590,14 +630,14 @@
       },
       "selected_target_id": "live-spawn-2-3",
       "timings": {
-        "action_ready_ts": 190.2500581000004,
-        "detection_finished_ts": 190.25005529999999,
-        "detection_latency_ms": 0.05529999998543644,
+        "action_ready_ts": 190.250128700005,
+        "detection_finished_ts": 190.25012490000154,
+        "detection_latency_ms": 0.12490000153775327,
         "detection_started_ts": 190.25,
         "frame_captured_ts": 190.25,
-        "selection_latency_ms": 0.0028000004022032954,
-        "target_selected_ts": 190.2500581000004,
-        "total_reaction_latency_ms": 0.05810000038763974
+        "selection_latency_ms": 0.0038000034692231566,
+        "target_selected_ts": 190.250128700005,
+        "total_reaction_latency_ms": 0.12870000500697643
       }
     },
     {
@@ -619,7 +659,11 @@
           "distance": 79.20858539325141,
           "metadata": {
             "occupied_confidence": 0.0,
-            "raw_hit_count": 1
+            "occupied_seen_frames": 0,
+            "raw_hit_count": 1,
+            "seen_frames": 5,
+            "stable_candidate": true,
+            "track_id": "track-0004"
           },
           "mob_variant": "mob_a",
           "occupied": false,
@@ -665,14 +709,14 @@
       },
       "selected_target_id": "live-spawn-2-1",
       "timings": {
-        "action_ready_ts": 205.68641400084203,
-        "detection_finished_ts": 205.68641210084212,
-        "detection_latency_ms": 0.023800000235496555,
+        "action_ready_ts": 205.68644210084045,
+        "detection_finished_ts": 205.68643980084113,
+        "detection_latency_ms": 0.05149999924469739,
         "detection_started_ts": 205.68638830084188,
         "frame_captured_ts": 205.68638830084188,
-        "selection_latency_ms": 0.0018999999156221747,
-        "target_selected_ts": 205.68641400084203,
-        "total_reaction_latency_ms": 0.02570000015111873
+        "selection_latency_ms": 0.0022999993234407157,
+        "target_selected_ts": 205.68644210084045,
+        "total_reaction_latency_ms": 0.05379999856813811
       }
     },
     {
@@ -694,7 +738,11 @@
           "distance": 63.245553203367585,
           "metadata": {
             "occupied_confidence": 0.0,
-            "raw_hit_count": 1
+            "occupied_seen_frames": 0,
+            "raw_hit_count": 1,
+            "seen_frames": 3,
+            "stable_candidate": true,
+            "track_id": "track-0001"
           },
           "mob_variant": "mob_a",
           "occupied": false,
@@ -715,7 +763,11 @@
           "distance": 79.20858539325141,
           "metadata": {
             "occupied_confidence": 0.0,
-            "raw_hit_count": 1
+            "occupied_seen_frames": 0,
+            "raw_hit_count": 1,
+            "seen_frames": 3,
+            "stable_candidate": true,
+            "track_id": "track-0004"
           },
           "mob_variant": "mob_a",
           "occupied": false,
@@ -736,7 +788,11 @@
           "distance": 111.30588483993108,
           "metadata": {
             "occupied_confidence": 0.0,
-            "raw_hit_count": 1
+            "occupied_seen_frames": 0,
+            "raw_hit_count": 1,
+            "seen_frames": 1,
+            "stable_candidate": true,
+            "track_id": "track-0005"
           },
           "mob_variant": "mob_b",
           "occupied": false,
@@ -836,21 +892,21 @@
     "p95_ms": 3.0
   },
   "selection_latency": {
-    "avg_ms": 1.6677666666993218,
+    "avg_ms": 1.6682833335105822,
     "count": 6,
     "max_ms": 3.9999999999906777,
-    "min_ms": 0.0018999999156221747,
+    "min_ms": 0.0022999993234407157,
     "name": "selection_latency_ms",
-    "p50_ms": 0.0028000004022032954,
+    "p50_ms": 0.0038000034692231566,
     "p95_ms": 3.9999999999906777
   },
   "total_reaction_latency": {
-    "avg_ms": 8.018783333412216,
+    "avg_ms": 8.04250000043775,
     "count": 6,
     "max_ms": 18.000000000000682,
-    "min_ms": 0.02570000015111873,
+    "min_ms": 0.05379999856813811,
     "name": "total_reaction_latency_ms",
-    "p50_ms": 0.05810000038763974,
+    "p50_ms": 0.12870000500697643,
     "p95_ms": 18.000000000000682
   }
 }

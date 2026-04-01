@@ -14,7 +14,11 @@
       "distance": 79.20858539325141,
       "metadata": {
         "occupied_confidence": 0.0,
-        "raw_hit_count": 1
+        "occupied_seen_frames": 0,
+        "raw_hit_count": 1,
+        "seen_frames": 5,
+        "stable_candidate": true,
+        "track_id": "track-0004"
       },
       "mob_variant": "mob_a",
       "occupied": false,
@@ -60,13 +64,13 @@
   },
   "selected_target_id": "live-spawn-2-1",
   "timings": {
-    "action_ready_ts": 205.68641400084203,
-    "detection_finished_ts": 205.68641210084212,
-    "detection_latency_ms": 0.023800000235496555,
+    "action_ready_ts": 205.68644210084045,
+    "detection_finished_ts": 205.68643980084113,
+    "detection_latency_ms": 0.05149999924469739,
     "detection_started_ts": 205.68638830084188,
     "frame_captured_ts": 205.68638830084188,
-    "selection_latency_ms": 0.0018999999156221747,
-    "target_selected_ts": 205.68641400084203,
-    "total_reaction_latency_ms": 0.02570000015111873
+    "selection_latency_ms": 0.0022999993234407157,
+    "target_selected_ts": 205.68644210084045,
+    "total_reaction_latency_ms": 0.05379999856813811
   }
 }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 from pathlib import Path
 
@@ -36,6 +37,76 @@ def _build_live_settings(tmp_path: Path) -> Settings:
         source_path=base.source_path,
         live=load_config("config/live_dry_run.yaml").live,
     )
+
+
+def _write_simple_marker_first_templates(root: Path) -> tuple[Path, Path]:
+    from PIL import Image, ImageDraw
+
+    mobs_root = root / "mobs"
+    occupied_root = root / "occupied"
+    (mobs_root / "mob_a").mkdir(parents=True, exist_ok=True)
+    (mobs_root / "mob_b").mkdir(parents=True, exist_ok=True)
+    occupied_root.mkdir(parents=True, exist_ok=True)
+
+    mob_a = Image.new("RGB", (18, 24), color=(35, 35, 35))
+    draw_a = ImageDraw.Draw(mob_a)
+    draw_a.rectangle((5, 2, 12, 7), fill=(170, 195, 225))
+    draw_a.rectangle((4, 8, 13, 22), fill=(120, 80, 40))
+    mob_a.save(mobs_root / "mob_a" / "base.png")
+
+    mob_b = Image.new("RGB", (18, 24), color=(35, 35, 35))
+    draw_b = ImageDraw.Draw(mob_b)
+    draw_b.rectangle((5, 2, 12, 7), fill=(110, 180, 210))
+    draw_b.rectangle((4, 8, 13, 22), fill=(70, 110, 150))
+    mob_b.save(mobs_root / "mob_b" / "base.png")
+
+    swords = Image.new("RGB", (12, 12), color=(0, 0, 0))
+    draw_s = ImageDraw.Draw(swords)
+    draw_s.line((2, 2, 9, 9), fill=(60, 220, 60), width=2)
+    draw_s.line((9, 2, 2, 9), fill=(60, 220, 60), width=2)
+    swords.save(occupied_root / "crossed_swords.png")
+
+    return mobs_root, occupied_root
+
+
+def _build_marker_first_settings(tmp_path: Path) -> Settings:
+    settings = _build_live_settings(tmp_path)
+    templates_root = tmp_path / "templates"
+    mobs_root, occupied_root = _write_simple_marker_first_templates(templates_root)
+    live = replace(
+        settings.live,
+        spawn_roi=(0, 0, 320, 240),
+        mobs_template_directory=mobs_root,
+        occupied_template_directory=occupied_root,
+        template_rotations_deg=(0,),
+        template_match_stride_px=1,
+        perception_confidence_threshold=0.80,
+        confirmation_confidence_threshold=0.80,
+        occupied_confidence_threshold=0.55,
+        merge_distance_px=16,
+        marker_min_red=160,
+        marker_red_green_delta=40,
+        marker_red_blue_delta=30,
+        marker_min_blob_pixels=4,
+        marker_max_blob_pixels=80,
+        marker_min_width_px=3,
+        marker_max_width_px=18,
+        marker_min_height_px=3,
+        marker_max_height_px=18,
+        marker_confidence_threshold=0.45,
+        swords_min_green=120,
+        swords_green_red_delta=20,
+        swords_green_blue_delta=10,
+        swords_min_blob_pixels=6,
+        swords_max_blob_pixels=80,
+        occupied_local_roi_width_px=40,
+        occupied_local_roi_height_px=32,
+        occupied_local_roi_offset_y_px=-4,
+        confirmation_roi_width_px=60,
+        confirmation_roi_height_px=72,
+        confirmation_roi_offset_y_px=0,
+    )
+    return replace(settings, live=live)
 
 
 def test_filter_occupied_targets_excludes_busy_groups() -> None:
@@ -242,27 +313,97 @@ def test_frame_loader_and_roi_extraction_use_sidecar_override(tmp_path: Path) ->
     assert roi["height"] == 120
 
 
-def test_perception_pipeline_can_analyze_real_screenshot_assets(tmp_path: Path) -> None:
+def test_marker_first_perception_detects_occupied_and_selects_nearest_free_target(
+    tmp_path: Path,
+) -> None:
+    from PIL import Image, ImageDraw
+
+    settings = _build_marker_first_settings(tmp_path)
+    output_directory = tmp_path / "perception-marker-first"
+    frame_path = tmp_path / "marker_frame.png"
+    sidecar_path = tmp_path / "marker_frame.json"
+
+    frame_image = Image.new("RGB", (320, 240), color=(40, 40, 40))
+    draw = ImageDraw.Draw(frame_image)
+
+    mob_a_template = Image.open(settings.live.mobs_template_directory / "mob_a" / "base.png").convert("RGB")
+    mob_b_template = Image.open(settings.live.mobs_template_directory / "mob_b" / "base.png").convert("RGB")
+    swords_template = Image.open(settings.live.occupied_template_directory / "crossed_swords.png").convert("RGB")
+
+    frame_image.paste(mob_b_template, (58, 82))
+    draw.polygon([(67, 72), (71, 66), (75, 72), (71, 78)], fill=(225, 55, 55))
+    frame_image.paste(swords_template, (65, 70))
+
+    frame_image.paste(mob_a_template, (150, 102))
+    draw.polygon([(159, 90), (163, 84), (167, 90), (163, 96)], fill=(225, 55, 55))
+
+    frame_image.paste(mob_b_template, (250, 74))
+    draw.polygon([(259, 62), (263, 56), (267, 62), (263, 68)], fill=(225, 55, 55))
+
+    frame_image.save(frame_path)
+    sidecar_path.write_text(
+        json.dumps(
+            {
+                "captured_at_ts": 100.0,
+                "source": "marker-first-test",
+                "metadata": {
+                    "spawn_roi": [0, 0, 320, 240],
+                    "reference_point_xy": [160, 210],
+                    "perception_profile": {
+                        "detection_duration_s": 0.010,
+                        "selection_duration_s": 0.003,
+                        "action_ready_duration_s": 0.002,
+                    },
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    runner = PerceptionAnalysisRunner(
+        live_config=settings.live,
+        output_directory=output_directory,
+    )
+    summary = runner.analyze_frame_path(frame_path)
+    result = summary.frame_results[0]
+
+    assert len(result.detections) == 3
+    assert len(result.occupied_detections) == 1
+    assert len(result.free_detections) == 2
+    assert result.selected_target is not None
+    assert result.selected_target.occupied is False
+    assert result.selected_target.mob_variant == "mob_a"
+    assert abs(result.selected_target.screen_x - 159) <= 8
+    assert abs(result.selected_target.screen_y - 114) <= 10
+    assert result.timings.detection_latency_ms == pytest.approx(10.0)
+    assert result.timings.selection_latency_ms == pytest.approx(3.0)
+    assert result.timings.total_reaction_latency_ms == pytest.approx(15.0)
+    assert "marker_bbox" in result.selected_target.metadata
+    assert "confirmation_roi" in result.selected_target.metadata
+    assert "occupied_roi" in result.selected_target.metadata
+    assert (output_directory / "marker_frame_perception.json").exists() is True
+
+
+def test_marker_first_pipeline_can_smoke_test_real_sample_frame_if_present(tmp_path: Path) -> None:
     settings = _build_live_settings(tmp_path)
-    output_directory = tmp_path / "perception-real"
+    frame_path = settings.live.sample_frames_directory / "live_spot_scene_1.png"
+    if not frame_path.exists():
+        pytest.skip("Brak lokalnej klatki real sample frame do smoke testu.")
+
+    output_directory = tmp_path / "perception-real-smoke"
     runner = PerceptionAnalysisRunner(
         live_config=settings.live,
         output_directory=output_directory,
     )
 
-    free_summary = runner.analyze_frame_path(settings.live.sample_frames_directory / "Screenshot_3.png")
-    occupied_summary = runner.analyze_frame_path(settings.live.sample_frames_directory / "Zajete1.png")
+    summary = runner.analyze_frame_path(frame_path)
+    result = summary.frame_results[0]
 
-    free_result = free_summary.frame_results[0]
-    occupied_result = occupied_summary.frame_results[0]
-
-    assert len(free_result.detections) >= 1
-    assert free_result.selected_target_id is not None
-    assert len(free_result.free_detections) >= 1
-    assert len(occupied_result.occupied_detections) >= 1
-    assert occupied_result.selected_target_id is None
-    assert (output_directory / "Screenshot_3_perception.json").exists() is True
-    assert (output_directory / "Zajete1_perception.json").exists() is True
+    assert result.candidate_hit_count >= 1
+    assert result.timings.total_reaction_latency_ms >= 0.0
+    assert (output_directory / "live_spot_scene_1_perception.json").exists() is True
 
 
 def test_live_spot_scene_sidecar_is_loaded_for_real_sample_frames() -> None:
@@ -279,6 +420,81 @@ def test_live_spot_scene_sidecar_is_loaded_for_real_sample_frames() -> None:
     assert roi["y"] == 220
     assert roi["width"] == 1280
     assert roi["height"] == 720
+
+
+def test_live_spot_scenes_match_expected_perception_contracts(tmp_path: Path) -> None:
+    settings = _build_live_settings(tmp_path)
+    loader = PerceptionFrameLoader()
+    runner = PerceptionAnalysisRunner(
+        live_config=settings.live,
+        output_directory=tmp_path / "perception-expected",
+    )
+    frame_names = (
+        "live_spot_scene_1",
+        "live_spot_scene_2",
+        "live_spot_scene_3",
+    )
+
+    for frame_name in frame_names:
+        frame_path = settings.live.sample_frames_directory / f"{frame_name}.png"
+        if not frame_path.exists():
+            pytest.skip(f"Brak klatki referencyjnej {frame_name}.png")
+        frame = loader.load_frame(frame_path)
+        expected = frame.metadata.get("expected_perception")
+        assert isinstance(expected, dict)
+
+        summary = runner.analyze_frame_path(frame_path)
+        result = summary.frame_results[0]
+        free_count = len(result.free_detections)
+        occupied_count = len(result.occupied_detections)
+
+        min_target_count = expected.get("min_target_count")
+        if isinstance(min_target_count, int):
+            assert len(result.detections) >= min_target_count, frame_name
+
+        max_target_count = expected.get("max_target_count")
+        if isinstance(max_target_count, int):
+            assert len(result.detections) <= max_target_count, frame_name
+
+        min_free_target_count = expected.get("min_free_target_count")
+        if isinstance(min_free_target_count, int):
+            assert free_count >= min_free_target_count, frame_name
+
+        max_free_target_count = expected.get("max_free_target_count")
+        if isinstance(max_free_target_count, int):
+            assert free_count <= max_free_target_count, frame_name
+
+        min_occupied_target_count = expected.get("min_occupied_target_count")
+        if isinstance(min_occupied_target_count, int):
+            assert occupied_count >= min_occupied_target_count, frame_name
+
+        max_occupied_target_count = expected.get("max_occupied_target_count")
+        if isinstance(max_occupied_target_count, int):
+            assert occupied_count <= max_occupied_target_count, frame_name
+
+        selected_target_required = expected.get("selected_target_required")
+        if selected_target_required is True:
+            assert result.selected_target is not None, frame_name
+        elif selected_target_required is False:
+            assert result.selected_target is None, frame_name
+
+        selected_target_must_be_free = expected.get("selected_target_must_be_free")
+        if selected_target_must_be_free is True:
+            assert result.selected_target is not None, frame_name
+            assert result.selected_target.occupied is False, frame_name
+
+        selected_target_screen_xy = expected.get("selected_target_screen_xy")
+        selected_target_max_error_px = expected.get("selected_target_max_error_px", 48)
+        if (
+            isinstance(selected_target_screen_xy, list)
+            and len(selected_target_screen_xy) == 2
+            and all(isinstance(item, (int, float)) for item in selected_target_screen_xy)
+        ):
+            assert result.selected_target is not None, frame_name
+            delta = ((result.selected_target.screen_x - float(selected_target_screen_xy[0])) ** 2 + (
+                result.selected_target.screen_y - float(selected_target_screen_xy[1])
+            ) ** 2) ** 0.5
+            assert delta <= float(selected_target_max_error_px), frame_name
 
 
 def test_live_runner_dry_run_executes_minimal_vertical_slice(tmp_path: Path) -> None:

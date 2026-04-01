@@ -86,6 +86,35 @@ class LiveConfig:
     )
     template_match_stride_px: int = 4
     template_rotations_deg: tuple[int, ...] = (0, 90, 180, 270)
+    marker_min_red: int = 170
+    marker_red_green_delta: int = 35
+    marker_red_blue_delta: int = 25
+    marker_min_blob_pixels: int = 6
+    marker_max_blob_pixels: int = 180
+    marker_min_width_px: int = 3
+    marker_max_width_px: int = 36
+    marker_min_height_px: int = 3
+    marker_max_height_px: int = 36
+    marker_confidence_threshold: float = 0.55
+    swords_min_green: int = 120
+    swords_green_red_delta: int = 20
+    swords_green_blue_delta: int = 10
+    swords_min_blob_pixels: int = 2
+    swords_max_blob_pixels: int = 220
+    swords_confidence_threshold: float = 0.25
+    occupied_local_roi_width_px: int = 64
+    occupied_local_roi_height_px: int = 72
+    occupied_local_roi_offset_y_px: int = -42
+    confirmation_roi_width_px: int = 88
+    confirmation_roi_height_px: int = 120
+    confirmation_roi_offset_y_px: int = 4
+    confirmation_confidence_threshold: float = 0.60
+    confirmation_max_horizontal_offset_px: int = 56
+    confirmation_min_vertical_offset_px: int = 12
+    confirmation_max_vertical_offset_px: int = 180
+    candidate_confirmation_frames: int = 1
+    candidate_loss_frames: int = 2
+    occupied_confirmation_frames: int = 1
 
 
 @dataclass(slots=True, frozen=True)
@@ -205,6 +234,133 @@ def load_config(config_path: str | Path) -> Settings:
             "template_rotations_deg",
             (0, 90, 180, 270),
         ),
+        marker_min_red=_optional_int_range(live_section, "marker_min_red", 170, min_value=0, max_value=255),
+        marker_red_green_delta=_optional_int_range(
+            live_section,
+            "marker_red_green_delta",
+            35,
+            min_value=0,
+            max_value=255,
+        ),
+        marker_red_blue_delta=_optional_int_range(
+            live_section,
+            "marker_red_blue_delta",
+            25,
+            min_value=0,
+            max_value=255,
+        ),
+        marker_min_blob_pixels=_optional_positive_int(live_section, "marker_min_blob_pixels", 6),
+        marker_max_blob_pixels=_optional_positive_int(live_section, "marker_max_blob_pixels", 180),
+        marker_min_width_px=_optional_positive_int(live_section, "marker_min_width_px", 3),
+        marker_max_width_px=_optional_positive_int(live_section, "marker_max_width_px", 36),
+        marker_min_height_px=_optional_positive_int(live_section, "marker_min_height_px", 3),
+        marker_max_height_px=_optional_positive_int(live_section, "marker_max_height_px", 36),
+        marker_confidence_threshold=_optional_ratio_float(
+            live_section,
+            "marker_confidence_threshold",
+            0.55,
+        ),
+        swords_min_green=_optional_int_range(
+            live_section,
+            "swords_min_green",
+            120,
+            min_value=0,
+            max_value=255,
+        ),
+        swords_green_red_delta=_optional_int_range(
+            live_section,
+            "swords_green_red_delta",
+            20,
+            min_value=0,
+            max_value=255,
+        ),
+        swords_green_blue_delta=_optional_int_range(
+            live_section,
+            "swords_green_blue_delta",
+            10,
+            min_value=0,
+            max_value=255,
+        ),
+        swords_min_blob_pixels=_optional_positive_int(
+            live_section,
+            "swords_min_blob_pixels",
+            2,
+        ),
+        swords_max_blob_pixels=_optional_positive_int(
+            live_section,
+            "swords_max_blob_pixels",
+            220,
+        ),
+        swords_confidence_threshold=_optional_ratio_float(
+            live_section,
+            "swords_confidence_threshold",
+            0.25,
+        ),
+        occupied_local_roi_width_px=_optional_positive_int(
+            live_section,
+            "occupied_local_roi_width_px",
+            64,
+        ),
+        occupied_local_roi_height_px=_optional_positive_int(
+            live_section,
+            "occupied_local_roi_height_px",
+            72,
+        ),
+        occupied_local_roi_offset_y_px=_optional_int(
+            live_section,
+            "occupied_local_roi_offset_y_px",
+            -42,
+        ),
+        confirmation_roi_width_px=_optional_positive_int(
+            live_section,
+            "confirmation_roi_width_px",
+            88,
+        ),
+        confirmation_roi_height_px=_optional_positive_int(
+            live_section,
+            "confirmation_roi_height_px",
+            120,
+        ),
+        confirmation_roi_offset_y_px=_optional_int(
+            live_section,
+            "confirmation_roi_offset_y_px",
+            4,
+        ),
+        confirmation_confidence_threshold=_optional_ratio_float(
+            live_section,
+            "confirmation_confidence_threshold",
+            0.60,
+        ),
+        confirmation_max_horizontal_offset_px=_optional_positive_int(
+            live_section,
+            "confirmation_max_horizontal_offset_px",
+            56,
+        ),
+        confirmation_min_vertical_offset_px=_optional_positive_int(
+            live_section,
+            "confirmation_min_vertical_offset_px",
+            12,
+        ),
+        confirmation_max_vertical_offset_px=_optional_positive_int(
+            live_section,
+            "confirmation_max_vertical_offset_px",
+            180,
+        ),
+        candidate_confirmation_frames=_optional_positive_int(
+            live_section,
+            "candidate_confirmation_frames",
+            1,
+        ),
+        candidate_loss_frames=_optional_positive_int(
+            live_section,
+            "candidate_loss_frames",
+            2,
+        ),
+        occupied_confirmation_frames=_optional_positive_int(
+            live_section,
+            "occupied_confirmation_frames",
+            1,
+        ),
     )
 
     return Settings(
@@ -288,6 +444,29 @@ def _optional_positive_int(data: Mapping[str, Any], key: str, default: int) -> i
         raise ConfigError(f"Pole '{key}' musi byc liczba calkowita.")
     if value <= 0:
         raise ConfigError(f"Pole '{key}' musi byc wieksze od 0.")
+    return value
+
+
+def _optional_int(data: Mapping[str, Any], key: str, default: int) -> int:
+    value = data.get(key, default)
+    if not isinstance(value, int):
+        raise ConfigError(f"Pole '{key}' musi byc liczba calkowita.")
+    return value
+
+
+def _optional_int_range(
+    data: Mapping[str, Any],
+    key: str,
+    default: int,
+    *,
+    min_value: int,
+    max_value: int,
+) -> int:
+    value = _optional_int(data, key, default)
+    if not min_value <= value <= max_value:
+        raise ConfigError(
+            f"Pole '{key}' musi byc w zakresie od {min_value} do {max_value}."
+        )
     return value
 
 

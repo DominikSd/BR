@@ -58,6 +58,17 @@ def test_load_default_config_returns_settings() -> None:
     ).resolve()
     assert settings.live.template_match_stride_px == 4
     assert settings.live.template_rotations_deg == (0, 90, 180, 270)
+    assert settings.live.marker_min_red == 170
+    assert settings.live.marker_confidence_threshold == 0.55
+    assert settings.live.swords_min_green == 120
+    assert settings.live.swords_confidence_threshold == 0.25
+    assert settings.live.occupied_local_roi_width_px == 64
+    assert settings.live.confirmation_roi_width_px == 88
+    assert settings.live.confirmation_max_horizontal_offset_px == 56
+    assert settings.live.confirmation_min_vertical_offset_px == 12
+    assert settings.live.confirmation_max_vertical_offset_px == 180
+    assert settings.live.candidate_confirmation_frames == 1
+    assert settings.live.candidate_loss_frames == 2
 
 
 def test_live_config_profile_can_be_loaded_from_yaml() -> None:
@@ -70,6 +81,12 @@ def test_live_config_profile_can_be_loaded_from_yaml() -> None:
     assert settings.live.dry_run_profile == "single_spot_mvp"
     assert settings.live.perception_confidence_threshold == 0.75
     assert settings.live.sample_frames_directory.name == "raw"
+    assert settings.live.marker_red_green_delta == 35
+    assert settings.live.swords_green_red_delta == 20
+    assert settings.live.swords_min_blob_pixels == 2
+    assert settings.live.occupied_local_roi_offset_y_px == -42
+    assert settings.live.confirmation_confidence_threshold == 0.60
+    assert settings.live.confirmation_max_horizontal_offset_px == 56
 
 
 def test_cycle_prediction_window_methods() -> None:

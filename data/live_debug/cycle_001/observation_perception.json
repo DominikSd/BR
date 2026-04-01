@@ -25,7 +25,11 @@
           }
         ],
         "occupied_confidence": 0.0,
-        "raw_hit_count": 2
+        "occupied_seen_frames": 0,
+        "raw_hit_count": 2,
+        "seen_frames": 1,
+        "stable_candidate": true,
+        "track_id": "track-0001"
       },
       "mob_variant": "mob_b",
       "occupied": false,
@@ -46,7 +50,11 @@
       "distance": 127.13772060250254,
       "metadata": {
         "occupied_confidence": 0.0,
-        "raw_hit_count": 1
+        "occupied_seen_frames": 0,
+        "raw_hit_count": 1,
+        "seen_frames": 1,
+        "stable_candidate": true,
+        "track_id": "track-0002"
       },
       "mob_variant": "mob_a",
       "occupied": false,
@@ -67,7 +75,11 @@
       "distance": 144.22205101855957,
       "metadata": {
         "occupied_confidence": 0.98,
-        "raw_hit_count": 1
+        "occupied_seen_frames": 1,
+        "raw_hit_count": 1,
+        "seen_frames": 1,
+        "stable_candidate": true,
+        "track_id": "track-0003"
       },
       "mob_variant": "mob_a",
       "occupied": true,
