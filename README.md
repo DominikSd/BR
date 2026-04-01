@@ -189,6 +189,125 @@ Replay z pliku YAML:
 python -m botlab.main --config config/default.yaml --scenario-file scenarios/custom.yaml
 ```
 
+## Live Vision i Engage MVP
+
+Repo ma tez cienka warstwe `src/botlab/adapters/live`, ktora wykorzystuje ten sam rdzen logiki, ale podpina do niego:
+
+- capture foreground albo dry-run,
+- pixel-based perception i batch analysis,
+- preview/debug window dla live vision,
+- minimalny engage MVP.
+
+### Co juz dziala
+
+- analiza pojedynczej klatki i batcha screenshotow,
+- overlay SVG, JSON i JSONL dla perception,
+- metryki latency perception:
+  - `detection latency`
+  - `selection latency`
+  - `total reaction latency`
+- real-scene regression summary dla `live_spot_scene_*`,
+- marker-first live vision:
+  - czerwony marker
+  - occupied swords
+  - local mob confirmation
+- minimalny engage MVP:
+  - wybierz najblizszy wolny target
+  - wykonaj probe engage
+  - sklasyfikuj wynik jako:
+    - `engaged`
+    - `target_stolen`
+    - `misclick`
+    - `approach_stalled`
+    - `approach_timeout`
+    - `no_target_available`
+
+### Batch tuning / analysis
+
+Pojedyncza klatka:
+
+```bash
+python -m botlab.main --config config/live_dry_run.yaml --analyze-frame assets/live/sample_frames/raw/live_spot_scene_1.png --perception-output-dir data/perception_single
+```
+
+Batch katalogu screenshotow:
+
+```bash
+python -m botlab.main --config config/live_dry_run.yaml --analyze-batch-dir assets/live/sample_frames/raw --perception-output-dir data/perception_batch
+```
+
+Batch wypisuje:
+
+- wynik per frame,
+- summary latency,
+- accuracy summary dla klatek z `expected_perception`,
+- `real_scene_regression` dla klatek `live_spot_scene_*`.
+
+### Live Preview
+
+```bash
+python -m botlab.main --config config/live_dry_run.yaml --live-preview
+```
+
+Preview pokazuje:
+
+- aktualna klatke,
+- spawn ROI,
+- kandydatow,
+- occupied/free,
+- selected target,
+- podstawowe latency vision.
+
+### Engage MVP
+
+Dry-run engage MVP:
+
+```bash
+python -m botlab.main --config config/live_dry_run.yaml --live-engage-mvp --cycles 3
+```
+
+Kontrolowane profile dry-run do testowania klasyfikacji wyniku engage:
+
+- `single_spot_mvp`
+  bazowy przypadek `engaged`
+- `engage_target_stolen`
+  target po kliku staje sie zajety przez kogos innego
+- `engage_target_stolen_noisy`
+  jak wyzej, ale verify zawiera tez dodatkowe kandydaty i lekki szum perception
+- `engage_misclick`
+  klik nie prowadzi ani do engage, ani do zajecia targetu
+- `engage_misclick_partial`
+  misclick przy czesciowo niejednoznacznym verify i dodatkowych kandydatach w tle
+- `engage_approach_stalled`
+  probe engage zatrzymuje sie na etapie approach i konczy jako stall
+- `engage_timeout`
+  probe engage konczymy jako timeout
+
+Aby uruchomic inny profil, ustaw `live.dry_run_profile` w konfiguracji live.
+
+Tryb realny:
+
+```bash
+python -m botlab.main --config path/to/live.yaml --live-engage-mvp --cycles 3
+```
+
+Na tym etapie realna sciezka kliku jest przygotowana tylko dla PPM na Windows i nadal powinna byc traktowana jako ostrozny MVP.
+
+Artefakty engage trafiaja do:
+
+- `data/live_debug/engage/engage_results.jsonl`
+- `data/live_debug/engage/engage_session_summary.json`
+- `data/live_debug/engage/engage_XXX/engage_result.json`
+- `data/live_debug/engage/engage_XXX/engage_overlay.svg`
+
+### Ograniczenia warstwy live na tym etapie
+
+- to nadal heurystyczne live vision MVP, nie finalna wizja produkcyjna,
+- brak OCR i brak ciezkiego ML/CV,
+- full combat/reward/rest loop nie jest jeszcze celem warstwy live,
+- real input execution poza PPM nie jest jeszcze domkniete,
+- najlepszy feedback do strojenia daje obecnie batch na realnych scenach referencyjnych.
+
 Domyslna konfiguracja zapisuje telemetry do:
 
 - `data/telemetry/botlab.sqlite3`

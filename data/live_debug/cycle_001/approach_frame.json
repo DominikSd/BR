@@ -3,7 +3,7 @@
   "height": 720,
   "metadata": {
     "cycle_id": 1,
-    "last_progress_ts": 145.45,
+    "last_progress_ts": 145.2,
     "phase": "approach",
     "stall_after_s": null,
     "targets": [
@@ -11,37 +11,11 @@
         "bbox_height": null,
         "bbox_width": null,
         "confidence": 1.0,
-        "distance": 1.0,
+        "distance": 1.8,
         "metadata": {},
-        "mob_variant": "mob_a",
-        "occupied": true,
-        "orientation_deg": 0,
-        "reachable": true,
-        "screen_x": 520,
-        "screen_y": 280,
-        "target_id": "occupied-near"
-      },
-      {
-        "bbox_height": null,
-        "bbox_width": null,
-        "confidence": 0.94,
-        "distance": 2.4,
-        "metadata": {
-          "duplicate_orientations": [
-            {
-              "confidence": 0.88,
-              "height": 54,
-              "label": "mob_b",
-              "rotation_deg": 180,
-              "width": 42,
-              "x": 598,
-              "y": 273
-            }
-          ]
-        },
         "mob_variant": "mob_b",
         "occupied": false,
-        "orientation_deg": 90,
+        "orientation_deg": 0,
         "reachable": true,
         "screen_x": 620,
         "screen_y": 300,
@@ -50,19 +24,19 @@
       {
         "bbox_height": null,
         "bbox_width": null,
-        "confidence": 0.91,
-        "distance": 4.0,
+        "confidence": 1.0,
+        "distance": 3.8,
         "metadata": {},
         "mob_variant": "mob_a",
         "occupied": false,
-        "orientation_deg": 270,
+        "orientation_deg": 0,
         "reachable": true,
         "screen_x": 760,
         "screen_y": 318,
-        "target_id": "fallback-safe"
+        "target_id": "safe-far"
       }
     ]
   },
-  "source": "dry_run:single_spot_mvp",
+  "source": "dry_run:engage_timeout",
   "width": 1280
 }

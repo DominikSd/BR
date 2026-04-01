@@ -8,8 +8,20 @@ from botlab.adapters.live.capture import (
     DebugArtifactWriter,
     create_capture,
 )
+from botlab.adapters.live.engage import (
+    LiveEngageArtifactWriter,
+    LiveEngageRunReport,
+    LiveEngageService,
+    LiveEngageSessionSummary,
+    record_engage_attempt,
+)
 from botlab.adapters.live.input import LiveInputDriver
-from botlab.adapters.live.models import LiveFrame, LiveSessionState, LiveTargetDetection
+from botlab.adapters.live.models import (
+    LiveEngageResult,
+    LiveFrame,
+    LiveSessionState,
+    LiveTargetDetection,
+)
 from botlab.adapters.live.perception import (
     PerceptionAnalyzer,
     PerceptionArtifactWriter,
@@ -813,11 +825,13 @@ class LiveRunner:
         self,
         *,
         orchestrator: CycleOrchestrator,
+        engage_service: LiveEngageService,
         runtime: LiveRuntime,
         storage: SQLiteTelemetryStorage,
         logger: logging.Logger,
     ) -> None:
         self._orchestrator = orchestrator
+        self._engage_service = engage_service
         self._runtime = runtime
         self._storage = storage
         self._logger = logger
@@ -861,7 +875,14 @@ class LiveRunner:
             cycle_id=None,
         )
         recovery = RecoveryManager(settings.cycle)
-        input_driver = LiveInputDriver(logger=logger, dry_run=settings.live.dry_run)
+        input_driver = LiveInputDriver(
+            logger=logger,
+            dry_run=settings.live.dry_run,
+            screen_offset_xy=(
+                settings.live.capture_region[0],
+                settings.live.capture_region[1],
+            ),
+        )
         state_detector = SimpleStateDetector()
         resource_provider = LiveResourceProvider(settings.live)
         world_provider = LiveWorldStateProvider(runtime)
@@ -895,6 +916,16 @@ class LiveRunner:
         combat_plan_catalog = SimulatedCombatPlanCatalog()
         combat_profile_catalog = SimulatedCombatProfileCatalog(combat_plan_catalog=combat_plan_catalog)
         telemetry_sink = LiveTelemetrySink(storage, logger)
+        engage_service = LiveEngageService(
+            runtime=runtime,
+            target_engagement_service=target_engagement_service,
+            state_detector=state_detector,
+            input_driver=input_driver,
+            artifact_writer=LiveEngageArtifactWriter(settings.live.debug_directory),
+            verify_delay_s=settings.live.engage_verify_delay_s,
+            click_offset_y_px=settings.live.engage_click_offset_y_px,
+            target_match_max_distance_px=settings.live.engage_target_match_max_distance_px,
+        )
         orchestrator = CycleOrchestrator(
             scheduler=scheduler,
             fsm=fsm,
@@ -918,7 +949,13 @@ class LiveRunner:
             telemetry_sink=telemetry_sink,
             cycle_config=settings.cycle,
         )
-        return cls(orchestrator=orchestrator, runtime=runtime, storage=storage, logger=logger)
+        return cls(
+            orchestrator=orchestrator,
+            engage_service=engage_service,
+            runtime=runtime,
+            storage=storage,
+            logger=logger,
+        )
 
     @property
     def storage(self) -> SQLiteTelemetryStorage:
@@ -946,6 +983,27 @@ class LiveRunner:
             approach_results=self._runtime.approach_results(),
             interaction_results=self._runtime.interaction_results(),
             cycle_records=cycle_records,
+        )
+
+    def run_engage_attempts(self, total_attempts: int) -> LiveEngageRunReport:
+        if total_attempts <= 0:
+            raise ValueError("total_attempts musi byc wieksze od 0.")
+        self._storage.initialize()
+        initial_cycle_id = self._runtime.initial_cycle_id
+        results: list[LiveEngageResult] = []
+        for offset in range(total_attempts):
+            cycle_id = initial_cycle_id + offset
+            result = self._engage_service.attempt_engage(cycle_id=cycle_id)
+            record_engage_attempt(storage=self._storage, result=result)
+            results.append(result)
+        self._runtime.write_perception_session_summary()
+        summary = LiveEngageSessionSummary.from_results(results)
+        LiveEngageArtifactWriter(self._runtime.settings.live.debug_directory).write_session_summary(summary)
+        return LiveEngageRunReport(
+            results=tuple(results),
+            summary=summary,
+            log_path=self._resolve_log_path(),
+            sqlite_path=self._storage.sqlite_path,
         )
 
     def _resolve_log_path(self) -> Path:

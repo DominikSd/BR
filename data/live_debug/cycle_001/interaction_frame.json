@@ -1,5 +1,5 @@
 {
-  "captured_at_ts": 164.65062418976663,
+  "captured_at_ts": 160.68638830084188,
   "height": 720,
   "metadata": {
     "cycle_id": 1,
@@ -11,18 +11,18 @@
         "bbox_height": null,
         "bbox_width": null,
         "confidence": 1.0,
-        "distance": 0.3,
+        "distance": 0.2,
         "metadata": {},
-        "mob_variant": "mob_a",
+        "mob_variant": "mob_b",
         "occupied": false,
         "orientation_deg": 0,
         "reachable": true,
-        "screen_x": 700,
-        "screen_y": 310,
-        "target_id": "fallback-safe"
+        "screen_x": 620,
+        "screen_y": 300,
+        "target_id": "front-free"
       }
     ]
   },
-  "source": "dry_run:single_spot_mvp",
+  "source": "dry_run:engage_timeout",
   "width": 1280
 }

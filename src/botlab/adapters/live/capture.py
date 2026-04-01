@@ -196,12 +196,22 @@ class DryRunWindowCapture:
         default_ts: float,
         session_state: LiveSessionState,
     ) -> dict[str, Any]:
-        if self._live_config.dry_run_profile != "single_spot_mvp":
+        profile_builders = {
+            "single_spot_mvp": self._single_spot_mvp_payload,
+            "engage_target_stolen": self._engage_target_stolen_payload,
+            "engage_target_stolen_noisy": self._engage_target_stolen_noisy_payload,
+            "engage_misclick": self._engage_misclick_payload,
+            "engage_misclick_partial": self._engage_misclick_partial_payload,
+            "engage_approach_stalled": self._engage_approach_stalled_payload,
+            "engage_timeout": self._engage_timeout_payload,
+        }
+        payload_builder = profile_builders.get(self._live_config.dry_run_profile)
+        if payload_builder is None:
             raise ValueError(
                 f"Nieznany live dry-run profile '{self._live_config.dry_run_profile}'."
             )
 
-        payload = self._single_spot_mvp_payload(
+        payload = payload_builder(
             cycle_id=cycle_id,
             phase=phase,
             default_ts=default_ts,
@@ -324,6 +334,28 @@ class DryRunWindowCapture:
                 }
             if phase == "verify":
                 return {"in_combat": True, "reward_visible": False}
+            if phase == "engage_verify":
+                return {
+                    "in_combat": True,
+                    "reward_visible": False,
+                    "targets": _targets_to_metadata(
+                        (
+                            LiveTargetDetection(
+                                "fallback-safe",
+                                700,
+                                310,
+                                0.2,
+                                occupied=False,
+                                mob_variant="mob_a",
+                            ),
+                        )
+                    ),
+                    "perception_profile": {
+                        "detection_duration_s": 0.009,
+                        "selection_duration_s": 0.002,
+                        "action_ready_duration_s": 0.001,
+                    },
+                }
             if phase == "combat":
                 return {
                     "combat_turns": 4,
@@ -394,6 +426,28 @@ class DryRunWindowCapture:
             }
         if phase == "verify":
             return {"in_combat": True, "reward_visible": False}
+        if phase == "engage_verify":
+            return {
+                "in_combat": True,
+                "reward_visible": False,
+                "targets": _targets_to_metadata(
+                    (
+                        LiveTargetDetection(
+                            nearest.target_id,
+                            nearest.screen_x,
+                            nearest.screen_y,
+                            0.2,
+                            occupied=False,
+                            mob_variant=nearest.mob_variant,
+                        ),
+                    )
+                ),
+                "perception_profile": {
+                    "detection_duration_s": 0.008,
+                    "selection_duration_s": 0.002,
+                    "action_ready_duration_s": 0.001,
+                },
+            }
         if phase == "combat":
             return {
                 "combat_turns": 4,
@@ -410,6 +464,304 @@ class DryRunWindowCapture:
                 "rest_available": True,
             }
 
+        return {
+            "targets": [],
+            "hp_ratio": session_state.hp_ratio,
+            "condition_ratio": session_state.condition_ratio,
+            "in_combat": False,
+            "reward_visible": False,
+            "rest_available": True,
+        }
+
+    def _engage_target_stolen_payload(
+        self,
+        *,
+        cycle_id: int,
+        phase: str,
+        default_ts: float,
+        session_state: LiveSessionState,
+    ) -> dict[str, Any]:
+        observation_targets = (
+            LiveTargetDetection("occupied-near", 520, 280, 1.0, occupied=True, mob_variant="mob_a"),
+            LiveTargetDetection("front-free", 620, 300, 1.8, occupied=False, mob_variant="mob_b"),
+            LiveTargetDetection("safe-far", 760, 318, 3.8, occupied=False, mob_variant="mob_a"),
+        )
+        stolen_targets = (
+            LiveTargetDetection("occupied-near", 520, 280, 1.0, occupied=True, mob_variant="mob_a"),
+            LiveTargetDetection("front-free", 620, 300, 1.8, occupied=True, mob_variant="mob_b"),
+            LiveTargetDetection("safe-far", 760, 318, 3.8, occupied=False, mob_variant="mob_a"),
+        )
+        return self._build_engage_profile_payload(
+            phase=phase,
+            default_ts=default_ts,
+            session_state=session_state,
+            observation_targets=observation_targets,
+            approach_targets=observation_targets,
+            interaction_targets=(
+                LiveTargetDetection("front-free", 620, 300, 0.2, occupied=False, mob_variant="mob_b"),
+            ),
+            verify_targets=stolen_targets,
+            verify_metadata={
+                "in_combat": False,
+                "reward_visible": False,
+                "engage_result": "target_stolen",
+            },
+        )
+
+    def _engage_misclick_payload(
+        self,
+        *,
+        cycle_id: int,
+        phase: str,
+        default_ts: float,
+        session_state: LiveSessionState,
+    ) -> dict[str, Any]:
+        observation_targets = (
+            LiveTargetDetection("front-free", 620, 300, 1.8, occupied=False, mob_variant="mob_b"),
+            LiveTargetDetection("safe-far", 760, 318, 3.8, occupied=False, mob_variant="mob_a"),
+        )
+        verify_targets = (
+            LiveTargetDetection("safe-far", 760, 318, 3.8, occupied=False, mob_variant="mob_a"),
+        )
+        return self._build_engage_profile_payload(
+            phase=phase,
+            default_ts=default_ts,
+            session_state=session_state,
+            observation_targets=observation_targets,
+            approach_targets=observation_targets,
+            interaction_targets=(
+                LiveTargetDetection("front-free", 620, 300, 0.2, occupied=False, mob_variant="mob_b"),
+            ),
+            verify_targets=verify_targets,
+            verify_metadata={
+                "in_combat": False,
+                "reward_visible": False,
+                "engage_result": "misclick",
+            },
+        )
+
+    def _engage_target_stolen_noisy_payload(
+        self,
+        *,
+        cycle_id: int,
+        phase: str,
+        default_ts: float,
+        session_state: LiveSessionState,
+    ) -> dict[str, Any]:
+        observation_targets = (
+            LiveTargetDetection("occupied-near", 520, 280, 1.0, occupied=True, mob_variant="mob_a"),
+            LiveTargetDetection("front-free", 620, 300, 1.8, occupied=False, mob_variant="mob_b"),
+            LiveTargetDetection("safe-far", 760, 318, 3.8, occupied=False, mob_variant="mob_a"),
+        )
+        verify_targets = (
+            LiveTargetDetection("front-free", 624, 304, 1.9, occupied=True, mob_variant="mob_b"),
+            LiveTargetDetection("safe-far", 758, 320, 3.7, occupied=False, mob_variant="mob_a"),
+            LiveTargetDetection("noise-side", 882, 346, 5.2, occupied=False, mob_variant="mob_b"),
+        )
+        return self._build_engage_profile_payload(
+            phase=phase,
+            default_ts=default_ts,
+            session_state=session_state,
+            observation_targets=observation_targets,
+            approach_targets=observation_targets,
+            interaction_targets=(
+                LiveTargetDetection("front-free", 620, 300, 0.2, occupied=False, mob_variant="mob_b"),
+            ),
+            verify_targets=verify_targets,
+            verify_metadata={
+                "in_combat": False,
+                "reward_visible": False,
+                "engage_result": "target_stolen",
+            },
+        )
+
+    def _engage_misclick_partial_payload(
+        self,
+        *,
+        cycle_id: int,
+        phase: str,
+        default_ts: float,
+        session_state: LiveSessionState,
+    ) -> dict[str, Any]:
+        observation_targets = (
+            LiveTargetDetection("front-free", 620, 300, 1.8, occupied=False, mob_variant="mob_b"),
+            LiveTargetDetection("safe-far", 760, 318, 3.8, occupied=False, mob_variant="mob_a"),
+        )
+        verify_targets = (
+            LiveTargetDetection("safe-far", 764, 321, 3.9, occupied=False, mob_variant="mob_a"),
+            LiveTargetDetection("far-noise", 930, 270, 6.2, occupied=False, mob_variant="mob_b"),
+        )
+        return self._build_engage_profile_payload(
+            phase=phase,
+            default_ts=default_ts,
+            session_state=session_state,
+            observation_targets=observation_targets,
+            approach_targets=observation_targets,
+            interaction_targets=(
+                LiveTargetDetection("front-free", 620, 300, 0.2, occupied=False, mob_variant="mob_b"),
+            ),
+            verify_targets=verify_targets,
+            verify_metadata={
+                "in_combat": False,
+                "reward_visible": False,
+                "engage_result": "misclick",
+            },
+        )
+
+    def _engage_timeout_payload(
+        self,
+        *,
+        cycle_id: int,
+        phase: str,
+        default_ts: float,
+        session_state: LiveSessionState,
+    ) -> dict[str, Any]:
+        observation_targets = (
+            LiveTargetDetection("front-free", 620, 300, 1.8, occupied=False, mob_variant="mob_b"),
+            LiveTargetDetection("safe-far", 760, 318, 3.8, occupied=False, mob_variant="mob_a"),
+        )
+        return self._build_engage_profile_payload(
+            phase=phase,
+            default_ts=default_ts,
+            session_state=session_state,
+            observation_targets=observation_targets,
+            approach_targets=observation_targets,
+            interaction_targets=(
+                LiveTargetDetection("front-free", 620, 300, 0.2, occupied=False, mob_variant="mob_b"),
+            ),
+            verify_targets=(),
+            verify_metadata={
+                "in_combat": False,
+                "reward_visible": False,
+                "verify_timeout": True,
+                "approach_timeout": True,
+                "engage_result": "approach_timeout",
+            },
+        )
+
+    def _engage_approach_stalled_payload(
+        self,
+        *,
+        cycle_id: int,
+        phase: str,
+        default_ts: float,
+        session_state: LiveSessionState,
+    ) -> dict[str, Any]:
+        observation_targets = (
+            LiveTargetDetection("front-free", 620, 300, 1.8, occupied=False, mob_variant="mob_b"),
+            LiveTargetDetection("safe-far", 760, 318, 3.8, occupied=False, mob_variant="mob_a"),
+        )
+        if phase == "observation":
+            return {
+                "targets": _targets_to_metadata(observation_targets),
+                "perception_profile": {
+                    "detection_duration_s": 0.011,
+                    "selection_duration_s": 0.003,
+                    "action_ready_duration_s": 0.002,
+                },
+                "hp_ratio": session_state.hp_ratio,
+                "condition_ratio": session_state.condition_ratio,
+                "in_combat": False,
+                "reward_visible": False,
+                "rest_available": True,
+            }
+        if phase == "approach":
+            return {
+                "stall_after_s": 1.0,
+                "last_progress_ts": default_ts,
+                "targets": _targets_to_metadata(observation_targets),
+            }
+        if phase == "approach_revalidation":
+            return {
+                "targets": _targets_to_metadata(observation_targets),
+                "hp_ratio": session_state.hp_ratio,
+                "condition_ratio": session_state.condition_ratio,
+            }
+        if phase == "interaction":
+            return {
+                "targets": _targets_to_metadata(()),
+                "interaction_ready": False,
+                "in_combat": False,
+            }
+        if phase == "verify":
+            return {"in_combat": False, "reward_visible": False}
+        if phase == "engage_verify":
+            return {
+                "targets": [],
+                "in_combat": False,
+                "reward_visible": False,
+                "engage_result": "approach_stalled",
+            }
+        return {
+            "targets": [],
+            "hp_ratio": session_state.hp_ratio,
+            "condition_ratio": session_state.condition_ratio,
+            "in_combat": False,
+            "reward_visible": False,
+            "rest_available": True,
+        }
+
+    def _build_engage_profile_payload(
+        self,
+        *,
+        phase: str,
+        default_ts: float,
+        session_state: LiveSessionState,
+        observation_targets: tuple[LiveTargetDetection, ...],
+        approach_targets: tuple[LiveTargetDetection, ...],
+        interaction_targets: tuple[LiveTargetDetection, ...],
+        verify_targets: tuple[LiveTargetDetection, ...],
+        verify_metadata: dict[str, Any],
+    ) -> dict[str, Any]:
+        if phase == "observation":
+            return {
+                "targets": _targets_to_metadata(observation_targets),
+                "perception_profile": {
+                    "detection_duration_s": 0.011,
+                    "selection_duration_s": 0.003,
+                    "action_ready_duration_s": 0.002,
+                },
+                "hp_ratio": session_state.hp_ratio,
+                "condition_ratio": session_state.condition_ratio,
+                "in_combat": False,
+                "reward_visible": False,
+                "rest_available": True,
+            }
+        if phase == "approach":
+            return {
+                "stall_after_s": None,
+                "last_progress_ts": default_ts + 0.20,
+                "targets": _targets_to_metadata(observation_targets),
+            }
+        if phase == "approach_revalidation":
+            return {
+                "targets": _targets_to_metadata(approach_targets),
+                "perception_profile": {
+                    "detection_duration_s": 0.009,
+                    "selection_duration_s": 0.003,
+                    "action_ready_duration_s": 0.001,
+                },
+                "hp_ratio": session_state.hp_ratio,
+                "condition_ratio": session_state.condition_ratio,
+            }
+        if phase == "interaction":
+            return {
+                "targets": _targets_to_metadata(interaction_targets),
+                "interaction_ready": True,
+                "in_combat": False,
+            }
+        if phase == "verify":
+            return {"in_combat": False, "reward_visible": False}
+        if phase == "engage_verify":
+            return {
+                "targets": _targets_to_metadata(verify_targets),
+                "perception_profile": {
+                    "detection_duration_s": 0.008,
+                    "selection_duration_s": 0.002,
+                    "action_ready_duration_s": 0.001,
+                },
+                **verify_metadata,
+            }
         return {
             "targets": [],
             "hp_ratio": session_state.hp_ratio,

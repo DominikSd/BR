@@ -5,32 +5,33 @@
   "detections": [
     {
       "bbox": [
-        680,
-        284,
+        600,
+        274,
         40,
         52
       ],
       "confidence": 1.0,
-      "distance": 78.10249675906654,
+      "distance": 63.245553203367585,
       "metadata": {
         "occupied_confidence": 0.0,
         "occupied_seen_frames": 0,
         "raw_hit_count": 1,
-        "seen_frames": 2,
+        "seen_frames": 3,
         "stable_candidate": true,
-        "track_id": "track-0004"
+        "track_id": "track-0001"
       },
-      "mob_variant": "mob_a",
+      "mob_variant": "mob_b",
       "occupied": false,
       "orientation_deg": 0,
       "reachable": true,
-      "screen_x": 700,
-      "screen_y": 310,
-      "target_id": "fallback-safe"
+      "screen_x": 620,
+      "screen_y": 300,
+      "target_id": "front-free"
     }
   ],
+  "expectations": {},
   "frame_height": 720,
-  "frame_source": "dry_run:single_spot_mvp",
+  "frame_source": "dry_run:engage_timeout",
   "frame_width": 1280,
   "free_target_count": 1,
   "merged_hit_count": 1,
@@ -39,14 +40,14 @@
     {
       "confidence": 1.0,
       "height": 52,
-      "label": "mob_a",
+      "label": "mob_b",
       "metadata": {},
       "rotation_deg": 0,
       "source": "synthetic_target",
-      "target_id": "fallback-safe",
+      "target_id": "front-free",
       "width": 40,
-      "x": 680,
-      "y": 284
+      "x": 600,
+      "y": 274
     }
   ],
   "reference_point_xy": [
@@ -62,15 +63,15 @@
     "x": 320,
     "y": 140
   },
-  "selected_target_id": "fallback-safe",
+  "selected_target_id": "front-free",
   "timings": {
-    "action_ready_ts": 164.650675489768,
-    "detection_finished_ts": 164.65067298976714,
-    "detection_latency_ms": 0.048800000513438135,
-    "detection_started_ts": 164.65062418976663,
-    "frame_captured_ts": 164.65062418976663,
-    "selection_latency_ms": 0.0025000008463393897,
-    "target_selected_ts": 164.650675489768,
-    "total_reaction_latency_ms": 0.051300001359777525
+    "action_ready_ts": 160.6864269008375,
+    "detection_finished_ts": 160.68642500083757,
+    "detection_latency_ms": 0.03669999568955973,
+    "detection_started_ts": 160.68638830084188,
+    "frame_captured_ts": 160.68638830084188,
+    "selection_latency_ms": 0.0018999999156221747,
+    "target_selected_ts": 160.6864269008375,
+    "total_reaction_latency_ms": 0.0385999956051819
   }
 }

@@ -167,6 +167,7 @@ class PerceptionFrameResult:
     detections: tuple[LiveTargetDetection, ...]
     selected_target_id: str | None
     timings: ReactionLatency
+    expectations: dict[str, Any] = field(default_factory=dict)
     artifact_paths: dict[str, Path] = field(default_factory=dict)
 
     @property
@@ -238,8 +239,25 @@ class PerceptionFrameResult:
             "candidate_hit_count": self.candidate_hit_count,
             "merged_hit_count": self.merged_hit_count,
             "free_target_count": len(self.free_detections),
+            "expectations": self.expectations,
             "timings": self.timings.to_dict(),
             "artifact_paths": {key: str(path) for key, path in self.artifact_paths.items()},
+        }
+
+
+@dataclass(slots=True, frozen=True)
+class AccuracySummary:
+    evaluated_frame_count: int
+    behavior_match_count: int
+    selected_target_match_count: int
+    occupied_contract_match_count: int
+
+    def to_dict(self) -> dict[str, int]:
+        return {
+            "evaluated_frame_count": self.evaluated_frame_count,
+            "behavior_match_count": self.behavior_match_count,
+            "selected_target_match_count": self.selected_target_match_count,
+            "occupied_contract_match_count": self.occupied_contract_match_count,
         }
 
 
@@ -252,6 +270,7 @@ class PerceptionSessionSummary:
     detection_latency: LatencyAggregate
     selection_latency: LatencyAggregate
     total_reaction_latency: LatencyAggregate
+    accuracy_summary: AccuracySummary | None = None
 
     def real_scene_regression_entries(self) -> tuple[dict[str, Any], ...]:
         entries: list[dict[str, Any]] = []
@@ -290,6 +309,8 @@ class PerceptionSessionSummary:
             "total_reaction_latency": self.total_reaction_latency.to_dict(),
             "frames": [result.to_dict() for result in self.frame_results],
         }
+        if self.accuracy_summary is not None:
+            payload["accuracy_summary"] = self.accuracy_summary.to_dict()
         real_scene_regression = self.real_scene_regression_entries()
         if real_scene_regression:
             payload["real_scene_regression"] = list(real_scene_regression)
@@ -423,6 +444,7 @@ class PerceptionAnalyzer:
                 target_selected_ts=selection_finished_ts,
                 action_ready_ts=action_ready_ts,
             ),
+            expectations=dict(frame.metadata.get("expected_perception", {})),
         )
 
     def summarize_session(
@@ -456,6 +478,7 @@ class PerceptionAnalyzer:
                 "total_reaction_latency_ms",
                 (result.timings.total_reaction_latency_ms for result in results),
             ),
+            accuracy_summary=_build_accuracy_summary(results),
         )
 
     def _load_metadata_template_hits(self, frame: LiveFrame) -> tuple[TemplateHit, ...]:
@@ -1632,6 +1655,95 @@ def _percentile(sorted_values: list[float], percentile: int) -> float:
         return sorted_values[0]
     rank = max(1, math.ceil((percentile / 100.0) * len(sorted_values)))
     return sorted_values[min(len(sorted_values) - 1, rank - 1)]
+
+
+def _build_accuracy_summary(
+    results: tuple[PerceptionFrameResult, ...],
+) -> AccuracySummary | None:
+    evaluated_results = tuple(
+        result for result in results if isinstance(result.expectations, dict) and result.expectations
+    )
+    if not evaluated_results:
+        return None
+
+    behavior_match_count = 0
+    selected_target_match_count = 0
+    occupied_contract_match_count = 0
+
+    for result in evaluated_results:
+        expectations = result.expectations
+        behavior_matches = True
+        selected_matches = True
+        occupied_matches = True
+
+        selected_target_required = expectations.get("selected_target_required")
+        if selected_target_required is True and result.selected_target is None:
+            behavior_matches = False
+            selected_matches = False
+        if selected_target_required is False and result.selected_target is not None:
+            behavior_matches = False
+            selected_matches = False
+
+        selected_target_screen_xy = expectations.get("selected_target_screen_xy")
+        selected_target_max_error_px = float(expectations.get("selected_target_max_error_px", 48))
+        if (
+            isinstance(selected_target_screen_xy, list)
+            and len(selected_target_screen_xy) == 2
+            and all(isinstance(item, (int, float)) for item in selected_target_screen_xy)
+        ):
+            if result.selected_target is None:
+                behavior_matches = False
+                selected_matches = False
+            else:
+                selected_distance = math.dist(
+                    (
+                        float(result.selected_target.screen_x),
+                        float(result.selected_target.screen_y),
+                    ),
+                    (
+                        float(selected_target_screen_xy[0]),
+                        float(selected_target_screen_xy[1]),
+                    ),
+                )
+                if selected_distance > selected_target_max_error_px:
+                    behavior_matches = False
+                    selected_matches = False
+
+        occupied_target_screen_xy = expectations.get("occupied_target_screen_xy")
+        occupied_target_max_error_px = float(expectations.get("occupied_target_max_error_px", 56))
+        if isinstance(occupied_target_screen_xy, list):
+            actual_occupied_points = [
+                (float(target.screen_x), float(target.screen_y))
+                for target in result.occupied_detections
+            ]
+            for expected_xy in occupied_target_screen_xy:
+                if not isinstance(expected_xy, list) or len(expected_xy) != 2:
+                    continue
+                if not any(
+                    math.dist(
+                        (float(expected_xy[0]), float(expected_xy[1])),
+                        actual_xy,
+                    )
+                    <= occupied_target_max_error_px
+                    for actual_xy in actual_occupied_points
+                ):
+                    behavior_matches = False
+                    occupied_matches = False
+                    break
+
+        if behavior_matches:
+            behavior_match_count += 1
+        if selected_matches:
+            selected_target_match_count += 1
+        if occupied_matches:
+            occupied_contract_match_count += 1
+
+    return AccuracySummary(
+        evaluated_frame_count=len(evaluated_results),
+        behavior_match_count=behavior_match_count,
+        selected_target_match_count=selected_target_match_count,
+        occupied_contract_match_count=occupied_contract_match_count,
+    )
 
 
 def _optional_str(value: object) -> str | None:

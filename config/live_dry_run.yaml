@@ -79,6 +79,9 @@ live:
   candidate_confirmation_frames: 1
   candidate_loss_frames: 2
   occupied_confirmation_frames: 1
+  engage_verify_delay_s: 0.20
+  engage_click_offset_y_px: 0
+  engage_target_match_max_distance_px: 72
   preview_refresh_interval_ms: 120
   preview_max_width_px: 1600
   preview_max_height_px: 900

@@ -1,3 +1,10 @@
+from botlab.adapters.live.engage import (
+    LiveEngageArtifactWriter,
+    LiveEngageRunReport,
+    LiveEngageService,
+    LiveEngageSessionSummary,
+    classify_engage_outcome,
+)
 from botlab.adapters.live.runner import LiveRunner
 from botlab.adapters.live.preview import LiveVisionPreview, LiveVisionPreviewRenderer, build_live_preview_state
 from botlab.adapters.live.perception import (
@@ -16,6 +23,10 @@ from botlab.adapters.live.vision import (
 )
 
 __all__ = [
+    "LiveEngageArtifactWriter",
+    "LiveEngageRunReport",
+    "LiveEngageService",
+    "LiveEngageSessionSummary",
     "LiveRunner",
     "LiveVisionPreview",
     "LiveVisionPreviewRenderer",
@@ -24,6 +35,7 @@ __all__ = [
     "StallDetector",
     "TemplatePackLoader",
     "build_live_preview_state",
+    "classify_engage_outcome",
     "classify_occupied",
     "filter_occupied_targets",
     "merge_template_hits",

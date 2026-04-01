@@ -79,6 +79,7 @@
       "target_id": "live-spawn-2-2"
     }
   ],
+  "expectations": {},
   "frame_height": 720,
   "frame_source": "dry_run:single_spot_mvp",
   "frame_width": 1280,

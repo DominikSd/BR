@@ -130,6 +130,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Uruchamia osobne okno preview/debug dla live vision bez wykonywania akcji w grze.",
     )
+    parser.add_argument(
+        "--live-engage-mvp",
+        action="store_true",
+        help="Uruchamia minimalny pion live engage: perception -> nearest free target -> engage attempt -> outcome verification.",
+    )
 
     return parser
 
@@ -175,6 +180,25 @@ def main(argv: Sequence[str] | None = None) -> int:
             enable_console=args.console_log,
         )
         return preview.run()
+    if args.live_engage_mvp:
+        _validate_live_engage_args(
+            settings=settings,
+            scenario_preset=args.scenario_preset,
+            scenario_file=args.scenario_file,
+            analyze_frame=args.analyze_frame,
+            analyze_batch_dir=args.analyze_batch_dir,
+        )
+        attempts = _resolve_total_cycles(args.cycles, replay=None)
+        _validate_runtime_args(cycles=attempts, anchor_cycle_id=0)
+        report = _run_live_engage_mvp(
+            settings=settings,
+            attempts=attempts,
+            anchor_spawn_ts=_resolve_anchor_spawn_ts(args.anchor_spawn_ts, replay=None),
+            anchor_cycle_id=_resolve_anchor_cycle_id(args.anchor_cycle_id, replay=None),
+            enable_console=args.console_log,
+        )
+        _print_live_engage_report(report)
+        return 0
     if args.analyze_frame is not None or args.analyze_batch_dir is not None:
         summary, output_directory = _run_perception_analysis(
             settings=settings,
@@ -270,6 +294,23 @@ def _run_simulation(
     )
 
 
+def _run_live_engage_mvp(
+    *,
+    settings: Settings,
+    attempts: int,
+    anchor_spawn_ts: float,
+    anchor_cycle_id: int,
+    enable_console: bool,
+):
+    runner = LiveRunner.from_settings(
+        settings,
+        initial_anchor_spawn_ts=anchor_spawn_ts,
+        initial_anchor_cycle_id=anchor_cycle_id,
+        enable_console=enable_console,
+    )
+    return runner.run_engage_attempts(attempts)
+
+
 def _run_perception_analysis(
     *,
     settings: Settings,
@@ -358,6 +399,22 @@ def _validate_live_preview_args(
         raise ValueError("--live-preview nie obsluguje scenario replay.")
     if analyze_frame is not None or analyze_batch_dir is not None:
         raise ValueError("--live-preview nie moze byc laczony z trybem perception-only.")
+
+
+def _validate_live_engage_args(
+    *,
+    settings: Settings,
+    scenario_preset: str | None,
+    scenario_file: str | None,
+    analyze_frame: str | None,
+    analyze_batch_dir: str | None,
+) -> None:
+    if settings.app.mode != "live":
+        raise ValueError("--live-engage-mvp wymaga konfiguracji z app.mode=live.")
+    if scenario_preset is not None or scenario_file is not None:
+        raise ValueError("--live-engage-mvp nie obsluguje scenario replay.")
+    if analyze_frame is not None or analyze_batch_dir is not None:
+        raise ValueError("--live-engage-mvp nie moze byc laczony z trybem perception-only.")
 
 
 def _resolve_total_cycles(cycles: int | None, replay: ScenarioReplay | None) -> int:
@@ -586,6 +643,14 @@ def _print_perception_report(*, summary, output_directory: Path) -> None:
             f"p95_ms={p95_repr} "
             f"max_ms={max_repr}"
         )
+    if summary.accuracy_summary is not None:
+        print(
+            "perception_accuracy_summary="
+            f"evaluated_frames={summary.accuracy_summary.evaluated_frame_count} "
+            f"behavior_match={summary.accuracy_summary.behavior_match_count} "
+            f"selected_match={summary.accuracy_summary.selected_target_match_count} "
+            f"occupied_match={summary.accuracy_summary.occupied_contract_match_count}"
+        )
     for entry in summary.real_scene_regression_entries():
         print(
             "real_scene_regression="
@@ -600,6 +665,60 @@ def _print_perception_report(*, summary, output_directory: Path) -> None:
             f"selection_latency_ms={entry['selection_latency_ms']:.3f} "
             f"total_reaction_latency_ms={entry['total_reaction_latency_ms']:.3f}"
         )
+
+
+def _print_live_engage_report(report) -> None:
+    print("engage_mode=mvp")
+    print(f"total_attempts={report.summary.total_attempts}")
+    print(f"engaged={report.summary.engaged_count}")
+    print(f"target_stolen={report.summary.target_stolen_count}")
+    print(f"misclick={report.summary.misclick_count}")
+    print(f"approach_stalled={report.summary.approach_stalled_count}")
+    print(f"approach_timeout={report.summary.approach_timeout_count}")
+    print(f"no_target_available={report.summary.no_target_available_count}")
+    print(f"log_path={report.log_path}")
+    print(f"sqlite_path={report.sqlite_path}")
+    for aggregate in (
+        report.summary.detection_latency,
+        report.summary.selection_latency,
+        report.summary.total_reaction_latency,
+        report.summary.verification_latency,
+    ):
+        min_repr = "None" if aggregate.min_ms is None else f"{aggregate.min_ms:.3f}"
+        avg_repr = "None" if aggregate.avg_ms is None else f"{aggregate.avg_ms:.3f}"
+        p50_repr = "None" if aggregate.p50_ms is None else f"{aggregate.p50_ms:.3f}"
+        p95_repr = "None" if aggregate.p95_ms is None else f"{aggregate.p95_ms:.3f}"
+        max_repr = "None" if aggregate.max_ms is None else f"{aggregate.max_ms:.3f}"
+        print(
+            "engage_latency_summary="
+            f"{aggregate.name} "
+            f"count={aggregate.count} "
+            f"min_ms={min_repr} "
+            f"avg_ms={avg_repr} "
+            f"p50_ms={p50_repr} "
+            f"p95_ms={p95_repr} "
+            f"max_ms={max_repr}"
+        )
+    for result in report.results:
+        print(
+            "engage_attempt="
+            f"{result.cycle_id} "
+            f"outcome={result.outcome.value} "
+            f"reason={result.reason} "
+            f"selected_target={result.selected_target_id} "
+            f"final_target={result.final_target_id} "
+            f"click_xy={None if result.click_screen_xy is None else list(result.click_screen_xy)} "
+            f"detection_latency_ms={_format_optional_ms(result.detection_latency_ms)} "
+            f"selection_latency_ms={_format_optional_ms(result.selection_latency_ms)} "
+            f"total_reaction_latency_ms={_format_optional_ms(result.total_reaction_latency_ms)} "
+            f"verification_latency_ms={_format_optional_ms(result.verification_latency_ms)}"
+        )
+
+
+def _format_optional_ms(value: float | None) -> str:
+    if value is None:
+        return "None"
+    return f"{value:.3f}"
 
 
 def _should_show_cycle_trace(

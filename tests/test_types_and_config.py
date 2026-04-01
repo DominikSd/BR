@@ -72,6 +72,9 @@ def test_load_default_config_returns_settings() -> None:
     assert settings.live.confirmation_max_vertical_offset_px == 180
     assert settings.live.candidate_confirmation_frames == 1
     assert settings.live.candidate_loss_frames == 2
+    assert settings.live.engage_verify_delay_s == 0.20
+    assert settings.live.engage_click_offset_y_px == 0
+    assert settings.live.engage_target_match_max_distance_px == 72
     assert settings.live.preview_refresh_interval_ms == 120
     assert settings.live.preview_max_width_px == 1600
     assert settings.live.preview_max_height_px == 900
@@ -96,6 +99,8 @@ def test_live_config_profile_can_be_loaded_from_yaml() -> None:
     assert settings.live.confirmation_alignment_weight == 0.25
     assert settings.live.confirmation_foreground_weight == 0.10
     assert settings.live.confirmation_max_horizontal_offset_px == 56
+    assert settings.live.engage_verify_delay_s == 0.20
+    assert settings.live.engage_target_match_max_distance_px == 72
     assert settings.live.preview_refresh_interval_ms == 120
 
 

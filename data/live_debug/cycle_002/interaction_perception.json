@@ -29,6 +29,7 @@
       "target_id": "live-spawn-2-1"
     }
   ],
+  "expectations": {},
   "frame_height": 720,
   "frame_source": "dry_run:single_spot_mvp",
   "frame_width": 1280,
@@ -64,13 +65,13 @@
   },
   "selected_target_id": "live-spawn-2-1",
   "timings": {
-    "action_ready_ts": 205.68645280083825,
-    "detection_finished_ts": 205.68644940084147,
-    "detection_latency_ms": 0.0610999995842576,
+    "action_ready_ts": 205.6864407008407,
+    "detection_finished_ts": 205.6864379008412,
+    "detection_latency_ms": 0.04959999932907522,
     "detection_started_ts": 205.68638830084188,
     "frame_captured_ts": 205.68638830084188,
-    "selection_latency_ms": 0.0033999967854470015,
-    "target_selected_ts": 205.68645280083825,
-    "total_reaction_latency_ms": 0.0644999963697046
+    "selection_latency_ms": 0.0027999994927085936,
+    "target_selected_ts": 205.6864407008407,
+    "total_reaction_latency_ms": 0.05239999882178381
   }
 }

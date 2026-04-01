@@ -279,6 +279,71 @@ def test_main_can_route_to_live_preview(monkeypatch, capsys) -> None:
     assert "preview_mode=live" in captured.out
 
 
+def test_main_can_run_live_engage_mvp(monkeypatch, capsys) -> None:
+    from botlab.adapters.live.models import LiveEngageOutcome, LiveEngageResult
+    from botlab.adapters.live.engage import LiveEngageRunReport, LiveEngageSessionSummary
+    from botlab.adapters.live.perception import LatencyAggregate
+
+    def build_aggregate(name: str, value: float) -> LatencyAggregate:
+        return LatencyAggregate.from_values(name, (value,))
+
+    def stub_run_live_engage_mvp(*, settings, attempts, anchor_spawn_ts, anchor_cycle_id, enable_console):
+        assert settings.app.mode == "live"
+        assert attempts == 2
+        return LiveEngageRunReport(
+            results=(
+                LiveEngageResult(
+                    cycle_id=1,
+                    outcome=LiveEngageOutcome.ENGAGED,
+                    reason="entered_combat_detected",
+                    selected_target_id="front-free",
+                    final_target_id="front-free",
+                    click_screen_xy=(620, 300),
+                    started_at_ts=100.0,
+                    completed_at_ts=100.2,
+                    detection_latency_ms=10.0,
+                    selection_latency_ms=3.0,
+                    total_reaction_latency_ms=18.0,
+                    verification_latency_ms=120.0,
+                ),
+            ),
+            summary=LiveEngageSessionSummary(
+                total_attempts=1,
+                engaged_count=1,
+                target_stolen_count=0,
+                misclick_count=0,
+                approach_stalled_count=0,
+                approach_timeout_count=0,
+                no_target_available_count=0,
+                detection_latency=build_aggregate("engage_detection_latency_ms", 10.0),
+                selection_latency=build_aggregate("engage_selection_latency_ms", 3.0),
+                total_reaction_latency=build_aggregate("engage_total_reaction_latency_ms", 18.0),
+                verification_latency=build_aggregate("engage_verification_latency_ms", 120.0),
+            ),
+            log_path=Path("logs/live.log"),
+            sqlite_path=Path("data/live.sqlite3"),
+        )
+
+    monkeypatch.setattr("botlab.main._run_live_engage_mvp", stub_run_live_engage_mvp)
+
+    exit_code = main(
+        [
+            "--config",
+            "config/live_dry_run.yaml",
+            "--live-engage-mvp",
+            "--cycles",
+            "2",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "engage_mode=mvp" in captured.out
+    assert "engaged=1" in captured.out
+    assert "engage_attempt=1 outcome=engaged" in captured.out
+
+
 def test_main_lists_combat_plans(capsys) -> None:
     exit_code = main(["--list-combat-plans"])
 

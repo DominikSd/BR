@@ -7,17 +7,19 @@ from pathlib import Path
 import pytest
 
 from botlab.adapters.live import (
+    LiveEngageSessionSummary,
     LiveRunner,
     LiveVisionPreviewRenderer,
     PerceptionAnalysisRunner,
     StallDetector,
     build_live_preview_state,
+    classify_engage_outcome,
     filter_occupied_targets,
     merge_template_hits,
     select_nearest_target,
     should_start_rest,
 )
-from botlab.adapters.live.models import LiveFrame, LiveTargetDetection
+from botlab.adapters.live.models import LiveEngageOutcome, LiveFrame, LiveStateSnapshot, LiveTargetDetection
 from botlab.adapters.live.perception import (
     PerceptionFrameLoader,
     ReactionLatency,
@@ -25,7 +27,20 @@ from botlab.adapters.live.perception import (
     TemplatePackLoader,
 )
 from botlab.adapters.live.vision import extract_named_roi
+from botlab.application.dto import (
+    TargetApproachResult,
+    TargetEngagementResult,
+    TargetInteractionResult,
+    TargetResolution,
+)
 from botlab.config import Settings, TelemetryConfig, load_config, load_default_config
+from botlab.domain.targeting import (
+    RetargetDecision,
+    TargetCandidate,
+    TargetValidationResult,
+    TargetValidationStatus,
+)
+from botlab.domain.world import GroupSnapshot, Position, WorldSnapshot
 
 
 def _build_live_settings(tmp_path: Path) -> Settings:
@@ -43,6 +58,14 @@ def _build_live_settings(tmp_path: Path) -> Settings:
         vision=base.vision,
         source_path=base.source_path,
         live=load_config("config/live_dry_run.yaml").live,
+    )
+
+
+def _build_live_settings_with_profile(tmp_path: Path, dry_run_profile: str) -> Settings:
+    settings = _build_live_settings(tmp_path)
+    return replace(
+        settings,
+        live=replace(settings.live, dry_run_profile=dry_run_profile),
     )
 
 
@@ -294,6 +317,7 @@ def test_perception_batch_analysis_aggregates_session_metrics_from_fixtures(tmp_
     assert summary.detection_latency.p50_ms == pytest.approx(8.0)
     assert summary.detection_latency.p95_ms == pytest.approx(16.0)
     assert summary.total_reaction_latency.max_ms == pytest.approx(23.0)
+    assert summary.accuracy_summary is None
     assert (output_directory / "batch_frame_a_perception.json").exists() is True
     assert (output_directory / "batch_frame_b_perception.json").exists() is True
     assert (output_directory / "perception_session_summary.json").exists() is True
@@ -610,6 +634,7 @@ def test_live_spot_scenes_match_expected_perception_contracts(tmp_path: Path) ->
 
         summary = runner.analyze_frame_path(frame_path)
         result = summary.frame_results[0]
+        assert summary.accuracy_summary is not None
         free_count = len(result.free_detections)
         occupied_count = len(result.occupied_detections)
 
@@ -735,3 +760,241 @@ def test_live_runner_dry_run_executes_minimal_vertical_slice(tmp_path: Path) -> 
     debug_root = settings.live.debug_directory
     assert (debug_root / "cycle_001" / "observation_frame.json").exists() is True
     assert (debug_root / "cycle_001" / "observation_overlay.svg").exists() is True
+
+
+def test_live_engage_session_summary_aggregates_outcomes_and_latencies() -> None:
+    summary = LiveEngageSessionSummary.from_results(
+        (
+            LiveEngageOutcomeResultFactory.build(
+                cycle_id=1,
+                outcome=LiveEngageOutcome.ENGAGED,
+                detection_latency_ms=10.0,
+                selection_latency_ms=3.0,
+                total_reaction_latency_ms=18.0,
+                verification_latency_ms=120.0,
+            ),
+            LiveEngageOutcomeResultFactory.build(
+                cycle_id=2,
+                outcome=LiveEngageOutcome.TARGET_STOLEN,
+                detection_latency_ms=12.0,
+                selection_latency_ms=4.0,
+                total_reaction_latency_ms=20.0,
+                verification_latency_ms=160.0,
+            ),
+        )
+    )
+
+    assert summary.total_attempts == 2
+    assert summary.engaged_count == 1
+    assert summary.target_stolen_count == 1
+    assert summary.total_reaction_latency.avg_ms == pytest.approx(19.0)
+    assert summary.verification_latency.max_ms == pytest.approx(160.0)
+
+
+def test_classify_engage_outcome_marks_target_stolen_when_verify_target_is_occupied() -> None:
+    world = _build_test_world_snapshot()
+    decision = RetargetDecision(
+        current_target_id=None,
+        selected_target=TargetCandidate(
+            group_id="target-a",
+            score=1.0,
+            reason="nearest_free_target",
+            reachable=True,
+            engaged_by_other=False,
+            distance=1.5,
+        ),
+        validation=TargetValidationResult(
+            group_id="target-a",
+            status=TargetValidationStatus.VALID,
+            reason="target_still_available",
+            can_continue=True,
+        ),
+        changed=True,
+        reason="selected_new_target",
+    )
+    engagement = TargetEngagementResult(
+        cycle_id=1,
+        target_resolution=TargetResolution(
+            cycle_id=1,
+            current_target_id=None,
+            selected_target_id="target-a",
+            world_snapshot=world,
+            decision=decision,
+        ),
+        approach_result=TargetApproachResult(
+            cycle_id=1,
+            target_id="target-a",
+            started_at_ts=100.0,
+            completed_at_ts=100.4,
+            travel_s=0.4,
+            arrived=True,
+            reason="target_reached_in_live_adapter",
+            initial_target_id="target-a",
+            retargeted=False,
+        ),
+        interaction_result=TargetInteractionResult(
+            cycle_id=1,
+            target_id="target-a",
+            ready=True,
+            observed_at_ts=100.45,
+            reason="interaction_ready",
+            initial_target_id="target-a",
+            retargeted=False,
+        ),
+    )
+    verify_perception = PerceptionAnalysisRunner(
+        live_config=load_config("config/live_dry_run.yaml").live,
+        output_directory=Path("data") / "unused-engage-classification",
+    )._analyzer.analyze_frame(
+        LiveFrame(
+            width=1280,
+            height=720,
+            captured_at_ts=100.7,
+            source="engage-verify",
+            metadata={
+                "reference_point_xy": [640, 360],
+                "template_hits": [
+                    {
+                        "label": "occupied_swords",
+                        "x": 618,
+                        "y": 252,
+                        "width": 30,
+                        "height": 18,
+                        "confidence": 0.95,
+                        "target_id": "target-a",
+                    },
+                    {
+                        "label": "mob_a",
+                        "x": 612,
+                        "y": 278,
+                        "width": 40,
+                        "height": 52,
+                        "confidence": 0.92,
+                        "target_id": "target-a",
+                    },
+                ],
+            },
+        ),
+        cycle_id=1,
+        phase="engage_verify",
+    )
+
+    outcome, reason, metadata = classify_engage_outcome(
+        engagement=engagement,
+        verify_state=LiveStateSnapshot(in_combat=False, reward_visible=False, rest_available=True),
+        verify_frame_metadata={},
+        verify_perception=verify_perception,
+        click_point_xy=(632, 304),
+        target_match_max_distance_px=72,
+    )
+
+    assert outcome is LiveEngageOutcome.TARGET_STOLEN
+    assert reason == "target_became_occupied_after_click"
+    assert metadata["verify_target_id"] == "target-a"
+
+
+def test_live_runner_dry_run_engage_attempts_produce_artifacts_and_records(tmp_path: Path) -> None:
+    settings = _build_live_settings(tmp_path)
+    runner = LiveRunner.from_settings(
+        settings,
+        initial_anchor_spawn_ts=100.0,
+        initial_anchor_cycle_id=0,
+        enable_console=False,
+    )
+
+    report = runner.run_engage_attempts(1)
+
+    assert report.summary.total_attempts == 1
+    assert report.results[0].outcome is LiveEngageOutcome.ENGAGED
+    assert report.results[0].artifact_paths["engage_result_json"].exists() is True
+    assert report.results[0].artifact_paths["engage_overlay_svg"].exists() is True
+    assert (settings.live.debug_directory / "engage" / "engage_results.jsonl").exists() is True
+    assert (settings.live.debug_directory / "engage" / "engage_session_summary.json").exists() is True
+    assert runner.storage.count_rows("attempts") == 1
+
+
+@pytest.mark.parametrize(
+    ("dry_run_profile", "expected_outcome"),
+    (
+        ("engage_target_stolen", LiveEngageOutcome.TARGET_STOLEN),
+        ("engage_target_stolen_noisy", LiveEngageOutcome.TARGET_STOLEN),
+        ("engage_misclick", LiveEngageOutcome.MISCLICK),
+        ("engage_misclick_partial", LiveEngageOutcome.MISCLICK),
+        ("engage_approach_stalled", LiveEngageOutcome.APPROACH_STALLED),
+        ("engage_timeout", LiveEngageOutcome.APPROACH_TIMEOUT),
+    ),
+)
+def test_live_runner_dry_run_engage_profiles_cover_controlled_outcomes(
+    tmp_path: Path,
+    dry_run_profile: str,
+    expected_outcome: LiveEngageOutcome,
+) -> None:
+    settings = _build_live_settings_with_profile(tmp_path, dry_run_profile)
+    runner = LiveRunner.from_settings(
+        settings,
+        initial_anchor_spawn_ts=100.0,
+        initial_anchor_cycle_id=0,
+        enable_console=False,
+    )
+
+    report = runner.run_engage_attempts(1)
+
+    assert report.summary.total_attempts == 1
+    assert report.results[0].outcome is expected_outcome
+    assert report.results[0].artifact_paths["engage_result_json"].exists() is True
+    engage_result_payload = json.loads(
+        report.results[0].artifact_paths["engage_result_json"].read_text(encoding="utf-8")
+    )
+    assert engage_result_payload["outcome"] == expected_outcome.value
+
+
+class LiveEngageOutcomeResultFactory:
+    @staticmethod
+    def build(
+        *,
+        cycle_id: int,
+        outcome: LiveEngageOutcome,
+        detection_latency_ms: float,
+        selection_latency_ms: float,
+        total_reaction_latency_ms: float,
+        verification_latency_ms: float,
+    ):
+        from botlab.adapters.live.models import LiveEngageResult
+
+        return LiveEngageResult(
+            cycle_id=cycle_id,
+            outcome=outcome,
+            reason=outcome.value,
+            selected_target_id="target-a",
+            final_target_id="target-a",
+            click_screen_xy=(620, 300),
+            started_at_ts=100.0,
+            completed_at_ts=100.0 + (total_reaction_latency_ms / 1000.0),
+            detection_latency_ms=detection_latency_ms,
+            selection_latency_ms=selection_latency_ms,
+            total_reaction_latency_ms=total_reaction_latency_ms,
+            verification_latency_ms=verification_latency_ms,
+            metadata={},
+        )
+
+
+def _build_test_world_snapshot() -> WorldSnapshot:
+    return WorldSnapshot(
+        observed_at_ts=100.0,
+        bot_position=Position(x=0.0, y=0.0),
+        groups=(
+            GroupSnapshot(
+                group_id="target-a",
+                position=Position(x=620.0, y=304.0),
+                distance=1.5,
+                alive_count=1,
+                engaged_by_other=False,
+                reachable=True,
+                threat_score=0.0,
+                metadata={"mob_variant": "mob_a"},
+            ),
+        ),
+        in_combat=False,
+        current_target_id=None,
+        spawn_zone_visible=True,
+    )

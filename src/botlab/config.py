@@ -118,6 +118,9 @@ class LiveConfig:
     candidate_confirmation_frames: int = 1
     candidate_loss_frames: int = 2
     occupied_confirmation_frames: int = 1
+    engage_verify_delay_s: float = 0.20
+    engage_click_offset_y_px: int = 0
+    engage_target_match_max_distance_px: int = 72
     preview_refresh_interval_ms: int = 120
     preview_max_width_px: int = 1600
     preview_max_height_px: int = 900
@@ -381,6 +384,21 @@ def load_config(config_path: str | Path) -> Settings:
             live_section,
             "occupied_confirmation_frames",
             1,
+        ),
+        engage_verify_delay_s=_optional_positive_float(
+            live_section,
+            "engage_verify_delay_s",
+            0.20,
+        ),
+        engage_click_offset_y_px=_optional_int(
+            live_section,
+            "engage_click_offset_y_px",
+            0,
+        ),
+        engage_target_match_max_distance_px=_optional_positive_int(
+            live_section,
+            "engage_target_match_max_distance_px",
+            72,
         ),
         preview_refresh_interval_ms=_optional_positive_int(
             live_section,

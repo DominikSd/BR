@@ -1,41 +1,30 @@
 {
   "artifact_paths": {},
-  "candidate_hit_count": 5,
+  "candidate_hit_count": 2,
   "cycle_id": 1,
   "detections": [
     {
       "bbox": [
-        598,
-        273,
-        42,
-        54
+        600,
+        274,
+        40,
+        52
       ],
-      "confidence": 0.94,
-      "distance": 63.56886030125127,
+      "confidence": 1.0,
+      "distance": 63.245553203367585,
       "metadata": {
-        "duplicate_orientations": [
-          {
-            "confidence": 0.88,
-            "height": 54,
-            "label": "mob_b",
-            "rotation_deg": 180,
-            "width": 42,
-            "x": 598,
-            "y": 273
-          }
-        ],
         "occupied_confidence": 0.0,
         "occupied_seen_frames": 0,
-        "raw_hit_count": 2,
+        "raw_hit_count": 1,
         "seen_frames": 1,
         "stable_candidate": true,
         "track_id": "track-0001"
       },
       "mob_variant": "mob_b",
       "occupied": false,
-      "orientation_deg": 90,
+      "orientation_deg": 0,
       "reachable": true,
-      "screen_x": 619,
+      "screen_x": 620,
       "screen_y": 300,
       "target_id": "front-free"
     },
@@ -46,7 +35,7 @@
         40,
         52
       ],
-      "confidence": 0.91,
+      "confidence": 1.0,
       "distance": 127.13772060250254,
       "metadata": {
         "occupied_confidence": 0.0,
@@ -58,87 +47,27 @@
       },
       "mob_variant": "mob_a",
       "occupied": false,
-      "orientation_deg": 270,
+      "orientation_deg": 0,
       "reachable": true,
       "screen_x": 760,
       "screen_y": 318,
-      "target_id": "fallback-safe"
-    },
-    {
-      "bbox": [
-        500,
-        254,
-        40,
-        52
-      ],
-      "confidence": 1.0,
-      "distance": 144.22205101855957,
-      "metadata": {
-        "occupied_confidence": 0.98,
-        "occupied_seen_frames": 1,
-        "raw_hit_count": 1,
-        "seen_frames": 1,
-        "stable_candidate": true,
-        "track_id": "track-0003"
-      },
-      "mob_variant": "mob_a",
-      "occupied": true,
-      "orientation_deg": 0,
-      "reachable": true,
-      "screen_x": 520,
-      "screen_y": 280,
-      "target_id": "occupied-near"
+      "target_id": "safe-far"
     }
   ],
+  "expectations": {},
   "frame_height": 720,
-  "frame_source": "dry_run:single_spot_mvp",
+  "frame_source": "dry_run:engage_timeout",
   "frame_width": 1280,
   "free_target_count": 2,
-  "merged_hit_count": 3,
+  "merged_hit_count": 2,
   "phase": "observation",
   "raw_hits": [
     {
       "confidence": 1.0,
       "height": 52,
-      "label": "mob_a",
-      "metadata": {},
-      "rotation_deg": 0,
-      "source": "synthetic_target",
-      "target_id": "occupied-near",
-      "width": 40,
-      "x": 500,
-      "y": 254
-    },
-    {
-      "confidence": 0.98,
-      "height": 20,
-      "label": "occupied_swords",
-      "metadata": {},
-      "rotation_deg": 0,
-      "source": "synthetic_occupied",
-      "target_id": "occupied-near",
-      "width": 32,
-      "x": 504,
-      "y": 230
-    },
-    {
-      "confidence": 0.94,
-      "height": 52,
       "label": "mob_b",
-      "metadata": {
-        "duplicate_orientations": [
-          {
-            "confidence": 0.88,
-            "height": 54,
-            "label": "mob_b",
-            "rotation_deg": 180,
-            "width": 42,
-            "x": 598,
-            "y": 273
-          }
-        ]
-      },
-      "rotation_deg": 90,
+      "metadata": {},
+      "rotation_deg": 0,
       "source": "synthetic_target",
       "target_id": "front-free",
       "width": 40,
@@ -146,37 +75,13 @@
       "y": 274
     },
     {
-      "confidence": 0.88,
-      "height": 54,
-      "label": "mob_b",
-      "metadata": {
-        "duplicate_orientations": [
-          {
-            "confidence": 0.88,
-            "height": 54,
-            "label": "mob_b",
-            "rotation_deg": 180,
-            "width": 42,
-            "x": 598,
-            "y": 273
-          }
-        ]
-      },
-      "rotation_deg": 180,
-      "source": "synthetic_duplicate",
-      "target_id": "front-free",
-      "width": 42,
-      "x": 598,
-      "y": 273
-    },
-    {
-      "confidence": 0.91,
+      "confidence": 1.0,
       "height": 52,
       "label": "mob_a",
       "metadata": {},
-      "rotation_deg": 270,
+      "rotation_deg": 0,
       "source": "synthetic_target",
-      "target_id": "fallback-safe",
+      "target_id": "safe-far",
       "width": 40,
       "x": 740,
       "y": 292
@@ -197,13 +102,13 @@
   },
   "selected_target_id": "front-free",
   "timings": {
-    "action_ready_ts": 145.018,
-    "detection_finished_ts": 145.012,
-    "detection_latency_ms": 12.000000000000455,
+    "action_ready_ts": 145.016,
+    "detection_finished_ts": 145.011,
+    "detection_latency_ms": 10.99999999999568,
     "detection_started_ts": 145.0,
     "frame_captured_ts": 145.0,
-    "selection_latency_ms": 3.9999999999906777,
-    "target_selected_ts": 145.016,
-    "total_reaction_latency_ms": 18.000000000000682
+    "selection_latency_ms": 2.999999999985903,
+    "target_selected_ts": 145.01399999999998,
+    "total_reaction_latency_ms": 15.999999999991132
   }
 }
