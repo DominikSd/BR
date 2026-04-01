@@ -1,5 +1,6 @@
 {
   "artifact_paths": {},
+  "candidate_hit_count": 3,
   "cycle_id": 2,
   "detections": [
     {
@@ -69,6 +70,8 @@
   "frame_height": 720,
   "frame_source": "dry_run:single_spot_mvp",
   "frame_width": 1280,
+  "free_target_count": 3,
+  "merged_hit_count": 3,
   "phase": "observation",
   "raw_hits": [
     {

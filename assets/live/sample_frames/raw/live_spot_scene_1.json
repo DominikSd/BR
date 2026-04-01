@@ -1,0 +1,10 @@
+{
+  "captured_at_ts": 0.0,
+  "source": "live_spot_scene_1",
+  "metadata": {
+    "reference_point_xy": [1380, 700],
+    "spawn_roi": [720, 220, 1280, 720],
+    "template_match_stride_px": 12,
+    "notes": "Pelny screen z realnej gry. ROI zaweza analize do glownych sciezek spota wokol postaci i najblizszych grupek."
+  }
+}

@@ -1,5 +1,6 @@
 {
   "artifact_paths": {},
+  "candidate_hit_count": 1,
   "cycle_id": 1,
   "detections": [
     {
@@ -27,6 +28,8 @@
   "frame_height": 720,
   "frame_source": "dry_run:single_spot_mvp",
   "frame_width": 1280,
+  "free_target_count": 1,
+  "merged_hit_count": 1,
   "phase": "interaction",
   "raw_hits": [
     {
@@ -57,13 +60,13 @@
   },
   "selected_target_id": "fallback-safe",
   "timings": {
-    "action_ready_ts": 164.65064878976705,
-    "detection_finished_ts": 164.65064688976668,
-    "detection_latency_ms": 0.022700000045006163,
+    "action_ready_ts": 164.6506530897666,
+    "detection_finished_ts": 164.65065118976668,
+    "detection_latency_ms": 0.02700000004551839,
     "detection_started_ts": 164.65062418976663,
     "frame_captured_ts": 164.65062418976663,
-    "selection_latency_ms": 0.0019000003703695256,
-    "target_selected_ts": 164.65064878976705,
-    "total_reaction_latency_ms": 0.02460000041537569
+    "selection_latency_ms": 0.0018999999156221747,
+    "target_selected_ts": 164.6506530897666,
+    "total_reaction_latency_ms": 0.028899999961140566
   }
 }

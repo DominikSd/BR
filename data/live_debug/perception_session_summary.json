@@ -1,11 +1,20 @@
 {
+  "candidate_hits": {
+    "avg_ms": 3.0,
+    "count": 6,
+    "max_ms": 5.0,
+    "min_ms": 1.0,
+    "name": "candidate_hits",
+    "p50_ms": 3.0,
+    "p95_ms": 5.0
+  },
   "detection_latency": {
-    "avg_ms": 5.515200000004938,
+    "avg_ms": 5.517683333375582,
     "count": 6,
     "max_ms": 12.000000000000455,
-    "min_ms": 0.022700000045006163,
+    "min_ms": 0.023800000235496555,
     "name": "detection_latency_ms",
-    "p50_ms": 0.045000000227446435,
+    "p50_ms": 0.05529999998543644,
     "p95_ms": 12.000000000000455
   },
   "frame_count": 6,
@@ -15,6 +24,7 @@
         "perception_json": "C:\\Users\\d-sad\\Desktop\\Fun\\boty\\SOPLARZ\\data\\live_debug\\cycle_001\\approach_revalidation_perception.json",
         "perception_overlay_svg": "C:\\Users\\d-sad\\Desktop\\Fun\\boty\\SOPLARZ\\data\\live_debug\\cycle_001\\approach_revalidation_perception_overlay.svg"
       },
+      "candidate_hit_count": 5,
       "cycle_id": 1,
       "detections": [
         {
@@ -84,6 +94,8 @@
       "frame_height": 720,
       "frame_source": "dry_run:single_spot_mvp",
       "frame_width": 1280,
+      "free_target_count": 1,
+      "merged_hit_count": 3,
       "phase": "approach_revalidation",
       "raw_hits": [
         {
@@ -177,6 +189,7 @@
         "perception_json": "C:\\Users\\d-sad\\Desktop\\Fun\\boty\\SOPLARZ\\data\\live_debug\\cycle_001\\interaction_perception.json",
         "perception_overlay_svg": "C:\\Users\\d-sad\\Desktop\\Fun\\boty\\SOPLARZ\\data\\live_debug\\cycle_001\\interaction_perception_overlay.svg"
       },
+      "candidate_hit_count": 1,
       "cycle_id": 1,
       "detections": [
         {
@@ -204,6 +217,8 @@
       "frame_height": 720,
       "frame_source": "dry_run:single_spot_mvp",
       "frame_width": 1280,
+      "free_target_count": 1,
+      "merged_hit_count": 1,
       "phase": "interaction",
       "raw_hits": [
         {
@@ -234,14 +249,14 @@
       },
       "selected_target_id": "fallback-safe",
       "timings": {
-        "action_ready_ts": 164.65064878976705,
-        "detection_finished_ts": 164.65064688976668,
-        "detection_latency_ms": 0.022700000045006163,
+        "action_ready_ts": 164.6506530897666,
+        "detection_finished_ts": 164.65065118976668,
+        "detection_latency_ms": 0.02700000004551839,
         "detection_started_ts": 164.65062418976663,
         "frame_captured_ts": 164.65062418976663,
-        "selection_latency_ms": 0.0019000003703695256,
-        "target_selected_ts": 164.65064878976705,
-        "total_reaction_latency_ms": 0.02460000041537569
+        "selection_latency_ms": 0.0018999999156221747,
+        "target_selected_ts": 164.6506530897666,
+        "total_reaction_latency_ms": 0.028899999961140566
       }
     },
     {
@@ -249,6 +264,7 @@
         "perception_json": "C:\\Users\\d-sad\\Desktop\\Fun\\boty\\SOPLARZ\\data\\live_debug\\cycle_001\\observation_perception.json",
         "perception_overlay_svg": "C:\\Users\\d-sad\\Desktop\\Fun\\boty\\SOPLARZ\\data\\live_debug\\cycle_001\\observation_perception_overlay.svg"
       },
+      "candidate_hit_count": 5,
       "cycle_id": 1,
       "detections": [
         {
@@ -329,6 +345,8 @@
       "frame_height": 720,
       "frame_source": "dry_run:single_spot_mvp",
       "frame_width": 1280,
+      "free_target_count": 2,
+      "merged_hit_count": 3,
       "phase": "observation",
       "raw_hits": [
         {
@@ -446,6 +464,7 @@
         "perception_json": "C:\\Users\\d-sad\\Desktop\\Fun\\boty\\SOPLARZ\\data\\live_debug\\cycle_002\\approach_revalidation_perception.json",
         "perception_overlay_svg": "C:\\Users\\d-sad\\Desktop\\Fun\\boty\\SOPLARZ\\data\\live_debug\\cycle_002\\approach_revalidation_perception_overlay.svg"
       },
+      "candidate_hit_count": 3,
       "cycle_id": 2,
       "detections": [
         {
@@ -515,6 +534,8 @@
       "frame_height": 720,
       "frame_source": "dry_run:single_spot_mvp",
       "frame_width": 1280,
+      "free_target_count": 3,
+      "merged_hit_count": 3,
       "phase": "approach_revalidation",
       "raw_hits": [
         {
@@ -569,14 +590,14 @@
       },
       "selected_target_id": "live-spawn-2-3",
       "timings": {
-        "action_ready_ts": 190.2500472000006,
-        "detection_finished_ts": 190.25004500000023,
-        "detection_latency_ms": 0.045000000227446435,
+        "action_ready_ts": 190.2500581000004,
+        "detection_finished_ts": 190.25005529999999,
+        "detection_latency_ms": 0.05529999998543644,
         "detection_started_ts": 190.25,
         "frame_captured_ts": 190.25,
-        "selection_latency_ms": 0.002200000380980782,
-        "target_selected_ts": 190.2500472000006,
-        "total_reaction_latency_ms": 0.04720000060842722
+        "selection_latency_ms": 0.0028000004022032954,
+        "target_selected_ts": 190.2500581000004,
+        "total_reaction_latency_ms": 0.05810000038763974
       }
     },
     {
@@ -584,6 +605,7 @@
         "perception_json": "C:\\Users\\d-sad\\Desktop\\Fun\\boty\\SOPLARZ\\data\\live_debug\\cycle_002\\interaction_perception.json",
         "perception_overlay_svg": "C:\\Users\\d-sad\\Desktop\\Fun\\boty\\SOPLARZ\\data\\live_debug\\cycle_002\\interaction_perception_overlay.svg"
       },
+      "candidate_hit_count": 1,
       "cycle_id": 2,
       "detections": [
         {
@@ -611,6 +633,8 @@
       "frame_height": 720,
       "frame_source": "dry_run:single_spot_mvp",
       "frame_width": 1280,
+      "free_target_count": 1,
+      "merged_hit_count": 1,
       "phase": "interaction",
       "raw_hits": [
         {
@@ -641,14 +665,14 @@
       },
       "selected_target_id": "live-spawn-2-1",
       "timings": {
-        "action_ready_ts": 205.68641360084172,
-        "detection_finished_ts": 205.68641180084165,
-        "detection_latency_ms": 0.023499999770137947,
+        "action_ready_ts": 205.68641400084203,
+        "detection_finished_ts": 205.68641210084212,
+        "detection_latency_ms": 0.023800000235496555,
         "detection_started_ts": 205.68638830084188,
         "frame_captured_ts": 205.68638830084188,
-        "selection_latency_ms": 0.0018000000636675395,
-        "target_selected_ts": 205.68641360084172,
-        "total_reaction_latency_ms": 0.025299999833805487
+        "selection_latency_ms": 0.0018999999156221747,
+        "target_selected_ts": 205.68641400084203,
+        "total_reaction_latency_ms": 0.02570000015111873
       }
     },
     {
@@ -656,6 +680,7 @@
         "perception_json": "C:\\Users\\d-sad\\Desktop\\Fun\\boty\\SOPLARZ\\data\\live_debug\\cycle_002\\observation_perception.json",
         "perception_overlay_svg": "C:\\Users\\d-sad\\Desktop\\Fun\\boty\\SOPLARZ\\data\\live_debug\\cycle_002\\observation_perception_overlay.svg"
       },
+      "candidate_hit_count": 3,
       "cycle_id": 2,
       "detections": [
         {
@@ -725,6 +750,8 @@
       "frame_height": 720,
       "frame_source": "dry_run:single_spot_mvp",
       "frame_width": 1280,
+      "free_target_count": 3,
+      "merged_hit_count": 3,
       "phase": "observation",
       "raw_hits": [
         {
@@ -790,22 +817,40 @@
       }
     }
   ],
+  "free_targets": {
+    "avg_ms": 1.8333333333333333,
+    "count": 6,
+    "max_ms": 3.0,
+    "min_ms": 1.0,
+    "name": "free_targets",
+    "p50_ms": 1.0,
+    "p95_ms": 3.0
+  },
+  "merged_hits": {
+    "avg_ms": 2.3333333333333335,
+    "count": 6,
+    "max_ms": 3.0,
+    "min_ms": 1.0,
+    "name": "merged_hits",
+    "p50_ms": 3.0,
+    "p95_ms": 3.0
+  },
   "selection_latency": {
-    "avg_ms": 1.6676500001295835,
+    "avg_ms": 1.6677666666993218,
     "count": 6,
     "max_ms": 3.9999999999906777,
-    "min_ms": 0.0018000000636675395,
+    "min_ms": 0.0018999999156221747,
     "name": "selection_latency_ms",
-    "p50_ms": 0.002200000380980782,
+    "p50_ms": 0.0028000004022032954,
     "p95_ms": 3.9999999999906777
   },
   "total_reaction_latency": {
-    "avg_ms": 8.016183333471835,
+    "avg_ms": 8.018783333412216,
     "count": 6,
     "max_ms": 18.000000000000682,
-    "min_ms": 0.02460000041537569,
+    "min_ms": 0.02570000015111873,
     "name": "total_reaction_latency_ms",
-    "p50_ms": 0.04720000060842722,
+    "p50_ms": 0.05810000038763974,
     "p95_ms": 18.000000000000682
   }
 }

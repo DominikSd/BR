@@ -15,7 +15,8 @@ from botlab.adapters.live import (
     should_start_rest,
 )
 from botlab.adapters.live.models import LiveTargetDetection
-from botlab.adapters.live.perception import TemplateHit
+from botlab.adapters.live.perception import PerceptionFrameLoader, TemplateHit, TemplatePackLoader
+from botlab.adapters.live.vision import extract_named_roi
 from botlab.config import Settings, TelemetryConfig, load_config, load_default_config
 
 
@@ -192,6 +193,92 @@ def test_perception_batch_analysis_aggregates_session_metrics_from_fixtures(tmp_
     assert (output_directory / "batch_frame_a_perception.json").exists() is True
     assert (output_directory / "batch_frame_b_perception.json").exists() is True
     assert (output_directory / "perception_session_summary.json").exists() is True
+
+
+def test_template_pack_loader_reads_real_template_directories(tmp_path: Path) -> None:
+    settings = _build_live_settings(tmp_path)
+    loader = TemplatePackLoader(settings.live)
+
+    template_pack = loader.load()
+
+    assert len(template_pack.mob_variants) >= 4
+    assert len(template_pack.occupied_variants) >= 2
+    assert {variant.label for variant in template_pack.mob_variants} >= {"mob_a", "mob_b"}
+    assert {variant.rotation_deg for variant in template_pack.mob_variants} >= {0, 90, 180, 270}
+
+
+def test_frame_loader_and_roi_extraction_use_sidecar_override(tmp_path: Path) -> None:
+    settings = _build_live_settings(tmp_path)
+    image_path = tmp_path / "frame.png"
+    sidecar_path = tmp_path / "frame.json"
+    from PIL import Image
+
+    Image.new("RGB", (640, 360), color=(255, 255, 255)).save(image_path)
+    sidecar_path.write_text(
+        json.dumps(
+            {
+                "captured_at_ts": 123.0,
+                "source": "roi-override-test",
+                "metadata": {
+                    "spawn_roi": [120, 80, 200, 120],
+                    "reference_point_xy": [222, 111]
+                }
+            },
+            ensure_ascii=False,
+            indent=2
+        ),
+        encoding="utf-8",
+    )
+
+    loader = PerceptionFrameLoader()
+    frame = loader.load_frame(image_path)
+    roi = extract_named_roi(frame, roi_name="spawn_roi", live_config=settings.live)
+
+    assert frame.source == "roi-override-test"
+    assert frame.metadata["spawn_roi"] == [120, 80, 200, 120]
+    assert roi["x"] == 120
+    assert roi["y"] == 80
+    assert roi["width"] == 200
+    assert roi["height"] == 120
+
+
+def test_perception_pipeline_can_analyze_real_screenshot_assets(tmp_path: Path) -> None:
+    settings = _build_live_settings(tmp_path)
+    output_directory = tmp_path / "perception-real"
+    runner = PerceptionAnalysisRunner(
+        live_config=settings.live,
+        output_directory=output_directory,
+    )
+
+    free_summary = runner.analyze_frame_path(settings.live.sample_frames_directory / "Screenshot_3.png")
+    occupied_summary = runner.analyze_frame_path(settings.live.sample_frames_directory / "Zajete1.png")
+
+    free_result = free_summary.frame_results[0]
+    occupied_result = occupied_summary.frame_results[0]
+
+    assert len(free_result.detections) >= 1
+    assert free_result.selected_target_id is not None
+    assert len(free_result.free_detections) >= 1
+    assert len(occupied_result.occupied_detections) >= 1
+    assert occupied_result.selected_target_id is None
+    assert (output_directory / "Screenshot_3_perception.json").exists() is True
+    assert (output_directory / "Zajete1_perception.json").exists() is True
+
+
+def test_live_spot_scene_sidecar_is_loaded_for_real_sample_frames() -> None:
+    settings = load_config("config/live_dry_run.yaml")
+    loader = PerceptionFrameLoader()
+
+    frame = loader.load_frame(settings.live.sample_frames_directory / "live_spot_scene_1.png")
+    roi = extract_named_roi(frame, roi_name="spawn_roi", live_config=settings.live)
+
+    assert frame.source == "live_spot_scene_1"
+    assert frame.metadata["reference_point_xy"] == [1380, 700]
+    assert frame.metadata["template_match_stride_px"] == 12
+    assert roi["x"] == 720
+    assert roi["y"] == 220
+    assert roi["width"] == 1280
+    assert roi["height"] == 720
 
 
 def test_live_runner_dry_run_executes_minimal_vertical_slice(tmp_path: Path) -> None:

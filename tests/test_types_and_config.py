@@ -47,6 +47,17 @@ def test_load_default_config_returns_settings() -> None:
     assert settings.live.perception_confidence_threshold == 0.75
     assert settings.live.occupied_confidence_threshold == 0.75
     assert settings.live.merge_distance_px == 28
+    assert settings.live.sample_frames_directory == (
+        PROJECT_ROOT / "assets/live/sample_frames/raw"
+    ).resolve()
+    assert settings.live.mobs_template_directory == (
+        PROJECT_ROOT / "assets/live/templates/mobs"
+    ).resolve()
+    assert settings.live.occupied_template_directory == (
+        PROJECT_ROOT / "assets/live/templates/occupied"
+    ).resolve()
+    assert settings.live.template_match_stride_px == 4
+    assert settings.live.template_rotations_deg == (0, 90, 180, 270)
 
 
 def test_live_config_profile_can_be_loaded_from_yaml() -> None:
@@ -58,6 +69,7 @@ def test_live_config_profile_can_be_loaded_from_yaml() -> None:
     assert settings.live.spawn_roi == (320, 140, 640, 320)
     assert settings.live.dry_run_profile == "single_spot_mvp"
     assert settings.live.perception_confidence_threshold == 0.75
+    assert settings.live.sample_frames_directory.name == "raw"
 
 
 def test_cycle_prediction_window_methods() -> None:

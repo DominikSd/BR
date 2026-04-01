@@ -222,6 +222,32 @@ def test_main_can_run_perception_analysis_for_single_frame(tmp_path: Path, capsy
     assert (output_dir / "perception_session_summary.json").exists() is True
 
 
+def test_main_can_run_perception_batch_analysis(tmp_path: Path, capsys) -> None:
+    output_dir = tmp_path / "perception-batch-output"
+
+    exit_code = main(
+        [
+            "--config",
+            "config/live_dry_run.yaml",
+            "--analyze-batch-dir",
+            "tests/fixtures/live/perception",
+            "--perception-output-dir",
+            str(output_dir),
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "perception_mode=analysis" in captured.out
+    assert "frame_count=2" in captured.out
+    assert "perception_latency_summary=detection_latency_ms" in captured.out
+    assert "perception_latency_summary=candidate_hits" in captured.out
+    assert (output_dir / "batch_frame_a_perception.json").exists() is True
+    assert (output_dir / "batch_frame_b_perception.json").exists() is True
+    assert (output_dir / "perception_session_summary.json").exists() is True
+
+
 def test_main_lists_combat_plans(capsys) -> None:
     exit_code = main(["--list-combat-plans"])
 

@@ -75,6 +75,17 @@ class LiveConfig:
     perception_confidence_threshold: float = 0.75
     occupied_confidence_threshold: float = 0.75
     merge_distance_px: int = 28
+    sample_frames_directory: Path = field(
+        default_factory=lambda: PROJECT_ROOT / "assets" / "live" / "sample_frames" / "raw"
+    )
+    mobs_template_directory: Path = field(
+        default_factory=lambda: PROJECT_ROOT / "assets" / "live" / "templates" / "mobs"
+    )
+    occupied_template_directory: Path = field(
+        default_factory=lambda: PROJECT_ROOT / "assets" / "live" / "templates" / "occupied"
+    )
+    template_match_stride_px: int = 4
+    template_rotations_deg: tuple[int, ...] = (0, 90, 180, 270)
 
 
 @dataclass(slots=True, frozen=True)
@@ -175,6 +186,25 @@ def load_config(config_path: str | Path) -> Settings:
             0.75,
         ),
         merge_distance_px=_optional_positive_int(live_section, "merge_distance_px", 28),
+        sample_frames_directory=_resolve_project_relative_path(
+            _optional_str(live_section, "sample_frames_directory", "assets/live/sample_frames/raw")
+        ),
+        mobs_template_directory=_resolve_project_relative_path(
+            _optional_str(live_section, "mobs_template_directory", "assets/live/templates/mobs")
+        ),
+        occupied_template_directory=_resolve_project_relative_path(
+            _optional_str(live_section, "occupied_template_directory", "assets/live/templates/occupied")
+        ),
+        template_match_stride_px=_optional_positive_int(
+            live_section,
+            "template_match_stride_px",
+            4,
+        ),
+        template_rotations_deg=_optional_int_list(
+            live_section,
+            "template_rotations_deg",
+            (0, 90, 180, 270),
+        ),
     )
 
     return Settings(
@@ -269,6 +299,24 @@ def _optional_ratio_float(data: Mapping[str, Any], key: str, default: float) -> 
     if not 0.0 <= numeric_value <= 1.0:
         raise ConfigError(f"Pole '{key}' musi byc w zakresie od 0.0 do 1.0.")
     return numeric_value
+
+
+def _optional_int_list(
+    data: Mapping[str, Any],
+    key: str,
+    default: tuple[int, ...],
+) -> tuple[int, ...]:
+    value = data.get(key, default)
+    if not isinstance(value, (list, tuple)) or len(value) == 0:
+        raise ConfigError(f"Pole '{key}' musi byc niepusta lista liczb calkowitych.")
+    parsed: list[int] = []
+    for item in value:
+        if not isinstance(item, int):
+            raise ConfigError(f"Pole '{key}' musi zawierac liczby calkowite.")
+        normalized = item % 360
+        if normalized not in parsed:
+            parsed.append(normalized)
+    return tuple(parsed)
 
 
 def _optional_nullable_str(

@@ -2,6 +2,7 @@ from botlab.adapters.live.runner import LiveRunner
 from botlab.adapters.live.perception import (
     PerceptionAnalysisRunner,
     PerceptionAnalyzer,
+    TemplatePackLoader,
     classify_occupied,
     merge_template_hits,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "PerceptionAnalysisRunner",
     "PerceptionAnalyzer",
     "StallDetector",
+    "TemplatePackLoader",
     "classify_occupied",
     "filter_occupied_targets",
     "merge_template_hits",

@@ -1,5 +1,6 @@
 {
   "artifact_paths": {},
+  "candidate_hit_count": 3,
   "cycle_id": 2,
   "detections": [
     {
@@ -69,6 +70,8 @@
   "frame_height": 720,
   "frame_source": "dry_run:single_spot_mvp",
   "frame_width": 1280,
+  "free_target_count": 3,
+  "merged_hit_count": 3,
   "phase": "approach_revalidation",
   "raw_hits": [
     {
@@ -123,13 +126,13 @@
   },
   "selected_target_id": "live-spawn-2-3",
   "timings": {
-    "action_ready_ts": 190.2500472000006,
-    "detection_finished_ts": 190.25004500000023,
-    "detection_latency_ms": 0.045000000227446435,
+    "action_ready_ts": 190.2500581000004,
+    "detection_finished_ts": 190.25005529999999,
+    "detection_latency_ms": 0.05529999998543644,
     "detection_started_ts": 190.25,
     "frame_captured_ts": 190.25,
-    "selection_latency_ms": 0.002200000380980782,
-    "target_selected_ts": 190.2500472000006,
-    "total_reaction_latency_ms": 0.04720000060842722
+    "selection_latency_ms": 0.0028000004022032954,
+    "target_selected_ts": 190.2500581000004,
+    "total_reaction_latency_ms": 0.05810000038763974
   }
 }

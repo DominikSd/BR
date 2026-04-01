@@ -519,6 +519,8 @@ def _print_perception_report(*, summary, output_directory: Path) -> None:
             "perception_frame="
             f"{result.phase} "
             f"source={result.frame_source} "
+            f"candidate_hits={result.candidate_hit_count} "
+            f"merged_hits={result.merged_hit_count} "
             f"targets={len(result.detections)} "
             f"free_targets={len(result.free_detections)} "
             f"occupied_targets={len(result.occupied_detections)} "
@@ -528,6 +530,9 @@ def _print_perception_report(*, summary, output_directory: Path) -> None:
             f"total_reaction_latency_ms={result.timings.total_reaction_latency_ms:.3f}"
         )
     for aggregate in (
+        summary.candidate_hits,
+        summary.merged_hits,
+        summary.free_targets,
         summary.detection_latency,
         summary.selection_latency,
         summary.total_reaction_latency,

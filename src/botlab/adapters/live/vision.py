@@ -14,16 +14,29 @@ from botlab.domain.world import GroupSnapshot, Position, WorldSnapshot
 
 
 def extract_named_roi(frame: LiveFrame, *, roi_name: str, live_config: LiveConfig) -> dict[str, Any]:
-    roi_map = {
-        "spawn_roi": live_config.spawn_roi,
-        "hp_bar_roi": live_config.hp_bar_roi,
-        "condition_bar_roi": live_config.condition_bar_roi,
-        "combat_indicator_roi": live_config.combat_indicator_roi,
-        "reward_roi": live_config.reward_roi,
-    }
-    if roi_name not in roi_map:
-        raise ValueError(f"Nieznany ROI '{roi_name}'.")
-    x, y, width, height = roi_map[roi_name]
+    metadata_override = frame.metadata.get(roi_name)
+    if (
+        isinstance(metadata_override, (list, tuple))
+        and len(metadata_override) == 4
+        and all(isinstance(item, int) for item in metadata_override)
+    ):
+        x, y, width, height = metadata_override
+    else:
+        roi_map = {
+            "spawn_roi": live_config.spawn_roi,
+            "hp_bar_roi": live_config.hp_bar_roi,
+            "condition_bar_roi": live_config.condition_bar_roi,
+            "combat_indicator_roi": live_config.combat_indicator_roi,
+            "reward_roi": live_config.reward_roi,
+        }
+        if roi_name not in roi_map:
+            raise ValueError(f"Nieznany ROI '{roi_name}'.")
+        x, y, width, height = roi_map[roi_name]
+    if x >= frame.width or y >= frame.height:
+        x, y, width, height = (0, 0, frame.width, frame.height)
+    else:
+        width = min(width, max(1, frame.width - x))
+        height = min(height, max(1, frame.height - y))
     return {
         "name": roi_name,
         "x": x,
