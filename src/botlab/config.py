@@ -72,6 +72,9 @@ class LiveConfig:
     save_overlays: bool = True
     stall_timeout_s: float = 1.0
     dry_run_profile: str = "single_spot_mvp"
+    perception_confidence_threshold: float = 0.75
+    occupied_confidence_threshold: float = 0.75
+    merge_distance_px: int = 28
 
 
 @dataclass(slots=True, frozen=True)
@@ -161,6 +164,17 @@ def load_config(config_path: str | Path) -> Settings:
         save_overlays=_optional_bool(live_section, "save_overlays", True),
         stall_timeout_s=_optional_positive_float(live_section, "stall_timeout_s", 1.0),
         dry_run_profile=_optional_str(live_section, "dry_run_profile", "single_spot_mvp"),
+        perception_confidence_threshold=_optional_ratio_float(
+            live_section,
+            "perception_confidence_threshold",
+            0.75,
+        ),
+        occupied_confidence_threshold=_optional_ratio_float(
+            live_section,
+            "occupied_confidence_threshold",
+            0.75,
+        ),
+        merge_distance_px=_optional_positive_int(live_section, "merge_distance_px", 28),
     )
 
     return Settings(
@@ -235,6 +249,25 @@ def _optional_positive_float(data: Mapping[str, Any], key: str, default: float) 
     numeric_value = float(value)
     if numeric_value <= 0.0:
         raise ConfigError(f"Pole '{key}' musi byc wieksze od 0.")
+    return numeric_value
+
+
+def _optional_positive_int(data: Mapping[str, Any], key: str, default: int) -> int:
+    value = data.get(key, default)
+    if not isinstance(value, int):
+        raise ConfigError(f"Pole '{key}' musi byc liczba calkowita.")
+    if value <= 0:
+        raise ConfigError(f"Pole '{key}' musi byc wieksze od 0.")
+    return value
+
+
+def _optional_ratio_float(data: Mapping[str, Any], key: str, default: float) -> float:
+    value = data.get(key, default)
+    if not isinstance(value, (int, float)):
+        raise ConfigError(f"Pole '{key}' musi byc liczba.")
+    numeric_value = float(value)
+    if not 0.0 <= numeric_value <= 1.0:
+        raise ConfigError(f"Pole '{key}' musi byc w zakresie od 0.0 do 1.0.")
     return numeric_value
 
 

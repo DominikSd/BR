@@ -14,6 +14,9 @@ class LiveTargetDetection:
     occupied: bool = False
     mob_variant: str = "mob_a"
     reachable: bool = True
+    confidence: float = 1.0
+    bbox: tuple[int, int, int, int] | None = None
+    orientation_deg: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

@@ -150,6 +150,76 @@ def test_main_runs_live_dry_run_from_config(tmp_path: Path, capsys) -> None:
     assert sqlite_path.exists() is True
     assert log_path.exists() is True
     assert (debug_directory / "cycle_001" / "observation_frame.json").exists() is True
+    assert (debug_directory / "cycle_001" / "observation_perception.json").exists() is True
+    assert (debug_directory / "perception_session_summary.json").exists() is True
+
+
+def test_main_can_run_perception_analysis_for_single_frame(tmp_path: Path, capsys) -> None:
+    frame_path = tmp_path / "fixture.json"
+    output_dir = tmp_path / "perception-output"
+    frame_path.write_text(
+        json.dumps(
+            {
+                "width": 1280,
+                "height": 720,
+                "captured_at_ts": 145.0,
+                "source": "fixture",
+                "metadata": {
+                    "reference_point_xy": [640, 360],
+                    "perception_profile": {
+                        "detection_duration_s": 0.010,
+                        "selection_duration_s": 0.005,
+                        "action_ready_duration_s": 0.001,
+                    },
+                    "template_hits": [
+                        {
+                            "label": "mob_a",
+                            "x": 600,
+                            "y": 280,
+                            "width": 40,
+                            "height": 52,
+                            "confidence": 0.94,
+                            "rotation_deg": 0,
+                            "target_id": "free-near",
+                        },
+                        {
+                            "label": "mob_b",
+                            "x": 740,
+                            "y": 300,
+                            "width": 42,
+                            "height": 54,
+                            "confidence": 0.90,
+                            "rotation_deg": 90,
+                            "target_id": "free-far",
+                        },
+                    ],
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--analyze-frame",
+            str(frame_path),
+            "--perception-output-dir",
+            str(output_dir),
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "perception_mode=analysis" in captured.out
+    assert "frame_count=1" in captured.out
+    assert "selected_target=free-near" in captured.out
+    assert "perception_latency_summary=total_reaction_latency_ms" in captured.out
+    assert (output_dir / "fixture_perception.json").exists() is True
+    assert (output_dir / "fixture_perception_overlay.svg").exists() is True
+    assert (output_dir / "perception_session_summary.json").exists() is True
 
 
 def test_main_lists_combat_plans(capsys) -> None:

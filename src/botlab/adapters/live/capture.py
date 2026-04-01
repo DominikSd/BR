@@ -224,17 +224,71 @@ class DryRunWindowCapture:
         if cycle_id == 1:
             observation_targets = (
                 LiveTargetDetection("occupied-near", 520, 280, 1.0, occupied=True, mob_variant="mob_a"),
-                LiveTargetDetection("front-free", 620, 300, 2.4, occupied=False, mob_variant="mob_b"),
-                LiveTargetDetection("fallback-safe", 760, 318, 4.0, occupied=False, mob_variant="mob_a"),
+                LiveTargetDetection(
+                    "front-free",
+                    620,
+                    300,
+                    2.4,
+                    occupied=False,
+                    mob_variant="mob_b",
+                    confidence=0.94,
+                    orientation_deg=90,
+                    metadata={
+                        "duplicate_orientations": [
+                            {
+                                "label": "mob_b",
+                                "x": 598,
+                                "y": 273,
+                                "width": 42,
+                                "height": 54,
+                                "confidence": 0.88,
+                                "rotation_deg": 180,
+                            }
+                        ]
+                    },
+                ),
+                LiveTargetDetection(
+                    "fallback-safe",
+                    760,
+                    318,
+                    4.0,
+                    occupied=False,
+                    mob_variant="mob_a",
+                    confidence=0.91,
+                    orientation_deg=270,
+                ),
             )
             approach_targets = (
                 LiveTargetDetection("occupied-near", 520, 280, 1.0, occupied=True, mob_variant="mob_a"),
-                LiveTargetDetection("front-free", 620, 300, 2.4, occupied=True, mob_variant="mob_b"),
-                LiveTargetDetection("fallback-safe", 700, 310, 3.5, occupied=False, mob_variant="mob_a"),
+                LiveTargetDetection(
+                    "front-free",
+                    620,
+                    300,
+                    2.4,
+                    occupied=True,
+                    mob_variant="mob_b",
+                    confidence=0.93,
+                    orientation_deg=90,
+                ),
+                LiveTargetDetection(
+                    "fallback-safe",
+                    700,
+                    310,
+                    3.5,
+                    occupied=False,
+                    mob_variant="mob_a",
+                    confidence=0.92,
+                    orientation_deg=180,
+                ),
             )
             if phase == "observation":
                 return {
                     "targets": _targets_to_metadata(observation_targets),
+                    "perception_profile": {
+                        "detection_duration_s": 0.012,
+                        "selection_duration_s": 0.004,
+                        "action_ready_duration_s": 0.002,
+                    },
                     "hp_ratio": session_state.hp_ratio,
                     "condition_ratio": session_state.condition_ratio,
                     "in_combat": False,
@@ -250,6 +304,11 @@ class DryRunWindowCapture:
             if phase == "approach_revalidation":
                 return {
                     "targets": _targets_to_metadata(approach_targets),
+                    "perception_profile": {
+                        "detection_duration_s": 0.010,
+                        "selection_duration_s": 0.003,
+                        "action_ready_duration_s": 0.001,
+                    },
                     "hp_ratio": session_state.hp_ratio,
                     "condition_ratio": session_state.condition_ratio,
                 }
@@ -293,6 +352,11 @@ class DryRunWindowCapture:
         if phase == "observation":
             return {
                 "targets": _targets_to_metadata(generated_targets),
+                "perception_profile": {
+                    "detection_duration_s": 0.011,
+                    "selection_duration_s": 0.003,
+                    "action_ready_duration_s": 0.002,
+                },
                 "hp_ratio": session_state.hp_ratio,
                 "condition_ratio": session_state.condition_ratio,
                 "in_combat": False,
@@ -366,6 +430,10 @@ def _targets_to_metadata(targets: tuple[LiveTargetDetection, ...]) -> list[dict[
             "occupied": target.occupied,
             "mob_variant": target.mob_variant,
             "reachable": target.reachable,
+            "confidence": target.confidence,
+            "orientation_deg": target.orientation_deg,
+            "bbox_width": None if target.bbox is None else target.bbox[2],
+            "bbox_height": None if target.bbox is None else target.bbox[3],
             "metadata": dict(target.metadata),
         }
         for target in targets
@@ -379,6 +447,10 @@ def _targets_from_metadata(raw_targets: object) -> tuple[LiveTargetDetection, ..
     for raw_target in raw_targets:
         if not isinstance(raw_target, dict):
             continue
+        raw_bbox_width = raw_target.get("bbox_width", 40)
+        raw_bbox_height = raw_target.get("bbox_height", 52)
+        bbox_width = 40 if raw_bbox_width is None else int(raw_bbox_width)
+        bbox_height = 52 if raw_bbox_height is None else int(raw_bbox_height)
         parsed_targets.append(
             LiveTargetDetection(
                 target_id=str(raw_target.get("target_id", "unknown")),
@@ -388,6 +460,14 @@ def _targets_from_metadata(raw_targets: object) -> tuple[LiveTargetDetection, ..
                 occupied=bool(raw_target.get("occupied", False)),
                 mob_variant=str(raw_target.get("mob_variant", "mob_a")),
                 reachable=bool(raw_target.get("reachable", True)),
+                confidence=float(raw_target.get("confidence", 1.0)),
+                bbox=(
+                    int(raw_target.get("screen_x", 0)) - (bbox_width // 2),
+                    int(raw_target.get("screen_y", 0)) - (bbox_height // 2),
+                    bbox_width,
+                    bbox_height,
+                ),
+                orientation_deg=int(raw_target.get("orientation_deg", 0)),
                 metadata=dict(raw_target.get("metadata", {})),
             )
         )

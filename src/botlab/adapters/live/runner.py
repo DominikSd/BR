@@ -11,12 +11,16 @@ from botlab.adapters.live.capture import (
 )
 from botlab.adapters.live.input import LiveInputDriver
 from botlab.adapters.live.models import LiveFrame, LiveSessionState, LiveTargetDetection
+from botlab.adapters.live.perception import (
+    PerceptionAnalyzer,
+    PerceptionArtifactWriter,
+    PerceptionFrameResult,
+    build_world_snapshot_from_perception,
+)
 from botlab.adapters.live.vision import (
     LiveResourceProvider,
     SimpleStateDetector,
     StallDetector,
-    build_world_snapshot,
-    parse_target_detections,
 )
 from botlab.adapters.simulation.combat_profiles import SimulatedCombatProfileCatalog
 from botlab.adapters.simulation.combat_plans import SimulatedCombatPlanCatalog
@@ -68,15 +72,20 @@ class LiveRuntime:
         scheduler: CycleScheduler,
         capture,
         artifact_writer: DebugArtifactWriter,
+        perception_analyzer: PerceptionAnalyzer,
+        perception_artifact_writer: PerceptionArtifactWriter,
         logger: logging.Logger,
     ) -> None:
         self._settings = settings
         self._scheduler = scheduler
         self._capture = capture
         self._artifact_writer = artifact_writer
+        self._perception_analyzer = perception_analyzer
+        self._perception_artifact_writer = perception_artifact_writer
         self._logger = logger
         self._session_state = LiveSessionState()
         self._frames: dict[tuple[int, str], LiveFrame] = {}
+        self._perception_results: dict[tuple[int, str], PerceptionFrameResult] = {}
         self._observation_preparations: dict[int, ObservationPreparationResult] = {}
         self._target_resolutions: dict[int, TargetResolution] = {}
         self._approach_results: dict[int, TargetApproachResult] = {}
@@ -132,6 +141,51 @@ class LiveRuntime:
         )
         return frame
 
+    def analyze_frame(
+        self,
+        *,
+        cycle_id: int,
+        phase: str,
+        default_ts: float,
+    ) -> PerceptionFrameResult:
+        cache_key = (cycle_id, phase)
+        cached_result = self._perception_results.get(cache_key)
+        if cached_result is not None:
+            return cached_result
+
+        frame = self.capture_frame(cycle_id=cycle_id, phase=phase, default_ts=default_ts)
+        result = self._perception_analyzer.analyze_frame(frame, cycle_id=cycle_id, phase=phase)
+        artifact_paths = self._perception_artifact_writer.write_cycle_result(
+            cycle_id=cycle_id,
+            phase=phase,
+            frame=frame,
+            result=result,
+        )
+        persisted_result = replace(result, artifact_paths=artifact_paths)
+        self._perception_artifact_writer.append_jsonl(
+            record_name=f"cycle_{cycle_id:03d}:{phase}",
+            result=persisted_result,
+        )
+        self._perception_results[cache_key] = persisted_result
+        self._logger.info(
+            "live_perception cycle_id=%s phase=%s targets=%s free=%s selected=%s reaction_ms=%.3f",
+            cycle_id,
+            phase,
+            len(persisted_result.detections),
+            len(persisted_result.free_detections),
+            persisted_result.selected_target_id,
+            persisted_result.timings.total_reaction_latency_ms,
+        )
+        return persisted_result
+
+    def perception_result(
+        self,
+        *,
+        cycle_id: int,
+        phase: str,
+    ) -> PerceptionFrameResult | None:
+        return self._perception_results.get((cycle_id, phase))
+
     def set_observation_preparation(self, result: ObservationPreparationResult) -> None:
         self._observation_preparations[result.cycle_id] = result
 
@@ -156,6 +210,13 @@ class LiveRuntime:
     def interaction_results(self) -> list[TargetInteractionResult]:
         return [self._interaction_results[key] for key in sorted(self._interaction_results)]
 
+    def perception_results(self) -> list[PerceptionFrameResult]:
+        return [self._perception_results[key] for key in sorted(self._perception_results)]
+
+    def write_perception_session_summary(self) -> None:
+        summary = self._perception_analyzer.summarize_session(self.perception_results())
+        self._perception_artifact_writer.write_session_summary(summary)
+
     def update_resources(self, *, hp_ratio: float, condition_ratio: float) -> None:
         self._session_state.hp_ratio = min(max(float(hp_ratio), 0.0), 1.0)
         self._session_state.condition_ratio = min(max(float(condition_ratio), 0.0), 1.0)
@@ -172,7 +233,11 @@ class LiveObservationProvider(ObservationProvider):
             phase="observation",
             default_ts=prediction.predicted_spawn_ts,
         )
-        targets = parse_target_detections(frame)
+        perception = self._runtime.analyze_frame(
+            cycle_id=cycle_id,
+            phase="observation",
+            default_ts=prediction.predicted_spawn_ts,
+        )
         preparation = ObservationPreparationResult(
             cycle_id=cycle_id,
             spawn_zone_visible=True,
@@ -186,12 +251,16 @@ class LiveObservationProvider(ObservationProvider):
             metadata={
                 "ready_reason": "already_on_spot",
                 "start_position_source": "live_current_spot",
+                "selected_target_id": perception.selected_target_id,
+                "detection_latency_ms": perception.timings.detection_latency_ms,
+                "selection_latency_ms": perception.timings.selection_latency_ms,
+                "total_reaction_latency_ms": perception.timings.total_reaction_latency_ms,
             },
         )
         self._runtime.set_observation_preparation(preparation)
 
         observation = None
-        if targets:
+        if perception.detections:
             observation = Observation(
                 cycle_id=cycle_id,
                 observed_at_ts=prediction.predicted_spawn_ts,
@@ -199,7 +268,15 @@ class LiveObservationProvider(ObservationProvider):
                 actual_spawn_ts=prediction.predicted_spawn_ts,
                 source=frame.source,
                 confidence=1.0,
-                metadata={"target_count": len(targets)},
+                metadata={
+                    "target_count": len(perception.detections),
+                    "free_target_count": len(perception.free_detections),
+                    "occupied_target_count": len(perception.occupied_detections),
+                    "selected_target_id": perception.selected_target_id,
+                    "detection_latency_ms": perception.timings.detection_latency_ms,
+                    "selection_latency_ms": perception.timings.selection_latency_ms,
+                    "total_reaction_latency_ms": perception.timings.total_reaction_latency_ms,
+                },
             )
 
         return ObservationWindow(
@@ -209,8 +286,9 @@ class LiveObservationProvider(ObservationProvider):
             window_closed_ts=prediction.ready_window_end_ts,
             note="live_cycle",
             metadata={
-                "observable_in_ready_window": bool(targets),
+                "observable_in_ready_window": bool(perception.detections),
                 "frame_source": frame.source,
+                "selected_target_id": perception.selected_target_id,
             },
         )
 
@@ -226,9 +304,15 @@ class LiveWorldStateProvider(WorldStateProvider):
             phase="observation",
             default_ts=prediction.predicted_spawn_ts,
         )
-        return build_world_snapshot(
+        perception = self._runtime.analyze_frame(
+            cycle_id=cycle_id,
+            phase="observation",
+            default_ts=prediction.predicted_spawn_ts,
+        )
+        return build_world_snapshot_from_perception(
             cycle_id=cycle_id,
             frame=frame,
+            perception_result=perception,
             current_target_id=None,
             phase="live_acquire",
         )
@@ -240,9 +324,15 @@ class LiveWorldStateProvider(WorldStateProvider):
             phase="approach_revalidation",
             default_ts=prediction.predicted_spawn_ts + 0.25,
         )
-        return build_world_snapshot(
+        perception = self._runtime.analyze_frame(
+            cycle_id=cycle_id,
+            phase="approach_revalidation",
+            default_ts=prediction.predicted_spawn_ts + 0.25,
+        )
+        return build_world_snapshot_from_perception(
             cycle_id=cycle_id,
             frame=frame,
+            perception_result=perception,
             current_target_id=None,
             phase="live_approach_revalidation",
         )
@@ -254,9 +344,15 @@ class LiveWorldStateProvider(WorldStateProvider):
             phase="interaction",
             default_ts=prediction.predicted_spawn_ts + 0.50,
         )
-        return build_world_snapshot(
+        perception = self._runtime.analyze_frame(
+            cycle_id=cycle_id,
+            phase="interaction",
+            default_ts=prediction.predicted_spawn_ts + 0.50,
+        )
+        return build_world_snapshot_from_perception(
             cycle_id=cycle_id,
             frame=frame,
+            perception_result=perception,
             current_target_id=None,
             phase="live_interaction_revalidation",
         )
@@ -467,6 +563,10 @@ class LiveActionExecutor(ActionExecutor):
         target_resolution = engagement.target_resolution
         approach_result = engagement.approach_result
         interaction_result = engagement.interaction_result
+        observation_perception = self._runtime.perception_result(
+            cycle_id=target_resolution.cycle_id,
+            phase="observation",
+        )
         return {
             "session_hp_ratio_before_cycle": self._runtime.session_state.hp_ratio,
             "session_condition_ratio_before_cycle": self._runtime.session_state.condition_ratio,
@@ -480,6 +580,9 @@ class LiveActionExecutor(ActionExecutor):
             "retargeted_during_approach": approach_result.retargeted,
             "retarget_count": int(approach_result.retargeted),
             "target_loss_count": int(approach_result.retargeted),
+            "perception_detection_latency_ms": None if observation_perception is None else observation_perception.timings.detection_latency_ms,
+            "perception_selection_latency_ms": None if observation_perception is None else observation_perception.timings.selection_latency_ms,
+            "perception_total_reaction_latency_ms": None if observation_perception is None else observation_perception.timings.total_reaction_latency_ms,
         }
 
 
@@ -747,6 +850,8 @@ class LiveRunner:
             scheduler=scheduler,
             capture=capture,
             artifact_writer=DebugArtifactWriter(settings.live),
+            perception_analyzer=PerceptionAnalyzer(settings.live),
+            perception_artifact_writer=PerceptionArtifactWriter(settings.live.debug_directory),
             logger=logger,
         )
         decision_engine = DecisionEngine(settings.cycle, settings.combat)
@@ -826,6 +931,7 @@ class LiveRunner:
         self._storage.initialize()
         initial_cycle_id = self._runtime.initial_cycle_id
         cycle_results = self._orchestrator.run_cycles(total_cycles, initial_cycle_id=initial_cycle_id)
+        self._runtime.write_perception_session_summary()
         cycle_ids = {initial_cycle_id + offset for offset in range(total_cycles)}
         cycle_records = [
             record

@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Sequence
 
-from botlab.adapters.live import LiveRunner
+from botlab.adapters.live import LiveRunner, PerceptionAnalysisRunner
 from botlab.adapters.simulation.combat_profiles import SimulatedCombatProfileCatalog
 from botlab.adapters.simulation.combat_plans import SimulatedCombatPlanCatalog
 from botlab.adapters.simulation.replay import (
@@ -107,6 +107,24 @@ def build_argument_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Wypisuje czytelny trace decyzji cyklu: targetowanie, retarget, combat i rest.",
     )
+    parser.add_argument(
+        "--analyze-frame",
+        type=str,
+        default=None,
+        help="Analizuje pojedyncza klatke lub plik JSON z frame spec i zapisuje artefakty perception.",
+    )
+    parser.add_argument(
+        "--analyze-batch-dir",
+        type=str,
+        default=None,
+        help="Analizuje katalog klatek/plikow JSON i zapisuje artefakty perception oraz agregaty latencji.",
+    )
+    parser.add_argument(
+        "--perception-output-dir",
+        type=str,
+        default=None,
+        help="Opcjonalny katalog wyjsciowy dla artefaktow perception. Domyslnie: live.debug_directory/perception.",
+    )
 
     return parser
 
@@ -131,8 +149,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         combat_plan=args.combat_plan,
         combat_profile=args.combat_profile,
     )
+    _validate_perception_args(
+        analyze_frame=args.analyze_frame,
+        analyze_batch_dir=args.analyze_batch_dir,
+        scenario_preset=args.scenario_preset,
+        scenario_file=args.scenario_file,
+    )
 
     settings = _load_settings(args.config)
+    if args.analyze_frame is not None or args.analyze_batch_dir is not None:
+        summary, output_directory = _run_perception_analysis(
+            settings=settings,
+            analyze_frame=args.analyze_frame,
+            analyze_batch_dir=args.analyze_batch_dir,
+            output_directory=args.perception_output_dir,
+        )
+        _print_perception_report(summary=summary, output_directory=output_directory)
+        return 0
+
     replay = _load_replay(
         scenario_preset=args.scenario_preset,
         scenario_file=args.scenario_file,
@@ -218,6 +252,25 @@ def _run_simulation(
     )
 
 
+def _run_perception_analysis(
+    *,
+    settings: Settings,
+    analyze_frame: str | None,
+    analyze_batch_dir: str | None,
+    output_directory: str | None,
+):
+    if analyze_frame is None and analyze_batch_dir is None:
+        raise ValueError("Brak zrodla dla trybu perception-only.")
+    resolved_output_directory = _resolve_perception_output_directory(settings, output_directory)
+    runner = PerceptionAnalysisRunner(
+        live_config=settings.live,
+        output_directory=resolved_output_directory,
+    )
+    if analyze_frame is not None:
+        return runner.analyze_frame_path(analyze_frame), resolved_output_directory
+    return runner.analyze_directory(analyze_batch_dir), resolved_output_directory
+
+
 def _load_settings(config_path: str | None) -> Settings:
     if config_path is None:
         return load_default_config()
@@ -256,6 +309,21 @@ def _validate_scenario_args(
         raise ValueError("--scenario-preset i --scenario-file nie moga byc uzyte razem.")
     if combat_plan is not None and combat_profile is not None:
         raise ValueError("--combat-plan i --combat-profile nie moga byc uzyte razem.")
+
+
+def _validate_perception_args(
+    *,
+    analyze_frame: str | None,
+    analyze_batch_dir: str | None,
+    scenario_preset: str | None,
+    scenario_file: str | None,
+) -> None:
+    if analyze_frame is not None and analyze_batch_dir is not None:
+        raise ValueError("--analyze-frame i --analyze-batch-dir nie moga byc uzyte razem.")
+    if (analyze_frame is not None or analyze_batch_dir is not None) and (
+        scenario_preset is not None or scenario_file is not None
+    ):
+        raise ValueError("Tryb perception-only nie obsluguje scenario replay.")
 
 
 def _resolve_total_cycles(cycles: int | None, replay: ScenarioReplay | None) -> int:
@@ -343,6 +411,12 @@ def _export_report_json(*, report: SimulationReport, export_path: str | None) ->
         json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
         encoding="utf-8",
     )
+
+
+def _resolve_perception_output_directory(settings: Settings, output_directory: str | None) -> Path:
+    if output_directory is not None:
+        return Path(output_directory).expanduser().resolve()
+    return (settings.live.debug_directory / "perception").resolve()
 
 
 def _print_report(
@@ -434,6 +508,45 @@ def _print_report(
     if show_cycle_trace:
         for line in report.decision_trace_lines():
             print(line)
+
+
+def _print_perception_report(*, summary, output_directory: Path) -> None:
+    print("perception_mode=analysis")
+    print(f"frame_count={len(summary.frame_results)}")
+    print(f"perception_output_dir={output_directory}")
+    for result in summary.frame_results:
+        print(
+            "perception_frame="
+            f"{result.phase} "
+            f"source={result.frame_source} "
+            f"targets={len(result.detections)} "
+            f"free_targets={len(result.free_detections)} "
+            f"occupied_targets={len(result.occupied_detections)} "
+            f"selected_target={result.selected_target_id} "
+            f"detection_latency_ms={result.timings.detection_latency_ms:.3f} "
+            f"selection_latency_ms={result.timings.selection_latency_ms:.3f} "
+            f"total_reaction_latency_ms={result.timings.total_reaction_latency_ms:.3f}"
+        )
+    for aggregate in (
+        summary.detection_latency,
+        summary.selection_latency,
+        summary.total_reaction_latency,
+    ):
+        min_repr = "None" if aggregate.min_ms is None else f"{aggregate.min_ms:.3f}"
+        avg_repr = "None" if aggregate.avg_ms is None else f"{aggregate.avg_ms:.3f}"
+        p50_repr = "None" if aggregate.p50_ms is None else f"{aggregate.p50_ms:.3f}"
+        p95_repr = "None" if aggregate.p95_ms is None else f"{aggregate.p95_ms:.3f}"
+        max_repr = "None" if aggregate.max_ms is None else f"{aggregate.max_ms:.3f}"
+        print(
+            "perception_latency_summary="
+            f"{aggregate.name} "
+            f"count={aggregate.count} "
+            f"min_ms={min_repr} "
+            f"avg_ms={avg_repr} "
+            f"p50_ms={p50_repr} "
+            f"p95_ms={p95_repr} "
+            f"max_ms={max_repr}"
+        )
 
 
 def _should_show_cycle_trace(

@@ -1,0 +1,69 @@
+{
+  "artifact_paths": {},
+  "cycle_id": 1,
+  "detections": [
+    {
+      "bbox": [
+        680,
+        284,
+        40,
+        52
+      ],
+      "confidence": 1.0,
+      "distance": 78.10249675906654,
+      "metadata": {
+        "occupied_confidence": 0.0,
+        "raw_hit_count": 1
+      },
+      "mob_variant": "mob_a",
+      "occupied": false,
+      "orientation_deg": 0,
+      "reachable": true,
+      "screen_x": 700,
+      "screen_y": 310,
+      "target_id": "fallback-safe"
+    }
+  ],
+  "frame_height": 720,
+  "frame_source": "dry_run:single_spot_mvp",
+  "frame_width": 1280,
+  "phase": "interaction",
+  "raw_hits": [
+    {
+      "confidence": 1.0,
+      "height": 52,
+      "label": "mob_a",
+      "metadata": {},
+      "rotation_deg": 0,
+      "source": "synthetic_target",
+      "target_id": "fallback-safe",
+      "width": 40,
+      "x": 680,
+      "y": 284
+    }
+  ],
+  "reference_point_xy": [
+    640.0,
+    360.0
+  ],
+  "roi": {
+    "frame_height": 720,
+    "frame_width": 1280,
+    "height": 320,
+    "name": "spawn_roi",
+    "width": 640,
+    "x": 320,
+    "y": 140
+  },
+  "selected_target_id": "fallback-safe",
+  "timings": {
+    "action_ready_ts": 164.6506501897668,
+    "detection_finished_ts": 164.65064838976673,
+    "detection_latency_ms": 0.024200000098062446,
+    "detection_started_ts": 164.65062418976663,
+    "frame_captured_ts": 164.65062418976663,
+    "selection_latency_ms": 0.0018000000636675395,
+    "target_selected_ts": 164.6506501897668,
+    "total_reaction_latency_ms": 0.026000000161729986
+  }
+}

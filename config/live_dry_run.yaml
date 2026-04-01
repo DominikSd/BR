@@ -39,3 +39,6 @@ live:
   save_overlays: true
   stall_timeout_s: 1.0
   dry_run_profile: "single_spot_mvp"
+  perception_confidence_threshold: 0.75
+  occupied_confidence_threshold: 0.75
+  merge_distance_px: 28
