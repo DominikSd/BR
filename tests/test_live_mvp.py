@@ -168,6 +168,32 @@ def test_perception_analysis_computes_reaction_latency_metrics(tmp_path: Path) -
     assert (tmp_path / "perception" / "perception_results.jsonl").exists() is True
 
 
+def test_perception_batch_analysis_aggregates_session_metrics_from_fixtures(tmp_path: Path) -> None:
+    settings = _build_live_settings(tmp_path)
+    fixture_directory = Path("tests/fixtures/live/perception").resolve()
+    output_directory = tmp_path / "perception-batch"
+    runner = PerceptionAnalysisRunner(
+        live_config=settings.live,
+        output_directory=output_directory,
+    )
+
+    summary = runner.analyze_directory(fixture_directory)
+
+    assert len(summary.frame_results) == 2
+    assert summary.frame_results[0].selected_target_id == "free-near-a"
+    assert summary.frame_results[1].selected_target_id == "free-mid-b"
+    assert summary.detection_latency.count == 2
+    assert summary.detection_latency.min_ms == pytest.approx(8.0)
+    assert summary.detection_latency.max_ms == pytest.approx(16.0)
+    assert summary.detection_latency.avg_ms == pytest.approx(12.0)
+    assert summary.detection_latency.p50_ms == pytest.approx(8.0)
+    assert summary.detection_latency.p95_ms == pytest.approx(16.0)
+    assert summary.total_reaction_latency.max_ms == pytest.approx(23.0)
+    assert (output_directory / "batch_frame_a_perception.json").exists() is True
+    assert (output_directory / "batch_frame_b_perception.json").exists() is True
+    assert (output_directory / "perception_session_summary.json").exists() is True
+
+
 def test_live_runner_dry_run_executes_minimal_vertical_slice(tmp_path: Path) -> None:
     settings = _build_live_settings(tmp_path)
     runner = LiveRunner.from_settings(

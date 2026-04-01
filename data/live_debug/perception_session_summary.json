@@ -1,11 +1,11 @@
 {
   "detection_latency": {
-    "avg_ms": 5.515266666686595,
+    "avg_ms": 5.515200000004938,
     "count": 6,
     "max_ms": 12.000000000000455,
-    "min_ms": 0.02220000010311196,
+    "min_ms": 0.022700000045006163,
     "name": "detection_latency_ms",
-    "p50_ms": 0.045199999931355705,
+    "p50_ms": 0.045000000227446435,
     "p95_ms": 12.000000000000455
   },
   "frame_count": 6,
@@ -234,14 +234,14 @@
       },
       "selected_target_id": "fallback-safe",
       "timings": {
-        "action_ready_ts": 164.6506501897668,
-        "detection_finished_ts": 164.65064838976673,
-        "detection_latency_ms": 0.024200000098062446,
+        "action_ready_ts": 164.65064878976705,
+        "detection_finished_ts": 164.65064688976668,
+        "detection_latency_ms": 0.022700000045006163,
         "detection_started_ts": 164.65062418976663,
         "frame_captured_ts": 164.65062418976663,
-        "selection_latency_ms": 0.0018000000636675395,
-        "target_selected_ts": 164.6506501897668,
-        "total_reaction_latency_ms": 0.026000000161729986
+        "selection_latency_ms": 0.0019000003703695256,
+        "target_selected_ts": 164.65064878976705,
+        "total_reaction_latency_ms": 0.02460000041537569
       }
     },
     {
@@ -569,14 +569,14 @@
       },
       "selected_target_id": "live-spawn-2-3",
       "timings": {
-        "action_ready_ts": 190.25004739999986,
-        "detection_finished_ts": 190.25004519999993,
-        "detection_latency_ms": 0.045199999931355705,
+        "action_ready_ts": 190.2500472000006,
+        "detection_finished_ts": 190.25004500000023,
+        "detection_latency_ms": 0.045000000227446435,
         "detection_started_ts": 190.25,
         "frame_captured_ts": 190.25,
-        "selection_latency_ms": 0.0021999999262334313,
-        "target_selected_ts": 190.25004739999986,
-        "total_reaction_latency_ms": 0.04739999985758914
+        "selection_latency_ms": 0.002200000380980782,
+        "target_selected_ts": 190.2500472000006,
+        "total_reaction_latency_ms": 0.04720000060842722
       }
     },
     {
@@ -641,14 +641,14 @@
       },
       "selected_target_id": "live-spawn-2-1",
       "timings": {
-        "action_ready_ts": 205.68641230084205,
-        "detection_finished_ts": 205.686410500842,
-        "detection_latency_ms": 0.02220000010311196,
+        "action_ready_ts": 205.68641360084172,
+        "detection_finished_ts": 205.68641180084165,
+        "detection_latency_ms": 0.023499999770137947,
         "detection_started_ts": 205.68638830084188,
         "frame_captured_ts": 205.68638830084188,
         "selection_latency_ms": 0.0018000000636675395,
-        "target_selected_ts": 205.68641230084205,
-        "total_reaction_latency_ms": 0.0240000001667795
+        "target_selected_ts": 205.68641360084172,
+        "total_reaction_latency_ms": 0.025299999833805487
       }
     },
     {
@@ -791,21 +791,21 @@
     }
   ],
   "selection_latency": {
-    "avg_ms": 1.6676333333360087,
+    "avg_ms": 1.6676500001295835,
     "count": 6,
     "max_ms": 3.9999999999906777,
     "min_ms": 0.0018000000636675395,
     "name": "selection_latency_ms",
-    "p50_ms": 0.0021999999262334313,
+    "p50_ms": 0.002200000380980782,
     "p95_ms": 3.9999999999906777
   },
   "total_reaction_latency": {
-    "avg_ms": 8.016233333359915,
+    "avg_ms": 8.016183333471835,
     "count": 6,
     "max_ms": 18.000000000000682,
-    "min_ms": 0.0240000001667795,
+    "min_ms": 0.02460000041537569,
     "name": "total_reaction_latency_ms",
-    "p50_ms": 0.04739999985758914,
+    "p50_ms": 0.04720000060842722,
     "p95_ms": 18.000000000000682
   }
 }

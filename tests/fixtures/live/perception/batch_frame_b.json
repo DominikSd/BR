@@ -1,0 +1,45 @@
+{
+  "width": 1280,
+  "height": 720,
+  "captured_at_ts": 190.0,
+  "source": "fixture-batch-b",
+  "metadata": {
+    "reference_point_xy": [640, 360],
+    "perception_profile": {
+      "detection_duration_s": 0.016,
+      "selection_duration_s": 0.005,
+      "action_ready_duration_s": 0.002
+    },
+    "template_hits": [
+      {
+        "label": "occupied_swords",
+        "x": 505,
+        "y": 225,
+        "width": 30,
+        "height": 20,
+        "confidence": 0.98,
+        "target_id": "occupied-near-b"
+      },
+      {
+        "label": "mob_b",
+        "x": 500,
+        "y": 250,
+        "width": 42,
+        "height": 54,
+        "confidence": 0.96,
+        "rotation_deg": 180,
+        "target_id": "occupied-near-b"
+      },
+      {
+        "label": "mob_a",
+        "x": 650,
+        "y": 290,
+        "width": 40,
+        "height": 52,
+        "confidence": 0.92,
+        "rotation_deg": 270,
+        "target_id": "free-mid-b"
+      }
+    ]
+  }
+}

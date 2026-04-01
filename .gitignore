@@ -17,4 +17,6 @@ dist/
 build/
 logs/*.log
 data/telemetry/*.sqlite3
+data/live_debug/
+data/perception*/
 screenshots/enemies

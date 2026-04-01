@@ -1,0 +1,36 @@
+{
+  "width": 1280,
+  "height": 720,
+  "captured_at_ts": 145.0,
+  "source": "fixture-batch-a",
+  "metadata": {
+    "reference_point_xy": [640, 360],
+    "perception_profile": {
+      "detection_duration_s": 0.008,
+      "selection_duration_s": 0.003,
+      "action_ready_duration_s": 0.001
+    },
+    "template_hits": [
+      {
+        "label": "mob_a",
+        "x": 600,
+        "y": 285,
+        "width": 40,
+        "height": 52,
+        "confidence": 0.95,
+        "rotation_deg": 0,
+        "target_id": "free-near-a"
+      },
+      {
+        "label": "mob_b",
+        "x": 735,
+        "y": 295,
+        "width": 42,
+        "height": 54,
+        "confidence": 0.91,
+        "rotation_deg": 90,
+        "target_id": "free-far-a"
+      }
+    ]
+  }
+}
