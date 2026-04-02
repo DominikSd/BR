@@ -159,12 +159,13 @@ def test_live_real_mvp_config_can_be_loaded_from_yaml() -> None:
     assert settings.live.debug_directory.name == "live_real_debug"
     assert settings.live.benchmark_dataset_directory.name == "sample_frames"
     assert settings.live.capture_region == (0, 0, 0, 0)
-    assert settings.live.spawn_roi == (0, 85, 1668, 845)
+    assert settings.live.spawn_roi == (80, 40, 1450, 860)
     assert settings.live.scene_profile_path is not None
     assert settings.live.scene_profile_path.name == "single_spot_scene.json"
+    assert settings.live.scene_zone_overlay_visible is False
     assert settings.live.scene_calibration_offset_xy == (0, 0)
     assert settings.live.scene_reference_anchor_mode == "frame_center"
-    assert settings.live.scene_reference_anchor_xy == (1024, 576)
+    assert settings.live.scene_reference_anchor_xy == (960, 520)
     assert settings.live.marker_color_mode == "yellow"
     assert settings.live.marker_min_green == 135
     assert settings.live.marker_green_blue_delta == 22
@@ -179,6 +180,23 @@ def test_live_real_mvp_config_can_be_loaded_from_yaml() -> None:
     assert settings.live.marker_max_fill_density == 0.90
     assert settings.live.marker_dark_core_max_rgb == 135
     assert settings.live.marker_min_dark_core_ratio == 0.02
+    assert settings.live.player_veto_enabled is True
+    assert settings.live.player_veto_roi_width_px == 190
+    assert settings.live.player_veto_roi_height_px == 70
+    assert settings.live.player_veto_roi_offset_y_px == -28
+    assert settings.live.player_veto_green_min_green == 105
+    assert settings.live.player_veto_green_red_delta == 8
+    assert settings.live.player_veto_green_blue_delta == 4
+    assert settings.live.player_veto_min_pixels == 8
+    assert settings.live.player_veto_min_width_px == 12
+    assert settings.live.player_veto_max_height_px == 24
+    assert settings.live.ice_mob_signature_enabled is True
+    assert settings.live.ice_mob_min_blue == 135
+    assert settings.live.ice_mob_min_green == 105
+    assert settings.live.ice_mob_min_brightness == 118
+    assert settings.live.ice_mob_blue_red_tolerance == 16
+    assert settings.live.ice_mob_min_pixels == 42
+    assert settings.live.ice_mob_min_ratio == 0.10
     assert settings.live.combat_indicator_min_ratio == 0.01
     assert settings.live.reward_min_ratio == 0.01
     assert settings.live.template_match_stride_px == 6

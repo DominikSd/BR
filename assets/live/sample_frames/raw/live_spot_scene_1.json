@@ -19,9 +19,9 @@
     },
     "expected_perception": {
       "min_target_count": 1,
-      "max_target_count": 6,
+      "max_target_count": 4,
       "min_free_target_count": 1,
-      "max_occupied_target_count": 2,
+      "max_occupied_target_count": 0,
       "expected_candidates": [
         {
           "screen_xy": [724, 813],
@@ -30,10 +30,7 @@
           "selected": true
         }
       ],
-      "occupied_target_screen_xy": [
-        [1865, 871],
-        [1862, 964]
-      ],
+      "occupied_target_screen_xy": [],
       "occupied_target_max_error_px": 56,
       "selected_target_required": true,
       "selected_target_must_be_free": true,

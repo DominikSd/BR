@@ -623,8 +623,10 @@ class PerceptionAnalyzer:
         detection_started_ts = frame.captured_at_ts
         detection_perf_started = self._clock()
         pipeline_mode = "pixel"
+        player_veto_rejections: tuple[dict[str, Any], ...] = ()
+        mob_signature_rejections: tuple[dict[str, Any], ...] = ()
         if frame.image is not None:
-            roi_hits, detections = self._run_marker_first_pipeline(
+            roi_hits, detections, player_veto_rejections, mob_signature_rejections = self._run_marker_first_pipeline(
                 frame=frame,
                 roi=roi,
                 reference_point_xy=reference_point_xy,
@@ -674,6 +676,8 @@ class PerceptionAnalyzer:
             raw_hits=roi_hits,
             detections=detections,
             unstable_rejections=unstable_rejections,
+            player_veto_rejections=player_veto_rejections,
+            mob_signature_rejections=mob_signature_rejections,
             selected_target=selected_target,
         )
 
@@ -697,7 +701,7 @@ class PerceptionAnalyzer:
             ),
             scene_name=None if calibrated_scene_profile is None else calibrated_scene_profile.scene_name,
             scene_zone_polygon=()
-            if calibrated_scene_profile is None
+            if calibrated_scene_profile is None or not self._live_config.scene_zone_overlay_visible
             else calibrated_scene_profile.spawn_zone_polygon,
             scene_calibration={}
             if calibrated_scene_profile is None
@@ -841,9 +845,14 @@ class PerceptionAnalyzer:
         frame: LiveFrame,
         roi: dict[str, Any],
         reference_point_xy: tuple[float, float],
-    ) -> tuple[tuple[TemplateHit, ...], tuple[LiveTargetDetection, ...]]:
+    ) -> tuple[
+        tuple[TemplateHit, ...],
+        tuple[LiveTargetDetection, ...],
+        tuple[dict[str, Any], ...],
+        tuple[dict[str, Any], ...],
+    ]:
         if Image is None or frame.image is None:
-            return (), ()
+            return (), (), (), ()
         image = frame.image.convert("RGB")
         template_pack = self._template_pack_loader.load()
         roi_box = (
@@ -867,6 +876,8 @@ class PerceptionAnalyzer:
 
         raw_hits: list[TemplateHit] = list(marker_hits)
         detections: list[LiveTargetDetection] = []
+        player_veto_rejections: list[dict[str, Any]] = []
+        mob_signature_rejections: list[dict[str, Any]] = []
         local_stride_px = max(1, min(4, stride_px))
         for index, marker_hit in enumerate(merged_marker_hits, start=1):
             occupied_roi_box = _build_local_roi_box(
@@ -930,6 +941,57 @@ class PerceptionAnalyzer:
             if best_confirmation is None:
                 continue
 
+            ice_signature = _detect_ice_mob_signature(
+                image=image,
+                bbox=best_confirmation.bbox,
+                live_config=self._live_config,
+            )
+            if self._live_config.ice_mob_signature_enabled and not bool(ice_signature.get("accepted", False)):
+                mob_signature_rejections.append(
+                    {
+                        "target_id": f"mob-signature-{index:03d}",
+                        "marker_bbox": list(marker_hit.bbox),
+                        "confirmation_bbox": list(best_confirmation.bbox),
+                        "mob_variant": best_confirmation.label,
+                        "confirmation_confidence": best_confirmation.confidence,
+                        "rejection_reason": "mob_signature_not_icy",
+                        "ice_pixel_count": int(ice_signature.get("ice_pixel_count", 0)),
+                        "ice_pixel_ratio": float(ice_signature.get("ice_pixel_ratio", 0.0)),
+                    }
+                )
+                continue
+
+            player_veto_roi_box = _build_local_roi_box(
+                anchor_x=best_confirmation.center_xy[0],
+                anchor_y=best_confirmation.bbox[1],
+                width=self._live_config.player_veto_roi_width_px,
+                height=self._live_config.player_veto_roi_height_px,
+                offset_y=self._live_config.player_veto_roi_offset_y_px,
+                frame_width=frame.width,
+                frame_height=frame.height,
+            )
+            player_veto = _detect_player_veto(
+                image=image,
+                box=player_veto_roi_box,
+                live_config=self._live_config,
+            )
+            if bool(player_veto.get("triggered", False)):
+                player_veto_rejections.append(
+                    {
+                        "target_id": f"player-veto-{index:03d}",
+                        "marker_bbox": list(marker_hit.bbox),
+                        "confirmation_bbox": list(best_confirmation.bbox),
+                        "player_veto_roi": list(player_veto_roi_box),
+                        "mob_variant": best_confirmation.label,
+                        "confirmation_confidence": best_confirmation.confidence,
+                        "rejection_reason": "player_veto_green_name",
+                        "green_pixel_count": int(player_veto.get("green_pixel_count", 0)),
+                        "green_pixel_ratio": float(player_veto.get("green_pixel_ratio", 0.0)),
+                        "green_bbox": player_veto.get("green_bbox"),
+                    }
+                )
+                continue
+
             occupied, occupied_confidence = classify_occupied(
                 mob_hit=best_confirmation,
                 occupied_hits=all_occupied_hits,
@@ -975,14 +1037,24 @@ class PerceptionAnalyzer:
                         "confirmation_vertical_gap_px": float(
                             best_confirmation.metadata.get("vertical_gap_px", 0.0)
                         ),
+                        "player_veto_roi": list(player_veto_roi_box),
+                        "player_veto_triggered": False,
                         "confirmation_template": best_confirmation.metadata.get("template_path"),
                         "variant_name": best_confirmation.metadata.get("variant_name"),
                         "raw_hit_count": int(best_confirmation.metadata.get("raw_hit_count", 1)),
+                        "ice_signature_pixel_count": int(ice_signature.get("ice_pixel_count", 0)),
+                        "ice_signature_ratio": float(ice_signature.get("ice_pixel_ratio", 0.0)),
+                        "ice_signature_passed": bool(ice_signature.get("accepted", False)),
                     },
                 )
             )
         ordered_detections = tuple(sorted(detections, key=lambda item: (item.distance, item.target_id)))
-        return tuple(raw_hits), ordered_detections
+        return (
+            tuple(raw_hits),
+            ordered_detections,
+            tuple(player_veto_rejections),
+            tuple(mob_signature_rejections),
+        )
 
     def _resolve_match_stride_px(self, frame: LiveFrame) -> int:
         override = frame.metadata.get("template_match_stride_px")
@@ -1207,6 +1279,8 @@ class PerceptionAnalyzer:
         raw_hits: tuple[TemplateHit, ...],
         detections: tuple[LiveTargetDetection, ...],
         unstable_rejections: tuple[LiveTargetDetection, ...],
+        player_veto_rejections: tuple[dict[str, Any], ...],
+        mob_signature_rejections: tuple[dict[str, Any], ...],
         selected_target: LiveTargetDetection | None,
     ) -> dict[str, Any]:
         low_confidence_hits: list[dict[str, Any]] = []
@@ -1278,7 +1352,8 @@ class PerceptionAnalyzer:
             f"merge_px={self._live_config.merge_distance_px} stride={self._live_config.template_match_stride_px}",
             "raw="
             f"{len(raw_hits)} low_conf={len(low_confidence_hits)} "
-            f"merged={len(detections)} dup={len(duplicate_hits)} unstable={len(unstable_entries)}",
+            f"merged={len(detections)} dup={len(duplicate_hits)} unstable={len(unstable_entries)} "
+            f"veto={len(player_veto_rejections)} not_icy={len(mob_signature_rejections)}",
             "rejects="
             f"occupied={len(occupied_rejections)} out_of_zone={len(out_of_zone_rejections)} "
             f"selected={None if selected_target is None else selected_target.target_id}",
@@ -1291,6 +1366,8 @@ class PerceptionAnalyzer:
             "occupied_rejections": occupied_rejections,
             "out_of_zone_rejections": out_of_zone_rejections,
             "unstable_rejections": unstable_entries,
+            "player_veto_rejections": list(player_veto_rejections),
+            "mob_signature_rejections": list(mob_signature_rejections),
             "final_candidates": candidate_entries,
             "selection_reason": None
             if selected_target is None
@@ -1508,6 +1585,48 @@ class PerceptionArtifactWriter:
                 lines.append(
                     f'<text x="{bbox[0]}" y="{max(14, bbox[1] - 4)}" fill="#e9d5ff" font-size="12">{entry.get("target_id")} unstable seen={entry.get("seen_frames")}</text>'
                 )
+        player_veto_rejections = result.diagnostics.get("player_veto_rejections", [])
+        if isinstance(player_veto_rejections, list):
+            for entry in player_veto_rejections:
+                marker_bbox = entry.get("marker_bbox")
+                confirmation_bbox = entry.get("confirmation_bbox")
+                veto_roi = entry.get("player_veto_roi")
+                green_bbox = entry.get("green_bbox")
+                if isinstance(marker_bbox, list) and len(marker_bbox) == 4:
+                    lines.append(
+                        f'<rect x="{marker_bbox[0]}" y="{marker_bbox[1]}" width="{marker_bbox[2]}" height="{marker_bbox[3]}" fill="none" stroke="#eab308" stroke-width="2" />'
+                    )
+                if isinstance(confirmation_bbox, list) and len(confirmation_bbox) == 4:
+                    lines.append(
+                        f'<rect x="{confirmation_bbox[0]}" y="{confirmation_bbox[1]}" width="{confirmation_bbox[2]}" height="{confirmation_bbox[3]}" fill="none" stroke="#f43f5e" stroke-width="2" stroke-dasharray="4 3" />'
+                    )
+                    lines.append(
+                        f'<text x="{confirmation_bbox[0]}" y="{max(14, confirmation_bbox[1] - 4)}" fill="#fecdd3" font-size="12">{entry.get("target_id")} player_veto green_px={entry.get("green_pixel_count")}</text>'
+                    )
+                if isinstance(veto_roi, list) and len(veto_roi) == 4:
+                    lines.append(
+                        f'<rect x="{veto_roi[0]}" y="{veto_roi[1]}" width="{veto_roi[2]}" height="{veto_roi[3]}" fill="none" stroke="#22c55e" stroke-width="1" stroke-dasharray="3 3" />'
+                    )
+                if isinstance(green_bbox, list) and len(green_bbox) == 4:
+                    lines.append(
+                        f'<rect x="{green_bbox[0]}" y="{green_bbox[1]}" width="{green_bbox[2]}" height="{green_bbox[3]}" fill="none" stroke="#4ade80" stroke-width="2" />'
+                    )
+        mob_signature_rejections = result.diagnostics.get("mob_signature_rejections", [])
+        if isinstance(mob_signature_rejections, list):
+            for entry in mob_signature_rejections:
+                marker_bbox = entry.get("marker_bbox")
+                confirmation_bbox = entry.get("confirmation_bbox")
+                if isinstance(marker_bbox, list) and len(marker_bbox) == 4:
+                    lines.append(
+                        f'<rect x="{marker_bbox[0]}" y="{marker_bbox[1]}" width="{marker_bbox[2]}" height="{marker_bbox[3]}" fill="none" stroke="#eab308" stroke-width="2" />'
+                    )
+                if isinstance(confirmation_bbox, list) and len(confirmation_bbox) == 4:
+                    lines.append(
+                        f'<rect x="{confirmation_bbox[0]}" y="{confirmation_bbox[1]}" width="{confirmation_bbox[2]}" height="{confirmation_bbox[3]}" fill="none" stroke="#fb923c" stroke-width="2" stroke-dasharray="4 3" />'
+                    )
+                    lines.append(
+                        f'<text x="{confirmation_bbox[0]}" y="{max(14, confirmation_bbox[1] - 4)}" fill="#fdba74" font-size="12">{entry.get("target_id")} not_icy ratio={float(entry.get("ice_pixel_ratio", 0.0)):.2f}</text>'
+                    )
         summary_lines = result.diagnostics.get("summary_lines", [])
         if isinstance(summary_lines, list) and summary_lines:
             base_y = max(110, frame.height - (len(summary_lines) * 18) - 12)
@@ -2028,6 +2147,119 @@ def _compute_marker_dark_core_ratio(
     return float(dark_pixels) / float(total_pixels)
 
 
+def _detect_player_veto(
+    *,
+    image: Any,
+    box: tuple[int, int, int, int],
+    live_config: LiveConfig,
+) -> dict[str, Any]:
+    if Image is None:
+        return {
+            "triggered": False,
+            "green_pixel_count": 0,
+            "green_pixel_ratio": 0.0,
+            "green_bbox": None,
+        }
+    left, top, width, height = box
+    if width <= 0 or height <= 0:
+        return {
+            "triggered": False,
+            "green_pixel_count": 0,
+            "green_pixel_ratio": 0.0,
+            "green_bbox": None,
+        }
+    roi = image.crop((left, top, left + width, top + height)).convert("RGB")
+    pixels = roi.load()
+    green_pixels = 0
+    min_x = width
+    min_y = height
+    max_x = -1
+    max_y = -1
+    for y in range(height):
+        for x in range(width):
+            red, green, blue = pixels[x, y]
+            if (
+                green >= live_config.player_veto_green_min_green
+                and (green - red) >= live_config.player_veto_green_red_delta
+                and (green - blue) >= live_config.player_veto_green_blue_delta
+            ):
+                green_pixels += 1
+                min_x = min(min_x, x)
+                min_y = min(min_y, y)
+                max_x = max(max_x, x)
+                max_y = max(max_y, y)
+    area = max(1, width * height)
+    green_ratio = float(green_pixels) / float(area)
+    green_bbox = None
+    bbox_width = 0
+    bbox_height = 0
+    if green_pixels > 0 and max_x >= min_x and max_y >= min_y:
+        bbox_width = max_x - min_x + 1
+        bbox_height = max_y - min_y + 1
+        green_bbox = [
+            left + min_x,
+            top + min_y,
+            bbox_width,
+            bbox_height,
+        ]
+    triggered = (
+        green_pixels >= live_config.player_veto_min_pixels
+        and bbox_width >= live_config.player_veto_min_width_px
+        and 0 < bbox_height <= live_config.player_veto_max_height_px
+    )
+    return {
+        "triggered": triggered,
+        "green_pixel_count": green_pixels,
+        "green_pixel_ratio": green_ratio,
+        "green_bbox": green_bbox,
+    }
+
+
+def _detect_ice_mob_signature(
+    *,
+    image: Any,
+    bbox: tuple[int, int, int, int],
+    live_config: LiveConfig,
+) -> dict[str, Any]:
+    left, top, width, height = bbox
+    if width <= 0 or height <= 0:
+        return {
+            "accepted": False,
+            "ice_pixel_count": 0,
+            "ice_pixel_ratio": 0.0,
+        }
+    crop = image.crop((left, top, left + width, top + height)).convert("RGB")
+    pixels = list(crop.getdata())
+    if not pixels:
+        return {
+            "accepted": False,
+            "ice_pixel_count": 0,
+            "ice_pixel_ratio": 0.0,
+        }
+
+    ice_pixels = 0
+    for red, green, blue in pixels:
+        brightness = (float(red) + float(green) + float(blue)) / 3.0
+        if (
+            blue >= live_config.ice_mob_min_blue
+            and green >= live_config.ice_mob_min_green
+            and brightness >= live_config.ice_mob_min_brightness
+            and (blue + live_config.ice_mob_blue_red_tolerance) >= red
+        ):
+            ice_pixels += 1
+
+    ice_ratio = ice_pixels / float(len(pixels))
+    accepted = (
+        ice_pixels >= live_config.ice_mob_min_pixels
+        and ice_ratio >= live_config.ice_mob_min_ratio
+    )
+    return {
+        "accepted": accepted,
+        "ice_pixel_count": ice_pixels,
+        "ice_pixel_ratio": ice_ratio,
+    }
+
+
 def _build_local_roi_box(
     *,
     anchor_x: float,
@@ -2258,6 +2490,12 @@ def _detect_green_swords_hits(
                 continue
             component_width = max_x - min_x + 1
             component_height = max_y - min_y + 1
+            if component_width < 3 or component_height < 3:
+                continue
+            if component_width > max(24, component_height * 2):
+                continue
+            if component_height > max(24, component_width * 2):
+                continue
             confidence = min(1.0, green_strength_sum / max(1.0, float(pixel_count)))
             if confidence < live_config.swords_confidence_threshold:
                 continue
@@ -2655,9 +2893,21 @@ def _build_detection_tuning_parameters(live_config: LiveConfig) -> dict[str, Any
         "candidate_confirmation_frames": live_config.candidate_confirmation_frames,
         "occupied_confirmation_frames": live_config.occupied_confirmation_frames,
         "candidate_loss_frames": live_config.candidate_loss_frames,
+        "player_veto_enabled": live_config.player_veto_enabled,
+        "player_veto_roi_width_px": live_config.player_veto_roi_width_px,
+        "player_veto_roi_height_px": live_config.player_veto_roi_height_px,
+        "player_veto_roi_offset_y_px": live_config.player_veto_roi_offset_y_px,
+        "ice_mob_signature_enabled": live_config.ice_mob_signature_enabled,
+        "ice_mob_min_blue": live_config.ice_mob_min_blue,
+        "ice_mob_min_green": live_config.ice_mob_min_green,
+        "ice_mob_min_brightness": live_config.ice_mob_min_brightness,
+        "ice_mob_blue_red_tolerance": live_config.ice_mob_blue_red_tolerance,
+        "ice_mob_min_pixels": live_config.ice_mob_min_pixels,
+        "ice_mob_min_ratio": live_config.ice_mob_min_ratio,
         "scene_profile_path": None
         if live_config.scene_profile_path is None
         else str(live_config.scene_profile_path),
+        "scene_zone_overlay_visible": live_config.scene_zone_overlay_visible,
     }
 
 
@@ -2710,6 +2960,8 @@ def _build_worst_frame_entries(
                         "occupied": len(result.diagnostics.get("occupied_rejections", [])),
                         "out_of_zone": len(result.diagnostics.get("out_of_zone_rejections", [])),
                         "unstable": len(result.diagnostics.get("unstable_rejections", [])),
+                        "player_veto": len(result.diagnostics.get("player_veto_rejections", [])),
+                        "mob_signature": len(result.diagnostics.get("mob_signature_rejections", [])),
                     },
                     "score": score,
                 },

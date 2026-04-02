@@ -85,6 +85,7 @@ class LiveConfig:
         default_factory=lambda: PROJECT_ROOT / "assets" / "live" / "sample_frames"
     )
     scene_profile_path: Path | None = None
+    scene_zone_overlay_visible: bool = True
     scene_calibration_offset_xy: tuple[int, int] = (0, 0)
     scene_reference_anchor_mode: str = "static"
     scene_reference_anchor_xy: tuple[int, int] = (0, 0)
@@ -156,6 +157,23 @@ class LiveConfig:
     confirmation_max_horizontal_offset_px: int = 56
     confirmation_min_vertical_offset_px: int = 12
     confirmation_max_vertical_offset_px: int = 180
+    player_veto_enabled: bool = True
+    player_veto_roi_width_px: int = 170
+    player_veto_roi_height_px: int = 52
+    player_veto_roi_offset_y_px: int = -40
+    player_veto_green_min_green: int = 120
+    player_veto_green_red_delta: int = 15
+    player_veto_green_blue_delta: int = 10
+    player_veto_min_pixels: int = 18
+    player_veto_min_width_px: int = 26
+    player_veto_max_height_px: int = 18
+    ice_mob_signature_enabled: bool = False
+    ice_mob_min_blue: int = 120
+    ice_mob_min_green: int = 110
+    ice_mob_min_brightness: int = 120
+    ice_mob_blue_red_tolerance: int = 16
+    ice_mob_min_pixels: int = 24
+    ice_mob_min_ratio: float = 0.08
     candidate_confirmation_frames: int = 1
     candidate_loss_frames: int = 2
     occupied_confirmation_frames: int = 1
@@ -285,6 +303,11 @@ def load_config(config_path: str | Path) -> Settings:
             live_section,
             "scene_profile_path",
             None,
+        ),
+        scene_zone_overlay_visible=_optional_bool(
+            live_section,
+            "scene_zone_overlay_visible",
+            True,
         ),
         scene_calibration_offset_xy=_optional_int_pair(
             live_section,
@@ -630,6 +653,103 @@ def load_config(config_path: str | Path) -> Settings:
             live_section,
             "confirmation_max_vertical_offset_px",
             180,
+        ),
+        player_veto_enabled=_optional_bool(
+            live_section,
+            "player_veto_enabled",
+            True,
+        ),
+        player_veto_roi_width_px=_optional_positive_int(
+            live_section,
+            "player_veto_roi_width_px",
+            170,
+        ),
+        player_veto_roi_height_px=_optional_positive_int(
+            live_section,
+            "player_veto_roi_height_px",
+            52,
+        ),
+        player_veto_roi_offset_y_px=_optional_int(
+            live_section,
+            "player_veto_roi_offset_y_px",
+            -40,
+        ),
+        player_veto_green_min_green=_optional_int_range(
+            live_section,
+            "player_veto_green_min_green",
+            120,
+            min_value=0,
+            max_value=255,
+        ),
+        player_veto_green_red_delta=_optional_int_range(
+            live_section,
+            "player_veto_green_red_delta",
+            15,
+            min_value=0,
+            max_value=255,
+        ),
+        player_veto_green_blue_delta=_optional_int_range(
+            live_section,
+            "player_veto_green_blue_delta",
+            10,
+            min_value=0,
+            max_value=255,
+        ),
+        player_veto_min_pixels=_optional_positive_int(
+            live_section,
+            "player_veto_min_pixels",
+            18,
+        ),
+        player_veto_min_width_px=_optional_positive_int(
+            live_section,
+            "player_veto_min_width_px",
+            26,
+        ),
+        player_veto_max_height_px=_optional_positive_int(
+            live_section,
+            "player_veto_max_height_px",
+            18,
+        ),
+        ice_mob_signature_enabled=_optional_bool(
+            live_section,
+            "ice_mob_signature_enabled",
+            False,
+        ),
+        ice_mob_min_blue=_optional_int_range(
+            live_section,
+            "ice_mob_min_blue",
+            120,
+            min_value=0,
+            max_value=255,
+        ),
+        ice_mob_min_green=_optional_int_range(
+            live_section,
+            "ice_mob_min_green",
+            110,
+            min_value=0,
+            max_value=255,
+        ),
+        ice_mob_min_brightness=_optional_int_range(
+            live_section,
+            "ice_mob_min_brightness",
+            120,
+            min_value=0,
+            max_value=255,
+        ),
+        ice_mob_blue_red_tolerance=_optional_positive_int(
+            live_section,
+            "ice_mob_blue_red_tolerance",
+            16,
+        ),
+        ice_mob_min_pixels=_optional_positive_int(
+            live_section,
+            "ice_mob_min_pixels",
+            24,
+        ),
+        ice_mob_min_ratio=_optional_ratio_float(
+            live_section,
+            "ice_mob_min_ratio",
+            0.08,
         ),
         candidate_confirmation_frames=_optional_positive_int(
             live_section,

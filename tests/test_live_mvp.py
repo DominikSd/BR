@@ -1897,6 +1897,139 @@ def test_marker_first_perception_rejects_large_yellow_blob_without_dark_core(
     assert len(result.detections) == 0
 
 
+def test_marker_first_perception_rejects_player_like_candidate_with_green_name_veto(
+    tmp_path: Path,
+) -> None:
+    from PIL import Image, ImageDraw
+
+    settings = _build_marker_first_settings(tmp_path)
+    settings = replace(
+        settings,
+        live=replace(
+            settings.live,
+            marker_color_mode="yellow",
+            marker_min_red=170,
+            marker_min_green=135,
+            marker_red_blue_delta=25,
+            marker_green_blue_delta=22,
+            marker_red_green_balance_delta=70,
+            player_veto_enabled=True,
+            player_veto_roi_width_px=170,
+            player_veto_roi_height_px=52,
+            player_veto_roi_offset_y_px=-38,
+            player_veto_green_min_green=120,
+            player_veto_green_red_delta=15,
+            player_veto_green_blue_delta=10,
+            player_veto_min_pixels=18,
+            player_veto_min_width_px=26,
+            player_veto_max_height_px=18,
+        ),
+    )
+    output_directory = tmp_path / "perception-player-veto"
+    frame_path = tmp_path / "player_veto_frame.png"
+    sidecar_path = tmp_path / "player_veto_frame.json"
+
+    frame_image = Image.new("RGB", (320, 240), color=(40, 40, 40))
+    draw = ImageDraw.Draw(frame_image)
+    mob_a_template = Image.open(settings.live.mobs_template_directory / "mob_a" / "base.png").convert("RGB")
+
+    frame_image.paste(mob_a_template, (150, 104))
+    draw.polygon([(159, 92), (163, 86), (167, 92), (163, 98)], fill=(230, 205, 32))
+    draw.rectangle((120, 82, 205, 94), fill=(20, 210, 40))
+
+    frame_image.save(frame_path)
+    sidecar_path.write_text(
+        json.dumps(
+            {
+                "captured_at_ts": 103.0,
+                "source": "player-veto-test",
+                "metadata": {
+                    "spawn_roi": [0, 0, 320, 240],
+                    "reference_point_xy": [160, 210],
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    runner = PerceptionAnalysisRunner(
+        live_config=settings.live,
+        output_directory=output_directory,
+    )
+    summary = runner.analyze_frame_path(frame_path)
+    result = summary.frame_results[0]
+
+    assert len(result.detections) == 0
+    vetoes = result.diagnostics.get("player_veto_rejections", [])
+    assert isinstance(vetoes, list)
+    assert len(vetoes) >= 1
+    assert vetoes[0]["rejection_reason"] == "player_veto_green_name"
+
+
+def test_marker_first_perception_rejects_non_icy_candidate_with_marker_present(
+    tmp_path: Path,
+) -> None:
+    from PIL import Image, ImageDraw
+
+    settings = _build_marker_first_settings(tmp_path)
+    settings = replace(
+        settings,
+        live=replace(
+            settings.live,
+            marker_color_mode="yellow",
+            confirmation_confidence_threshold=0.35,
+            ice_mob_signature_enabled=True,
+            ice_mob_min_blue=135,
+            ice_mob_min_green=105,
+            ice_mob_min_brightness=118,
+            ice_mob_blue_red_tolerance=16,
+            ice_mob_min_pixels=42,
+            ice_mob_min_ratio=0.10,
+        ),
+    )
+    output_directory = tmp_path / "perception-ice-signature"
+    frame_path = tmp_path / "ice_signature_frame.png"
+    sidecar_path = tmp_path / "ice_signature_frame.json"
+
+    frame_image = Image.new("RGB", (320, 240), color=(40, 40, 40))
+    draw = ImageDraw.Draw(frame_image)
+    draw.rectangle((150, 104, 167, 127), fill=(120, 78, 48))
+    draw.rectangle((154, 106, 162, 112), fill=(168, 138, 98))
+    draw.polygon([(159, 92), (163, 86), (167, 92), (163, 98)], fill=(230, 205, 32))
+
+    frame_image.save(frame_path)
+    sidecar_path.write_text(
+        json.dumps(
+            {
+                "captured_at_ts": 104.0,
+                "source": "ice-signature-test",
+                "metadata": {
+                    "spawn_roi": [0, 0, 320, 240],
+                    "reference_point_xy": [160, 210]
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    runner = PerceptionAnalysisRunner(
+        live_config=settings.live,
+        output_directory=output_directory,
+    )
+    summary = runner.analyze_frame_path(frame_path)
+    result = summary.frame_results[0]
+
+    assert len(result.detections) == 0
+    signature_rejections = result.diagnostics.get("mob_signature_rejections", [])
+    assert isinstance(signature_rejections, list)
+    assert len(signature_rejections) >= 1
+    assert signature_rejections[0]["rejection_reason"] == "mob_signature_not_icy"
+
+
 def test_live_preview_state_and_renderer_prepare_debug_overlay(tmp_path: Path) -> None:
     from PIL import Image, ImageDraw
 

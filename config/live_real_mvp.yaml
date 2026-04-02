@@ -32,7 +32,7 @@ live:
   enable_real_keys: false
   window_title: "BrokenRanks"
   capture_region: [0, 0, 0, 0]
-  spawn_roi: [0, 85, 1668, 845]
+  spawn_roi: [80, 40, 1450, 860]
   hp_bar_roi: [40, 40, 220, 18]
   condition_bar_roi: [40, 68, 220, 18]
   combat_indicator_roi: [560, 620, 160, 60]
@@ -48,9 +48,10 @@ live:
   sample_frames_directory: "assets/live/sample_frames/raw"
   benchmark_dataset_directory: "assets/live/sample_frames"
   scene_profile_path: "assets/live/scenes/single_spot_scene.json"
+  scene_zone_overlay_visible: false
   scene_calibration_offset_xy: [0, 0]
   scene_reference_anchor_mode: "frame_center"
-  scene_reference_anchor_xy: [1024, 576]
+  scene_reference_anchor_xy: [960, 520]
   mobs_template_directory: "assets/live/templates/mobs"
   occupied_template_directory: "assets/live/templates/occupied"
   template_match_stride_px: 6
@@ -103,6 +104,23 @@ live:
   confirmation_max_horizontal_offset_px: 56
   confirmation_min_vertical_offset_px: 12
   confirmation_max_vertical_offset_px: 180
+  player_veto_enabled: true
+  player_veto_roi_width_px: 190
+  player_veto_roi_height_px: 70
+  player_veto_roi_offset_y_px: -28
+  player_veto_green_min_green: 105
+  player_veto_green_red_delta: 8
+  player_veto_green_blue_delta: 4
+  player_veto_min_pixels: 8
+  player_veto_min_width_px: 12
+  player_veto_max_height_px: 24
+  ice_mob_signature_enabled: true
+  ice_mob_min_blue: 135
+  ice_mob_min_green: 105
+  ice_mob_min_brightness: 118
+  ice_mob_blue_red_tolerance: 16
+  ice_mob_min_pixels: 42
+  ice_mob_min_ratio: 0.10
   candidate_confirmation_frames: 1
   candidate_loss_frames: 2
   occupied_confirmation_frames: 1

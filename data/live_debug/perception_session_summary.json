@@ -9,10 +9,10 @@
     "p95_ms": 2.0
   },
   "detection_latency": {
-    "avg_ms": 7.014074999851516,
+    "avg_ms": 7.012400000057539,
     "count": 4,
     "max_ms": 10.99999999999568,
-    "min_ms": 0.0562999994144775,
+    "min_ms": 0.04960000023856992,
     "name": "detection_latency_ms",
     "p50_ms": 8.000000000009777,
     "p95_ms": 10.99999999999568
@@ -113,8 +113,10 @@
           }
         ],
         "low_confidence_hits": [],
+        "mob_signature_rejections": [],
         "occupied_rejections": [],
         "out_of_zone_rejections": [],
+        "player_veto_rejections": [],
         "raw_hit_summary": {
           "mob_a": 1,
           "mob_b": 1
@@ -122,18 +124,30 @@
         "selection_reason": "nearest_free_in_zone_reachable_target",
         "summary_lines": [
           "thresholds=mob>=0.60 occupied>=0.75 merge_px=28 stride=4",
-          "raw=2 low_conf=0 merged=2 dup=0 unstable=0",
+          "raw=2 low_conf=0 merged=2 dup=0 unstable=0 veto=0 not_icy=0",
           "rejects=occupied=0 out_of_zone=0 selected=front-free"
         ],
         "tuning_parameters": {
           "candidate_confirmation_frames": 1,
           "candidate_loss_frames": 2,
           "confirmation_confidence_threshold": 0.6,
+          "ice_mob_blue_red_tolerance": 16,
+          "ice_mob_min_blue": 120,
+          "ice_mob_min_brightness": 120,
+          "ice_mob_min_green": 110,
+          "ice_mob_min_pixels": 24,
+          "ice_mob_min_ratio": 0.08,
+          "ice_mob_signature_enabled": false,
           "merge_distance_px": 28,
           "occupied_confidence_threshold": 0.75,
           "occupied_confirmation_frames": 1,
           "perception_confidence_threshold": 0.75,
+          "player_veto_enabled": true,
+          "player_veto_roi_height_px": 52,
+          "player_veto_roi_offset_y_px": -40,
+          "player_veto_roi_width_px": 170,
           "scene_profile_path": null,
+          "scene_zone_overlay_visible": true,
           "template_match_stride_px": 4,
           "template_rotations_deg": [
             0,
@@ -223,24 +237,38 @@
         "duplicate_merges": [],
         "final_candidates": [],
         "low_confidence_hits": [],
+        "mob_signature_rejections": [],
         "occupied_rejections": [],
         "out_of_zone_rejections": [],
+        "player_veto_rejections": [],
         "raw_hit_summary": {},
         "selection_reason": null,
         "summary_lines": [
           "thresholds=mob>=0.60 occupied>=0.75 merge_px=28 stride=4",
-          "raw=0 low_conf=0 merged=0 dup=0 unstable=0",
+          "raw=0 low_conf=0 merged=0 dup=0 unstable=0 veto=0 not_icy=0",
           "rejects=occupied=0 out_of_zone=0 selected=None"
         ],
         "tuning_parameters": {
           "candidate_confirmation_frames": 1,
           "candidate_loss_frames": 2,
           "confirmation_confidence_threshold": 0.6,
+          "ice_mob_blue_red_tolerance": 16,
+          "ice_mob_min_blue": 120,
+          "ice_mob_min_brightness": 120,
+          "ice_mob_min_green": 110,
+          "ice_mob_min_pixels": 24,
+          "ice_mob_min_ratio": 0.08,
+          "ice_mob_signature_enabled": false,
           "merge_distance_px": 28,
           "occupied_confidence_threshold": 0.75,
           "occupied_confirmation_frames": 1,
           "perception_confidence_threshold": 0.75,
+          "player_veto_enabled": true,
+          "player_veto_roi_height_px": 52,
+          "player_veto_roi_offset_y_px": -40,
+          "player_veto_roi_width_px": 170,
           "scene_profile_path": null,
+          "scene_zone_overlay_visible": true,
           "template_match_stride_px": 4,
           "template_rotations_deg": [
             0,
@@ -347,26 +375,40 @@
           }
         ],
         "low_confidence_hits": [],
+        "mob_signature_rejections": [],
         "occupied_rejections": [],
         "out_of_zone_rejections": [],
+        "player_veto_rejections": [],
         "raw_hit_summary": {
           "mob_b": 1
         },
         "selection_reason": "nearest_free_in_zone_reachable_target",
         "summary_lines": [
           "thresholds=mob>=0.60 occupied>=0.75 merge_px=28 stride=4",
-          "raw=1 low_conf=0 merged=1 dup=0 unstable=0",
+          "raw=1 low_conf=0 merged=1 dup=0 unstable=0 veto=0 not_icy=0",
           "rejects=occupied=0 out_of_zone=0 selected=front-free"
         ],
         "tuning_parameters": {
           "candidate_confirmation_frames": 1,
           "candidate_loss_frames": 2,
           "confirmation_confidence_threshold": 0.6,
+          "ice_mob_blue_red_tolerance": 16,
+          "ice_mob_min_blue": 120,
+          "ice_mob_min_brightness": 120,
+          "ice_mob_min_green": 110,
+          "ice_mob_min_pixels": 24,
+          "ice_mob_min_ratio": 0.08,
+          "ice_mob_signature_enabled": false,
           "merge_distance_px": 28,
           "occupied_confidence_threshold": 0.75,
           "occupied_confirmation_frames": 1,
           "perception_confidence_threshold": 0.75,
+          "player_veto_enabled": true,
+          "player_veto_roi_height_px": 52,
+          "player_veto_roi_offset_y_px": -40,
+          "player_veto_roi_width_px": 170,
           "scene_profile_path": null,
+          "scene_zone_overlay_visible": true,
           "template_match_stride_px": 4,
           "template_rotations_deg": [
             0,
@@ -422,14 +464,14 @@
       "selectable_target_count": 1,
       "selected_target_id": "front-free",
       "timings": {
-        "action_ready_ts": 160.68644810084248,
-        "detection_finished_ts": 160.6864446008413,
-        "detection_latency_ms": 0.0562999994144775,
+        "action_ready_ts": 160.68644220084212,
+        "detection_finished_ts": 160.68643790084212,
+        "detection_latency_ms": 0.04960000023856992,
         "detection_started_ts": 160.68638830084188,
         "frame_captured_ts": 160.68638830084188,
-        "selection_latency_ms": 0.0035000011848751456,
-        "target_selected_ts": 160.68644810084248,
-        "total_reaction_latency_ms": 0.05980000059935264
+        "selection_latency_ms": 0.004300000000512227,
+        "target_selected_ts": 160.68644220084212,
+        "total_reaction_latency_ms": 0.053900000239082146
       }
     },
     {
@@ -526,8 +568,10 @@
           }
         ],
         "low_confidence_hits": [],
+        "mob_signature_rejections": [],
         "occupied_rejections": [],
         "out_of_zone_rejections": [],
+        "player_veto_rejections": [],
         "raw_hit_summary": {
           "mob_a": 1,
           "mob_b": 1
@@ -535,18 +579,30 @@
         "selection_reason": "nearest_free_in_zone_reachable_target",
         "summary_lines": [
           "thresholds=mob>=0.60 occupied>=0.75 merge_px=28 stride=4",
-          "raw=2 low_conf=0 merged=2 dup=0 unstable=0",
+          "raw=2 low_conf=0 merged=2 dup=0 unstable=0 veto=0 not_icy=0",
           "rejects=occupied=0 out_of_zone=0 selected=front-free"
         ],
         "tuning_parameters": {
           "candidate_confirmation_frames": 1,
           "candidate_loss_frames": 2,
           "confirmation_confidence_threshold": 0.6,
+          "ice_mob_blue_red_tolerance": 16,
+          "ice_mob_min_blue": 120,
+          "ice_mob_min_brightness": 120,
+          "ice_mob_min_green": 110,
+          "ice_mob_min_pixels": 24,
+          "ice_mob_min_ratio": 0.08,
+          "ice_mob_signature_enabled": false,
           "merge_distance_px": 28,
           "occupied_confidence_threshold": 0.75,
           "occupied_confirmation_frames": 1,
           "perception_confidence_threshold": 0.75,
+          "player_veto_enabled": true,
+          "player_veto_roi_height_px": 52,
+          "player_veto_roi_offset_y_px": -40,
+          "player_veto_roi_width_px": 170,
           "scene_profile_path": null,
+          "scene_zone_overlay_visible": true,
           "template_match_stride_px": 4,
           "template_rotations_deg": [
             0,
@@ -653,20 +709,20 @@
     "p95_ms": 0.0
   },
   "selection_latency": {
-    "avg_ms": 2.0008750002915576,
+    "avg_ms": 2.001074999995467,
     "count": 4,
     "max_ms": 2.999999999985903,
-    "min_ms": 0.0035000011848751456,
+    "min_ms": 0.004300000000512227,
     "name": "selection_latency_ms",
     "p50_ms": 2.0000000000095497,
     "p95_ms": 2.999999999985903
   },
   "strict_pixel_only": false,
   "total_reaction_latency": {
-    "avg_ms": 10.014950000147849,
+    "avg_ms": 10.013475000057781,
     "count": 4,
     "max_ms": 15.999999999991132,
-    "min_ms": 0.05980000059935264,
+    "min_ms": 0.053900000239082146,
     "name": "total_reaction_latency_ms",
     "p50_ms": 11.000000000024102,
     "p95_ms": 15.999999999991132
@@ -675,11 +731,23 @@
     "candidate_confirmation_frames": 1,
     "candidate_loss_frames": 2,
     "confirmation_confidence_threshold": 0.6,
+    "ice_mob_blue_red_tolerance": 16,
+    "ice_mob_min_blue": 120,
+    "ice_mob_min_brightness": 120,
+    "ice_mob_min_green": 110,
+    "ice_mob_min_pixels": 24,
+    "ice_mob_min_ratio": 0.08,
+    "ice_mob_signature_enabled": false,
     "merge_distance_px": 28,
     "occupied_confidence_threshold": 0.75,
     "occupied_confirmation_frames": 1,
     "perception_confidence_threshold": 0.75,
+    "player_veto_enabled": true,
+    "player_veto_roi_height_px": 52,
+    "player_veto_roi_offset_y_px": -40,
+    "player_veto_roi_width_px": 170,
     "scene_profile_path": null,
+    "scene_zone_overlay_visible": true,
     "template_match_stride_px": 4,
     "template_rotations_deg": [
       0,
@@ -698,8 +766,10 @@
       "out_of_zone_target_count": 0,
       "rejection_summary": {
         "low_confidence": 0,
+        "mob_signature": 0,
         "occupied": 0,
         "out_of_zone": 0,
+        "player_veto": 0,
         "unstable": 0
       },
       "score": 0.06399999999996453,
@@ -717,8 +787,10 @@
       "out_of_zone_target_count": 0,
       "rejection_summary": {
         "low_confidence": 0,
+        "mob_signature": 0,
         "occupied": 0,
         "out_of_zone": 0,
+        "player_veto": 0,
         "unstable": 0
       },
       "score": 0.05199999999990723,
@@ -736,8 +808,10 @@
       "out_of_zone_target_count": 0,
       "rejection_summary": {
         "low_confidence": 0,
+        "mob_signature": 0,
         "occupied": 0,
         "out_of_zone": 0,
+        "player_veto": 0,
         "unstable": 0
       },
       "score": 0.044000000000096406,
@@ -747,7 +821,7 @@
       "total_reaction_latency_ms": 11.000000000024102
     },
     {
-      "detection_latency_ms": 0.0562999994144775,
+      "detection_latency_ms": 0.04960000023856992,
       "false_negative_count": 0,
       "false_positive_count": 0,
       "frame_source": "dry_run:engage_timeout",
@@ -755,15 +829,17 @@
       "out_of_zone_target_count": 0,
       "rejection_summary": {
         "low_confidence": 0,
+        "mob_signature": 0,
         "occupied": 0,
         "out_of_zone": 0,
+        "player_veto": 0,
         "unstable": 0
       },
-      "score": 0.00023920000239741057,
+      "score": 0.00021560000095632859,
       "selected_target_correct": null,
       "selected_target_id": "front-free",
-      "selection_latency_ms": 0.0035000011848751456,
-      "total_reaction_latency_ms": 0.05980000059935264
+      "selection_latency_ms": 0.004300000000512227,
+      "total_reaction_latency_ms": 0.053900000239082146
     }
   ]
 }
