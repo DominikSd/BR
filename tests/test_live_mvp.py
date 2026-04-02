@@ -31,7 +31,7 @@ from botlab.adapters.live.perception import (
     TemplateHit,
     TemplatePackLoader,
 )
-from botlab.adapters.live.vision import SimpleStateDetector, extract_named_roi
+from botlab.adapters.live.vision import LiveResourceProvider, SimpleStateDetector, extract_named_roi
 from botlab.application.dto import (
     TargetApproachResult,
     TargetEngagementResult,
@@ -477,6 +477,123 @@ def test_scene_profile_loader_reads_single_spot_profile() -> None:
     assert len(profile.spawn_zone_polygon) >= 4
     assert profile.reference_frame_path is not None
     assert profile.reference_frame_path.name == "live_spot_scene_1.png"
+
+
+def test_scene_profile_calibration_scales_polygon_and_reference_point(tmp_path: Path) -> None:
+    from PIL import Image
+
+    reference_path = tmp_path / "reference_scene.png"
+    Image.new("RGB", (200, 100), color=(0, 0, 0)).save(reference_path)
+    profile_path = tmp_path / "scene_profile.json"
+    profile_path.write_text(
+        json.dumps(
+            {
+                "scene_name": "scaled_scene",
+                "reference_frame_path": str(reference_path),
+                "reference_point_xy": [100, 50],
+                "spawn_zone_polygon": [
+                    [20, 10],
+                    [180, 10],
+                    [180, 90],
+                    [20, 90],
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    profile = SceneProfileLoader(profile_path).load()
+
+    assert profile is not None
+    calibrated = profile.calibrate(frame_width=100, frame_height=50, offset_xy=(10, 4))
+
+    assert calibrated.reference_frame_size == (200, 100)
+    assert calibrated.frame_size == (100, 50)
+    assert calibrated.scale_x == pytest.approx(0.5)
+    assert calibrated.scale_y == pytest.approx(0.5)
+    assert calibrated.reference_point_xy == pytest.approx((60.0, 29.0))
+    assert calibrated.spawn_zone_polygon[0] == pytest.approx((20.0, 9.0))
+    assert calibrated.spawn_zone_polygon[2] == pytest.approx((100.0, 49.0))
+
+
+def test_scene_calibration_is_applied_before_zone_filtering(tmp_path: Path) -> None:
+    from PIL import Image
+
+    settings = _build_live_settings(tmp_path)
+    reference_path = tmp_path / "reference_scene.png"
+    Image.new("RGB", (200, 100), color=(0, 0, 0)).save(reference_path)
+    scene_profile_path = tmp_path / "scene_profile.json"
+    scene_profile_path.write_text(
+        json.dumps(
+            {
+                "scene_name": "scaled_scene",
+                "reference_frame_path": str(reference_path),
+                "reference_point_xy": [100, 90],
+                "spawn_zone_polygon": [
+                    [20, 10],
+                    [180, 10],
+                    [180, 90],
+                    [20, 90],
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    settings = replace(settings, live=replace(settings.live, scene_profile_path=scene_profile_path))
+    frame_path = tmp_path / "scaled_scene_frame.json"
+    frame_path.write_text(
+        json.dumps(
+            {
+                "width": 100,
+                "height": 50,
+                "captured_at_ts": 12.0,
+                "source": "scene-calibration-fixture",
+                "metadata": {
+                    "spawn_roi": [0, 0, 100, 50],
+                    "template_hits": [
+                        {
+                            "label": "mob_a",
+                            "x": 38,
+                            "y": 16,
+                            "width": 16,
+                            "height": 16,
+                            "confidence": 0.95,
+                            "target_id": "inside-calibrated",
+                        },
+                        {
+                            "label": "mob_b",
+                            "x": -4,
+                            "y": 16,
+                            "width": 16,
+                            "height": 16,
+                            "confidence": 0.94,
+                            "target_id": "outside-calibrated",
+                        },
+                    ],
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    runner = PerceptionAnalysisRunner(
+        live_config=settings.live,
+        output_directory=tmp_path / "perception-scene-calibration",
+    )
+
+    summary = runner.analyze_frame_path(frame_path)
+    result = summary.frame_results[0]
+
+    assert result.scene_name == "scaled_scene"
+    assert result.scene_calibration["frame_size"] == [100, 50]
+    assert result.selected_target_id == "inside-calibrated"
+    assert [target.target_id for target in result.out_of_zone_detections] == ["outside-calibrated"]
 
 
 def test_scene_aware_perception_rejects_out_of_zone_targets_and_selects_nearest_in_zone(
@@ -1134,11 +1251,94 @@ def test_simple_state_detector_can_detect_combat_indicator_from_pixels(tmp_path:
     assert state.reward_visible is False
 
 
+def test_live_resource_provider_reads_hp_and_condition_from_pixels(tmp_path: Path) -> None:
+    from PIL import Image, ImageDraw
+
+    settings = _build_live_settings(tmp_path)
+    image = Image.new("RGB", (1280, 720), color=(10, 10, 10))
+    draw = ImageDraw.Draw(image)
+    hp_roi = settings.live.hp_bar_roi
+    condition_roi = settings.live.condition_bar_roi
+    draw.rectangle(
+        (
+            hp_roi[0],
+            hp_roi[1],
+            hp_roi[0] + int(hp_roi[2] * 0.50),
+            hp_roi[1] + hp_roi[3] - 1,
+        ),
+        fill=(220, 30, 30),
+    )
+    draw.rectangle(
+        (
+            condition_roi[0],
+            condition_roi[1],
+            condition_roi[0] + int(condition_roi[2] * 0.75),
+            condition_roi[1] + condition_roi[3] - 1,
+        ),
+        fill=(40, 200, 40),
+    )
+    frame = LiveFrame(
+        width=1280,
+        height=720,
+        captured_at_ts=1.0,
+        source="resource-bars",
+        metadata={
+            "hp_ratio": 1.0,
+            "condition_ratio": 1.0,
+        },
+        image=image,
+    )
+
+    resources = LiveResourceProvider(settings.live).read_resources(frame)
+
+    assert resources.metadata["source"] == "pixel"
+    assert resources.hp_ratio == pytest.approx(0.5, rel=0.05)
+    assert resources.condition_ratio == pytest.approx(0.75, rel=0.05)
+
+
+def test_simple_state_detector_can_detect_reward_from_pixels(tmp_path: Path) -> None:
+    from PIL import Image, ImageDraw
+
+    settings = _build_live_settings(tmp_path)
+    image = Image.new("RGB", (1280, 720), color=(10, 10, 10))
+    draw = ImageDraw.Draw(image)
+    roi = settings.live.reward_roi
+    draw.rectangle(
+        (
+            roi[0] + 12,
+            roi[1] + 12,
+            roi[0] + 92,
+            roi[1] + 54,
+        ),
+        fill=(230, 180, 60),
+    )
+    frame = LiveFrame(
+        width=1280,
+        height=720,
+        captured_at_ts=1.0,
+        source="reward-pixels",
+        metadata={
+            "reward_visible": False,
+        },
+        image=image,
+    )
+
+    state = SimpleStateDetector(settings.live).detect_state(frame)
+
+    assert state.reward_visible is True
+    assert state.metadata["source"] == "pixel"
+
+
 def test_live_input_driver_real_path_plumbing_can_be_mocked(monkeypatch) -> None:
     import logging
 
     logger = logging.getLogger("botlab.live.test.input")
-    driver = LiveInputDriver(logger=logger, dry_run=False, screen_offset_xy=(100, 200))
+    driver = LiveInputDriver(
+        logger=logger,
+        dry_run=False,
+        enable_real_clicks=True,
+        screen_offset_xy=(100, 200),
+    )
     calls: list[tuple[int, int]] = []
 
     def fake_perform_right_click(*, absolute_x: int, absolute_y: int) -> str:
@@ -1159,6 +1359,46 @@ def test_live_input_driver_real_path_plumbing_can_be_mocked(monkeypatch) -> None
     assert driver.events[-1].payload["execution_status"] == "real_click_sent"
     assert driver.events[-1].payload["absolute_x"] == 720
     assert driver.events[-1].payload["absolute_y"] == 500
+
+
+def test_live_input_driver_real_key_path_can_be_mocked(monkeypatch) -> None:
+    import logging
+
+    logger = logging.getLogger("botlab.live.test.keys")
+    driver = LiveInputDriver(
+        logger=logger,
+        dry_run=False,
+        enable_real_keys=True,
+    )
+    pressed_keys: list[str] = []
+
+    def fake_perform_key_press(*, key: str) -> str:
+        pressed_keys.append(key)
+        return "real_key_sent"
+
+    monkeypatch.setattr(driver, "_perform_key_press", fake_perform_key_press)
+
+    driver.press_key("r")
+    driver.press_sequence(("1", "space"))
+
+    assert pressed_keys == ["r", "1", "space"]
+    assert driver.events[0].payload["execution_status"] == "real_key_sent"
+    assert driver.events[1].payload["execution_statuses"] == ["real_key_sent", "real_key_sent"]
+
+
+def test_live_input_driver_does_not_send_real_keys_when_disabled() -> None:
+    import logging
+
+    logger = logging.getLogger("botlab.live.test.keys.disabled")
+    driver = LiveInputDriver(
+        logger=logger,
+        dry_run=False,
+        enable_real_keys=False,
+    )
+
+    driver.press_key("r")
+
+    assert driver.events[-1].payload["execution_status"] == "real_keys_disabled"
 
 
 def test_marker_first_pipeline_can_smoke_test_real_sample_frame_if_present(tmp_path: Path) -> None:
@@ -1498,6 +1738,37 @@ def test_live_runner_dry_run_engage_attempts_produce_artifacts_and_records(tmp_p
     assert (settings.live.debug_directory / "engage" / "engage_results.jsonl").exists() is True
     assert (settings.live.debug_directory / "engage" / "engage_session_summary.json").exists() is True
     assert runner.storage.count_rows("attempts") == 1
+
+
+def test_live_runner_engage_quality_gate_rejects_unstable_target_before_click(
+    tmp_path: Path,
+) -> None:
+    settings = _build_live_settings(tmp_path)
+    settings = replace(
+        settings,
+        live=replace(
+            settings.live,
+            engage_min_seen_frames=2,
+        ),
+    )
+    runner = LiveRunner.from_settings(
+        settings,
+        initial_anchor_spawn_ts=100.0,
+        initial_anchor_cycle_id=0,
+        enable_console=False,
+    )
+
+    report = runner.run_engage_attempts(1)
+    result = report.results[0]
+    payload = json.loads(
+        result.artifact_paths["engage_result_json"].read_text(encoding="utf-8")
+    )
+
+    assert result.outcome is LiveEngageOutcome.NO_TARGET_AVAILABLE
+    assert result.reason == "engage_quality_gate_not_stable"
+    assert payload["metadata"]["engage_quality_gate_rejected"] is True
+    assert payload["metadata"]["target_seen_frames"] == 1
+    assert all(event["action"] != "right_click_target" for event in payload["input_events"])
 
 
 @pytest.mark.parametrize(

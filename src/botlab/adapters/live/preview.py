@@ -61,6 +61,9 @@ def build_live_preview_state(
             else "selected_info=None"
         ),
     ]
+    calibration_warning = result.scene_calibration.get("warning")
+    if isinstance(calibration_warning, str) and calibration_warning.strip():
+        headline_lines.append(f"scene_calibration_warning={calibration_warning}")
     if engage_result is not None:
         headline_lines.append(
             "engage="

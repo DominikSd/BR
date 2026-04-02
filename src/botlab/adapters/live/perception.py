@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from botlab.adapters.live.models import LiveFrame, LiveTargetDetection
-from botlab.adapters.live.scene import SceneProfile, SceneProfileLoader
+from botlab.adapters.live.scene import CalibratedSceneProfile, SceneProfile, SceneProfileLoader
 from botlab.adapters.live.vision import (
     extract_named_roi,
     filter_occupied_targets,
@@ -327,6 +327,7 @@ class PerceptionFrameResult:
     timings: ReactionLatency
     scene_name: str | None = None
     scene_zone_polygon: tuple[tuple[float, float], ...] = ()
+    scene_calibration: dict[str, Any] = field(default_factory=dict)
     pipeline_mode: str = "pixel"
     expectations: dict[str, Any] = field(default_factory=dict)
     ground_truth: dict[str, Any] = field(default_factory=dict)
@@ -394,6 +395,7 @@ class PerceptionFrameResult:
             "scene_zone_polygon": [
                 [point_x, point_y] for point_x, point_y in self.scene_zone_polygon
             ],
+            "scene_calibration": self.scene_calibration,
             "raw_hits": [
                 {
                     "label": hit.label,
@@ -600,7 +602,14 @@ class PerceptionAnalyzer:
     ) -> PerceptionFrameResult:
         roi = extract_named_roi(frame, roi_name="spawn_roi", live_config=self._live_config)
         scene_profile = self._scene_profile_loader.load()
-        reference_point_xy = _resolve_reference_point(frame, scene_profile=scene_profile)
+        calibrated_scene_profile = self._calibrate_scene_profile(
+            scene_profile=scene_profile,
+            frame=frame,
+        )
+        reference_point_xy = _resolve_reference_point(
+            frame,
+            scene_profile=calibrated_scene_profile,
+        )
 
         detection_started_ts = frame.captured_at_ts
         detection_perf_started = self._clock()
@@ -626,7 +635,7 @@ class PerceptionAnalyzer:
         detections = self._smooth_detections(detections)
         detections = self._apply_scene_zone_filter(
             detections=detections,
-            scene_profile=scene_profile,
+            scene_profile=calibrated_scene_profile,
         )
         detection_finished_ts = detection_started_ts + self._resolve_duration_s(
             frame=frame,
@@ -671,10 +680,13 @@ class PerceptionAnalyzer:
                 target_selected_ts=selection_finished_ts,
                 action_ready_ts=action_ready_ts,
             ),
-            scene_name=None if scene_profile is None else scene_profile.scene_name,
+            scene_name=None if calibrated_scene_profile is None else calibrated_scene_profile.scene_name,
             scene_zone_polygon=()
-            if scene_profile is None
-            else scene_profile.spawn_zone_polygon,
+            if calibrated_scene_profile is None
+            else calibrated_scene_profile.spawn_zone_polygon,
+            scene_calibration={}
+            if calibrated_scene_profile is None
+            else calibrated_scene_profile.to_dict(),
             pipeline_mode=pipeline_mode,
             expectations=dict(frame.metadata.get("expected_perception", {})),
             ground_truth=dict(frame.metadata.get("ground_truth", {})),
@@ -751,7 +763,7 @@ class PerceptionAnalyzer:
         self,
         *,
         detections: tuple[LiveTargetDetection, ...],
-        scene_profile: SceneProfile | None,
+        scene_profile: CalibratedSceneProfile | None,
     ) -> tuple[LiveTargetDetection, ...]:
         if scene_profile is None:
             return detections
@@ -772,6 +784,20 @@ class PerceptionAnalyzer:
                 )
             )
         return tuple(filtered_detections)
+
+    def _calibrate_scene_profile(
+        self,
+        *,
+        scene_profile: SceneProfile | None,
+        frame: LiveFrame,
+    ) -> CalibratedSceneProfile | None:
+        if scene_profile is None:
+            return None
+        return scene_profile.calibrate(
+            frame_width=frame.width,
+            frame_height=frame.height,
+            offset_xy=self._live_config.scene_calibration_offset_xy,
+        )
 
     def _run_marker_first_pipeline(
         self,

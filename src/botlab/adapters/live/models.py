@@ -36,6 +36,7 @@ class LiveFrame:
 class LiveResourceSnapshot:
     hp_ratio: float
     condition_ratio: float
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True, frozen=True)
@@ -43,6 +44,7 @@ class LiveStateSnapshot:
     in_combat: bool
     reward_visible: bool
     rest_available: bool
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

@@ -154,11 +154,89 @@ class LiveResourceProvider:
         self._live_config = live_config
 
     def read_resources(self, frame: LiveFrame) -> LiveResourceSnapshot:
-        extract_named_roi(frame, roi_name="hp_bar_roi", live_config=self._live_config)
-        extract_named_roi(frame, roi_name="condition_bar_roi", live_config=self._live_config)
+        hp_roi = extract_named_roi(frame, roi_name="hp_bar_roi", live_config=self._live_config)
+        condition_roi = extract_named_roi(
+            frame,
+            roi_name="condition_bar_roi",
+            live_config=self._live_config,
+        )
+        if frame.image is not None and Image is not None:
+            hp_ratio, hp_metadata = self._read_hp_ratio_from_pixels(frame, hp_roi)
+            condition_ratio, condition_metadata = self._read_condition_ratio_from_pixels(
+                frame,
+                condition_roi,
+            )
+            return LiveResourceSnapshot(
+                hp_ratio=hp_ratio,
+                condition_ratio=condition_ratio,
+                metadata={
+                    "source": "pixel",
+                    "hp": hp_metadata,
+                    "condition": condition_metadata,
+                },
+            )
         return LiveResourceSnapshot(
             hp_ratio=float(frame.metadata.get("hp_ratio", 1.0)),
             condition_ratio=float(frame.metadata.get("condition_ratio", 1.0)),
+            metadata={
+                "source": "metadata_fallback",
+                "hp": {"roi": hp_roi},
+                "condition": {"roi": condition_roi},
+            },
+        )
+
+    def _read_hp_ratio_from_pixels(
+        self,
+        frame: LiveFrame,
+        roi: dict[str, Any],
+    ) -> tuple[float, dict[str, Any]]:
+        fill_ratio, matching_pixels, total_pixels = _compute_bar_fill_ratio(
+            frame=frame,
+            roi=roi,
+            matcher=lambda red_value, green_value, blue_value: (
+                red_value >= self._live_config.hp_bar_min_red
+                and (red_value - green_value) >= self._live_config.hp_bar_red_green_delta
+                and (red_value - blue_value) >= self._live_config.hp_bar_red_blue_delta
+            ),
+        )
+        normalized_ratio = fill_ratio if fill_ratio >= self._live_config.hp_bar_min_fill_ratio else 0.0
+        return (
+            normalized_ratio,
+            {
+                "roi": roi,
+                "fill_ratio": fill_ratio,
+                "normalized_ratio": normalized_ratio,
+                "matching_pixels": matching_pixels,
+                "total_pixels": total_pixels,
+            },
+        )
+
+    def _read_condition_ratio_from_pixels(
+        self,
+        frame: LiveFrame,
+        roi: dict[str, Any],
+    ) -> tuple[float, dict[str, Any]]:
+        fill_ratio, matching_pixels, total_pixels = _compute_bar_fill_ratio(
+            frame=frame,
+            roi=roi,
+            matcher=lambda red_value, green_value, blue_value: (
+                green_value >= self._live_config.condition_bar_min_green
+                and (green_value - red_value) >= self._live_config.condition_bar_green_red_delta
+                and (green_value - blue_value) >= self._live_config.condition_bar_green_blue_delta
+            ),
+        )
+        normalized_ratio = (
+            fill_ratio if fill_ratio >= self._live_config.condition_bar_min_fill_ratio else 0.0
+        )
+        return (
+            normalized_ratio,
+            {
+                "roi": roi,
+                "fill_ratio": fill_ratio,
+                "normalized_ratio": normalized_ratio,
+                "matching_pixels": matching_pixels,
+                "total_pixels": total_pixels,
+            },
         )
 
 
@@ -172,41 +250,50 @@ class SimpleStateDetector:
         self._template_matcher = template_matcher or SimpleTemplateMatcher()
 
     def detect_state(self, frame: LiveFrame) -> LiveStateSnapshot:
-        in_combat = (
-            bool(frame.metadata.get("in_combat", False))
-            or self._template_matcher.match_flag(
+        if self._live_config is not None and Image is not None and frame.image is not None:
+            in_combat, combat_metadata = self._detect_in_combat_from_pixels(frame)
+            reward_visible, reward_metadata = self._detect_reward_from_pixels(frame)
+            detection_source = "pixel"
+        else:
+            in_combat = bool(frame.metadata.get("in_combat", False)) or self._template_matcher.match_flag(
                 frame,
                 flag_name="combat_indicator",
                 default=False,
             )
-            or self._detect_in_combat_from_pixels(frame)
-        )
-        reward_visible = bool(frame.metadata.get("reward_visible", False)) or self._template_matcher.match_flag(
-            frame,
-            flag_name="reward_screen",
-            default=False,
-        )
+            reward_visible = bool(frame.metadata.get("reward_visible", False)) or self._template_matcher.match_flag(
+                frame,
+                flag_name="reward_screen",
+                default=False,
+            )
+            combat_metadata = {"source": "metadata_fallback"}
+            reward_metadata = {"source": "metadata_fallback"}
+            detection_source = "metadata_fallback"
         rest_available = bool(frame.metadata.get("rest_available", True))
         return LiveStateSnapshot(
             in_combat=in_combat,
             reward_visible=reward_visible,
             rest_available=rest_available,
+            metadata={
+                "source": detection_source,
+                "combat_indicator": combat_metadata,
+                "reward_visibility": reward_metadata,
+            },
         )
 
-    def _detect_in_combat_from_pixels(self, frame: LiveFrame) -> bool:
+    def _detect_in_combat_from_pixels(self, frame: LiveFrame) -> tuple[bool, dict[str, Any]]:
         if self._live_config is None or Image is None or frame.image is None:
-            return False
+            return False, {"source": "unavailable"}
         roi = extract_named_roi(frame, roi_name="combat_indicator_roi", live_config=self._live_config)
         left = int(roi["x"])
         top = int(roi["y"])
         right = left + int(roi["width"])
         bottom = top + int(roi["height"])
         if right <= left or bottom <= top:
-            return False
+            return False, {"source": "pixel", "roi": roi, "reason": "empty_roi"}
         roi_image = frame.image.crop((left, top, right, bottom)).convert("RGB")
         pixels = list(roi_image.getdata())
         if not pixels:
-            return False
+            return False, {"source": "pixel", "roi": roi, "reason": "empty_pixels"}
         matching_pixels = 0
         for red_value, green_value, blue_value in pixels:
             if (
@@ -216,7 +303,81 @@ class SimpleStateDetector:
             ):
                 matching_pixels += 1
         active_ratio = matching_pixels / float(len(pixels))
-        return active_ratio >= self._live_config.combat_indicator_min_ratio
+        detected = active_ratio >= self._live_config.combat_indicator_min_ratio
+        return detected, {
+            "source": "pixel",
+            "roi": roi,
+            "active_ratio": active_ratio,
+            "matching_pixels": matching_pixels,
+            "total_pixels": len(pixels),
+        }
+
+    def _detect_reward_from_pixels(self, frame: LiveFrame) -> tuple[bool, dict[str, Any]]:
+        if self._live_config is None or Image is None or frame.image is None:
+            return False, {"source": "unavailable"}
+        roi = extract_named_roi(frame, roi_name="reward_roi", live_config=self._live_config)
+        left = int(roi["x"])
+        top = int(roi["y"])
+        right = left + int(roi["width"])
+        bottom = top + int(roi["height"])
+        if right <= left or bottom <= top:
+            return False, {"source": "pixel", "roi": roi, "reason": "empty_roi"}
+        roi_image = frame.image.crop((left, top, right, bottom)).convert("RGB")
+        pixels = list(roi_image.getdata())
+        if not pixels:
+            return False, {"source": "pixel", "roi": roi, "reason": "empty_pixels"}
+        matching_pixels = 0
+        for red_value, green_value, blue_value in pixels:
+            if (
+                red_value >= self._live_config.reward_min_red
+                and green_value >= self._live_config.reward_min_green
+                and blue_value <= self._live_config.reward_max_blue
+            ):
+                matching_pixels += 1
+        active_ratio = matching_pixels / float(len(pixels))
+        detected = active_ratio >= self._live_config.reward_min_ratio
+        return detected, {
+            "source": "pixel",
+            "roi": roi,
+            "active_ratio": active_ratio,
+            "matching_pixels": matching_pixels,
+            "total_pixels": len(pixels),
+        }
+
+
+def _compute_bar_fill_ratio(
+    *,
+    frame: LiveFrame,
+    roi: dict[str, Any],
+    matcher,
+) -> tuple[float, int, int]:
+    if frame.image is None or Image is None:
+        return 0.0, 0, 0
+    left = int(roi["x"])
+    top = int(roi["y"])
+    right = left + int(roi["width"])
+    bottom = top + int(roi["height"])
+    if right <= left or bottom <= top:
+        return 0.0, 0, 0
+    roi_image = frame.image.crop((left, top, right, bottom)).convert("RGB")
+    roi_width, roi_height = roi_image.size
+    if roi_width <= 0 or roi_height <= 0:
+        return 0.0, 0, 0
+    pixels = roi_image.load()
+    matching_pixels = 0
+    active_columns = 0
+    required_matches_per_column = max(1, int(round(roi_height * 0.25)))
+    for column_x in range(roi_width):
+        column_matches = 0
+        for row_y in range(roi_height):
+            red_value, green_value, blue_value = pixels[column_x, row_y]
+            if matcher(red_value, green_value, blue_value):
+                column_matches += 1
+        matching_pixels += column_matches
+        if column_matches >= required_matches_per_column:
+            active_columns += 1
+    fill_ratio = active_columns / float(roi_width)
+    return fill_ratio, matching_pixels, roi_width * roi_height
 
 
 def build_world_snapshot(

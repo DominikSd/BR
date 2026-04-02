@@ -27,6 +27,8 @@ vision:
 live:
   dry_run: true
   foreground_only: true
+  enable_real_clicks: false
+  enable_real_keys: false
   window_title: "Game Window"
   capture_region: [0, 0, 1280, 720]
   spawn_roi: [320, 140, 640, 320]
@@ -45,6 +47,7 @@ live:
   sample_frames_directory: "assets/live/sample_frames/raw"
   benchmark_dataset_directory: "assets/live/sample_frames"
   scene_profile_path: null
+  scene_calibration_offset_xy: [0, 0]
   mobs_template_directory: "assets/live/templates/mobs"
   occupied_template_directory: "assets/live/templates/occupied"
   template_match_stride_px: 4
@@ -88,6 +91,8 @@ live:
   engage_verify_delay_s: 0.20
   engage_click_offset_y_px: 0
   engage_target_match_max_distance_px: 72
+  engage_min_target_confidence: 0.70
+  engage_min_seen_frames: 1
   preview_refresh_interval_ms: 120
   preview_max_width_px: 1600
   preview_max_height_px: 900

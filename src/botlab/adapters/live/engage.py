@@ -333,6 +333,35 @@ class LiveEngageService:
                 input_events=new_events,
             )
 
+        if engagement.approach_result.reason.startswith("engage_quality_gate_"):
+            result = LiveEngageResult(
+                cycle_id=cycle_id,
+                outcome=LiveEngageOutcome.NO_TARGET_AVAILABLE,
+                reason=engagement.approach_result.reason,
+                selected_target_id=selected_target_id,
+                final_target_id=final_target_id,
+                click_screen_xy=click_point_xy,
+                started_at_ts=started_at_ts,
+                completed_at_ts=engagement.approach_result.completed_at_ts,
+                detection_latency_ms=None if observation_result is None else observation_result.timings.detection_latency_ms,
+                selection_latency_ms=None if observation_result is None else observation_result.timings.selection_latency_ms,
+                total_reaction_latency_ms=None if observation_result is None else observation_result.timings.total_reaction_latency_ms,
+                verification_latency_ms=0.0,
+                metadata={
+                    "approach_reason": engagement.approach_result.reason,
+                    "interaction_reason": engagement.interaction_result.reason,
+                    "engage_quality_gate_rejected": True,
+                    **engagement.approach_result.metadata,
+                    **observation_metrics_metadata,
+                },
+            )
+            return self._persist_result(
+                result=result,
+                observation_result=observation_result,
+                verification_result=None,
+                input_events=new_events,
+            )
+
         if selected_target_id is None or final_target_id is None:
             result = LiveEngageResult(
                 cycle_id=cycle_id,
@@ -403,6 +432,7 @@ class LiveEngageService:
                 "approach_reason": engagement.approach_result.reason,
                 "interaction_reason": engagement.interaction_result.reason,
                 "verify_frame_source": verify_frame.source,
+                "verify_state_detection": verify_state.metadata,
                 "verify_selected_target_id": verify_perception.selected_target_id,
                 **observation_metrics_metadata,
                 **classification_metadata,

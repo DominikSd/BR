@@ -149,12 +149,10 @@ class ForegroundWindowCapture:
             metadata={
                 "cycle_id": cycle_id,
                 "phase": phase,
-                "hp_ratio": session_state.hp_ratio,
-                "condition_ratio": session_state.condition_ratio,
                 "targets": [],
-                "in_combat": False,
-                "reward_visible": False,
                 "rest_available": True,
+                "resource_fallback_enabled": False,
+                "state_fallback_enabled": False,
             },
             image=image,
         )

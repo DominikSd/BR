@@ -43,6 +43,8 @@ def test_load_default_config_returns_settings() -> None:
 
     assert settings.vision.enabled is False
     assert settings.live.dry_run is False
+    assert settings.live.enable_real_clicks is False
+    assert settings.live.enable_real_keys is False
     assert settings.live.stall_timeout_s == 1.0
     assert settings.live.perception_confidence_threshold == 0.75
     assert settings.live.occupied_confidence_threshold == 0.75
@@ -54,6 +56,7 @@ def test_load_default_config_returns_settings() -> None:
         PROJECT_ROOT / "assets/live/sample_frames"
     ).resolve()
     assert settings.live.scene_profile_path is None
+    assert settings.live.scene_calibration_offset_xy == (0, 0)
     assert settings.live.mobs_template_directory == (
         PROJECT_ROOT / "assets/live/templates/mobs"
     ).resolve()
@@ -66,6 +69,12 @@ def test_load_default_config_returns_settings() -> None:
     assert settings.live.marker_confidence_threshold == 0.55
     assert settings.live.combat_indicator_min_red == 170
     assert settings.live.combat_indicator_min_ratio == 0.01
+    assert settings.live.hp_bar_min_red == 150
+    assert settings.live.hp_bar_min_fill_ratio == 0.01
+    assert settings.live.condition_bar_min_green == 120
+    assert settings.live.condition_bar_min_fill_ratio == 0.01
+    assert settings.live.reward_min_red == 170
+    assert settings.live.reward_min_ratio == 0.01
     assert settings.live.swords_min_green == 120
     assert settings.live.swords_confidence_threshold == 0.25
     assert settings.live.occupied_template_match_min_green_ratio == 0.01
@@ -81,6 +90,8 @@ def test_load_default_config_returns_settings() -> None:
     assert settings.live.engage_verify_delay_s == 0.20
     assert settings.live.engage_click_offset_y_px == 0
     assert settings.live.engage_target_match_max_distance_px == 72
+    assert settings.live.engage_min_target_confidence == 0.70
+    assert settings.live.engage_min_seen_frames == 1
     assert settings.live.preview_refresh_interval_ms == 120
     assert settings.live.preview_max_width_px == 1600
     assert settings.live.preview_max_height_px == 900
@@ -91,6 +102,8 @@ def test_live_config_profile_can_be_loaded_from_yaml() -> None:
 
     assert settings.app.mode == "live"
     assert settings.live.dry_run is True
+    assert settings.live.enable_real_clicks is False
+    assert settings.live.enable_real_keys is False
     assert settings.live.capture_region == (0, 0, 1280, 720)
     assert settings.live.spawn_roi == (320, 140, 640, 320)
     assert settings.live.dry_run_profile == "single_spot_mvp"
@@ -98,8 +111,12 @@ def test_live_config_profile_can_be_loaded_from_yaml() -> None:
     assert settings.live.sample_frames_directory.name == "raw"
     assert settings.live.benchmark_dataset_directory.name == "sample_frames"
     assert settings.live.scene_profile_path is None
+    assert settings.live.scene_calibration_offset_xy == (0, 0)
     assert settings.live.marker_red_green_delta == 35
     assert settings.live.combat_indicator_red_green_delta == 35
+    assert settings.live.hp_bar_red_green_delta == 40
+    assert settings.live.condition_bar_green_red_delta == 15
+    assert settings.live.reward_min_green == 130
     assert settings.live.swords_green_red_delta == 20
     assert settings.live.swords_min_blob_pixels == 2
     assert settings.live.occupied_template_match_min_green_ratio == 0.01
@@ -110,6 +127,8 @@ def test_live_config_profile_can_be_loaded_from_yaml() -> None:
     assert settings.live.confirmation_max_horizontal_offset_px == 56
     assert settings.live.engage_verify_delay_s == 0.20
     assert settings.live.engage_target_match_max_distance_px == 72
+    assert settings.live.engage_min_target_confidence == 0.70
+    assert settings.live.engage_min_seen_frames == 1
     assert settings.live.preview_refresh_interval_ms == 120
 
 
@@ -118,12 +137,18 @@ def test_live_real_mvp_config_can_be_loaded_from_yaml() -> None:
 
     assert settings.app.mode == "live"
     assert settings.live.dry_run is False
+    assert settings.live.enable_real_clicks is False
+    assert settings.live.enable_real_keys is False
     assert settings.live.debug_directory.name == "live_real_debug"
     assert settings.live.benchmark_dataset_directory.name == "sample_frames"
     assert settings.live.scene_profile_path is not None
     assert settings.live.scene_profile_path.name == "single_spot_scene.json"
+    assert settings.live.scene_calibration_offset_xy == (0, 0)
     assert settings.live.combat_indicator_min_ratio == 0.01
+    assert settings.live.reward_min_ratio == 0.01
     assert settings.live.engage_verify_delay_s == 0.20
+    assert settings.live.engage_min_target_confidence == 0.80
+    assert settings.live.engage_min_seen_frames == 2
 
 
 def test_cycle_prediction_window_methods() -> None:

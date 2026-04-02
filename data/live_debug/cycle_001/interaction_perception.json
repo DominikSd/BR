@@ -67,18 +67,19 @@
     "x": 320,
     "y": 140
   },
+  "scene_calibration": {},
   "scene_name": null,
   "scene_zone_polygon": [],
   "selectable_target_count": 1,
   "selected_target_id": "front-free",
   "timings": {
-    "action_ready_ts": 160.6864376008462,
-    "detection_finished_ts": 160.68643410084138,
-    "detection_latency_ms": 0.04579999949783087,
+    "action_ready_ts": 160.6864388008417,
+    "detection_finished_ts": 160.68643530084188,
+    "detection_latency_ms": 0.046999999995023245,
     "detection_started_ts": 160.68638830084188,
     "frame_captured_ts": 160.68638830084188,
-    "selection_latency_ms": 0.0035000048228539526,
-    "target_selected_ts": 160.6864376008462,
-    "total_reaction_latency_ms": 0.04930000432068482
+    "selection_latency_ms": 0.003499999820633093,
+    "target_selected_ts": 160.6864388008417,
+    "total_reaction_latency_ms": 0.05049999981565634
   }
 }

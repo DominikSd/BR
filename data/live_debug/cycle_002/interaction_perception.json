@@ -67,18 +67,19 @@
     "x": 320,
     "y": 140
   },
+  "scene_calibration": {},
   "scene_name": null,
   "scene_zone_polygon": [],
   "selectable_target_count": 1,
   "selected_target_id": "live-spawn-2-1",
   "timings": {
-    "action_ready_ts": 205.6864377008397,
-    "detection_finished_ts": 205.68643400084062,
-    "detection_latency_ms": 0.04569999873638153,
+    "action_ready_ts": 205.68643840084206,
+    "detection_finished_ts": 205.68643480084194,
+    "detection_latency_ms": 0.04650000005312904,
     "detection_started_ts": 205.68638830084188,
     "frame_captured_ts": 205.68638830084188,
-    "selection_latency_ms": 0.0036999990697950125,
-    "target_selected_ts": 205.6864377008397,
-    "total_reaction_latency_ms": 0.04939999780617654
+    "selection_latency_ms": 0.003600000127335079,
+    "target_selected_ts": 205.68643840084206,
+    "total_reaction_latency_ms": 0.05010000018046412
   }
 }

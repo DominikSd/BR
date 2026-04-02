@@ -271,6 +271,15 @@ Profil sceny moze zdefiniowac:
 
 W MVP detections sa oznaczane jako `in_scene_zone`, a target selection bierze tylko wolne targety wewnatrz `spawn_zone_polygon`.
 
+Kalibracja sceny do live capture dziala tak:
+
+- `reference_frame_path` wskazuje screenshot referencyjny, z ktorego pochodza polygon i punkt odniesienia,
+- loader sceny odczytuje rozmiar tej klatki,
+- przy analizie live frame polygon, `reference_point_xy` i `sub_rois` sa skalowane do aktualnego rozmiaru klatki,
+- opcjonalne `live.scene_calibration_offset_xy` pozwala dodac reczny offset, jesli capture wymaga drobnej korekty.
+
+To pozwala utrzymac jeden profil sceny dla benchmarku, preview i realnego capture, bez wprowadzania osobnej warstwy geometrii.
+
 Scene-aware benchmark / perception:
 
 ```bash
@@ -338,6 +347,21 @@ Preview pokazuje:
 - detections out-of-zone,
 - selected target,
 - podstawowe latency vision.
+
+### Pixel-based state/resource detection
+
+Live path korzysta teraz z prostych, pikselowych detektorow UI:
+
+- `hp_bar_roi`
+  odczyt wypelnienia czerwonego paska HP
+- `condition_bar_roi`
+  odczyt wypelnienia zielonego paska kondycji
+- `combat_indicator_roi`
+  binarny combat indicator
+- `reward_roi`
+  prosta widocznosc rewardu
+
+Fallback do `frame.metadata` nadal istnieje dla dry-run i starszych fixture'ow, ale gdy klatka ma prawdziwy obraz rasterowy, wykrywanie stanu i zasobow idzie po pikselach.
 
 ### Live Engage Observe
 
@@ -419,6 +443,45 @@ python -m botlab.main --config config/live_real_mvp.yaml --live-engage-mvp --cyc
 
 Na tym etapie realna sciezka kliku jest przygotowana tylko dla PPM na Windows i nadal powinna byc traktowana jako ostrozny MVP.
 
+### Real key input path
+
+Realny input jest rozdzielony na dwa bezpieczniki konfiguracyjne:
+
+- `live.enable_real_clicks`
+- `live.enable_real_keys`
+
+Domyslnie oba sa ustawione na `false`, nawet w `config/live_real_mvp.yaml`.
+
+To daje 3 praktyczne tryby:
+
+- preview / observe bez realnych wejsc,
+- realny capture z logowaniem inputu, ale bez wysylania klawiszy,
+- ostrozny realny MVP po jawnej zmianie configu.
+
+W logach i artefaktach input dostajesz tez status wykonania, np.:
+
+- `dry_run`
+- `real_clicks_disabled`
+- `real_keys_disabled`
+- `real_click_sent`
+- `real_key_sent`
+
+### Quality gate przed engage
+
+Dla `live-engage-mvp` mozna teraz dodatkowo ograniczyc zbyt agresywne klikanie przez:
+
+- `live.engage_min_target_confidence`
+- `live.engage_min_seen_frames`
+
+Target moze zostac odrzucony jeszcze przed PPM, jesli:
+
+- ma zbyt niska pewnosc,
+- nie byl wystarczajaco stabilny przez kolejne klatki,
+- jest poza strefa sceny,
+- albo staje sie nieosiagalny.
+
+W takim przypadku wynik engage trafia do `no_target_available`, ale z czytelnym `reason`, np. `engage_quality_gate_not_stable`.
+
 Artefakty engage trafiaja do:
 
 - `data/live_debug/engage/engage_results.jsonl`
@@ -431,8 +494,8 @@ Artefakty engage trafiaja do:
 - to nadal heurystyczne live vision MVP, nie finalna wizja produkcyjna,
 - brak OCR i brak ciezkiego ML/CV,
 - full combat/reward/rest loop nie jest jeszcze celem warstwy live,
-- real input execution poza PPM nie jest jeszcze domkniete,
-- pixel-based verify dotyczy na razie glownie `combat_indicator`,
+- real input execution jest nadal ostroznym MVP i ogranicza sie do PPM + prostych klawiszy na Windows,
+- pixel-based verify dotyczy na razie glownie `combat_indicator` i prostego `reward_roi`,
 - najlepszy feedback do strojenia daje obecnie batch na realnych scenach referencyjnych.
 
 ### Organizacja scen live
@@ -457,6 +520,25 @@ Minimalny workflow dla nowego spota:
 3. dodaj profil sceny w `assets/live/scenes/*.json`
 4. ustaw `live.scene_profile_path` w configu live
 5. uruchom `--analyze-frame` albo `--benchmark-split regression --strict-pixel-benchmark`
+
+Workflow regresji dla tego etapu:
+
+1. zmieniasz template pack, scene profile albo progi
+2. odpalasz strict benchmark:
+
+```bash
+python -m botlab.main --config config/live_real_mvp.yaml --benchmark-split regression --strict-pixel-benchmark --perception-output-dir data/perception_scene_regression
+```
+
+3. porownujesz:
+   - `target_recall`
+   - `target_precision`
+   - `occupied_classification_accuracy`
+   - `selected_target_accuracy`
+   - `selected_target_in_zone_accuracy`
+   - `out_of_zone_rejection_count`
+   - detection / selection / total reaction latency
+4. zostawiasz tylko te zmiany, ktore poprawiaja jakosc bez niekontrolowanego wzrostu opoznien
 
 Domyslna konfiguracja zapisuje telemetry do:
 

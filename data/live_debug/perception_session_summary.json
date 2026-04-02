@@ -9,10 +9,10 @@
     "p95_ms": 2.0
   },
   "detection_latency": {
-    "avg_ms": 7.0114499998723545,
+    "avg_ms": 7.011749999996653,
     "count": 4,
     "max_ms": 10.99999999999568,
-    "min_ms": 0.04579999949783087,
+    "min_ms": 0.046999999995023245,
     "name": "detection_latency_ms",
     "p50_ms": 8.000000000009777,
     "p95_ms": 10.99999999999568
@@ -128,6 +128,7 @@
         "x": 320,
         "y": 140
       },
+      "scene_calibration": {},
       "scene_name": null,
       "scene_zone_polygon": [],
       "selectable_target_count": 2,
@@ -176,6 +177,7 @@
         "x": 320,
         "y": 140
       },
+      "scene_calibration": {},
       "scene_name": null,
       "scene_zone_polygon": [],
       "selectable_target_count": 0,
@@ -263,19 +265,20 @@
         "x": 320,
         "y": 140
       },
+      "scene_calibration": {},
       "scene_name": null,
       "scene_zone_polygon": [],
       "selectable_target_count": 1,
       "selected_target_id": "front-free",
       "timings": {
-        "action_ready_ts": 160.6864376008462,
-        "detection_finished_ts": 160.68643410084138,
-        "detection_latency_ms": 0.04579999949783087,
+        "action_ready_ts": 160.6864388008417,
+        "detection_finished_ts": 160.68643530084188,
+        "detection_latency_ms": 0.046999999995023245,
         "detection_started_ts": 160.68638830084188,
         "frame_captured_ts": 160.68638830084188,
-        "selection_latency_ms": 0.0035000048228539526,
-        "target_selected_ts": 160.6864376008462,
-        "total_reaction_latency_ms": 0.04930000432068482
+        "selection_latency_ms": 0.003499999820633093,
+        "target_selected_ts": 160.6864388008417,
+        "total_reaction_latency_ms": 0.05049999981565634
       }
     },
     {
@@ -387,6 +390,7 @@
         "x": 320,
         "y": 140
       },
+      "scene_calibration": {},
       "scene_name": null,
       "scene_zone_polygon": [],
       "selectable_target_count": 2,
@@ -431,20 +435,20 @@
     "p95_ms": 0.0
   },
   "selection_latency": {
-    "avg_ms": 2.0008750012010523,
+    "avg_ms": 2.000874999950497,
     "count": 4,
     "max_ms": 2.999999999985903,
-    "min_ms": 0.0035000048228539526,
+    "min_ms": 0.003499999820633093,
     "name": "selection_latency_ms",
     "p50_ms": 2.0000000000095497,
     "p95_ms": 2.999999999985903
   },
   "strict_pixel_only": false,
   "total_reaction_latency": {
-    "avg_ms": 10.012325001078182,
+    "avg_ms": 10.012624999951925,
     "count": 4,
     "max_ms": 15.999999999991132,
-    "min_ms": 0.04930000432068482,
+    "min_ms": 0.05049999981565634,
     "name": "total_reaction_latency_ms",
     "p50_ms": 11.000000000024102,
     "p95_ms": 15.999999999991132

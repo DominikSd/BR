@@ -5,16 +5,146 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+try:
+    from PIL import Image
+except Exception:  # pragma: no cover - optional dependency path
+    Image = None
+
 
 @dataclass(slots=True, frozen=True)
 class SceneProfile:
     scene_name: str
     reference_frame_path: Path | None
     spawn_zone_polygon: tuple[tuple[float, float], ...]
+    reference_frame_size: tuple[int, int] | None = None
     reference_point_xy: tuple[float, float] | None = None
     notes: str | None = None
     sub_rois: dict[str, tuple[int, int, int, int]] = field(default_factory=dict)
     exclusion_polygons: tuple[tuple[tuple[float, float], ...], ...] = ()
+
+    def contains_point(self, point_xy: tuple[float, float]) -> bool:
+        if not self.spawn_zone_polygon:
+            return True
+        if not point_in_polygon(point_xy=point_xy, polygon=self.spawn_zone_polygon):
+            return False
+        for exclusion_polygon in self.exclusion_polygons:
+            if point_in_polygon(point_xy=point_xy, polygon=exclusion_polygon):
+                return False
+        return True
+
+    def calibrate(
+        self,
+        *,
+        frame_width: int,
+        frame_height: int,
+        offset_xy: tuple[int, int] = (0, 0),
+    ) -> "CalibratedSceneProfile":
+        scale_x = 1.0
+        scale_y = 1.0
+        warning: str | None = None
+        if self.reference_frame_size is not None:
+            reference_width, reference_height = self.reference_frame_size
+            if reference_width > 0 and reference_height > 0:
+                scale_x = frame_width / float(reference_width)
+                scale_y = frame_height / float(reference_height)
+                if abs(scale_x - scale_y) > 0.05:
+                    warning = (
+                        "scene_reference_aspect_ratio_mismatch:"
+                        f"scale_x={scale_x:.4f},scale_y={scale_y:.4f}"
+                    )
+
+        offset_x = float(offset_xy[0])
+        offset_y = float(offset_xy[1])
+
+        calibrated_polygon = tuple(
+            (
+                point_x * scale_x + offset_x,
+                point_y * scale_y + offset_y,
+            )
+            for point_x, point_y in self.spawn_zone_polygon
+        )
+        calibrated_reference_point_xy = None
+        if self.reference_point_xy is not None:
+            calibrated_reference_point_xy = (
+                self.reference_point_xy[0] * scale_x + offset_x,
+                self.reference_point_xy[1] * scale_y + offset_y,
+            )
+        calibrated_sub_rois = {
+            roi_name: (
+                int(round(roi_value[0] * scale_x + offset_x)),
+                int(round(roi_value[1] * scale_y + offset_y)),
+                max(1, int(round(roi_value[2] * scale_x))),
+                max(1, int(round(roi_value[3] * scale_y))),
+            )
+            for roi_name, roi_value in self.sub_rois.items()
+        }
+        calibrated_exclusion_polygons = tuple(
+            tuple(
+                (
+                    point_x * scale_x + offset_x,
+                    point_y * scale_y + offset_y,
+                )
+                for point_x, point_y in exclusion_polygon
+            )
+            for exclusion_polygon in self.exclusion_polygons
+        )
+        return CalibratedSceneProfile(
+            scene_name=self.scene_name,
+            reference_frame_path=self.reference_frame_path,
+            reference_frame_size=self.reference_frame_size,
+            frame_size=(frame_width, frame_height),
+            spawn_zone_polygon=calibrated_polygon,
+            reference_point_xy=calibrated_reference_point_xy,
+            notes=self.notes,
+            sub_rois=calibrated_sub_rois,
+            exclusion_polygons=calibrated_exclusion_polygons,
+            scale_x=scale_x,
+            scale_y=scale_y,
+            offset_xy=(offset_x, offset_y),
+            warning=warning,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "scene_name": self.scene_name,
+            "reference_frame_path": None
+            if self.reference_frame_path is None
+            else str(self.reference_frame_path),
+            "reference_frame_size": None
+            if self.reference_frame_size is None
+            else [self.reference_frame_size[0], self.reference_frame_size[1]],
+            "spawn_zone_polygon": [
+                [point_x, point_y] for point_x, point_y in self.spawn_zone_polygon
+            ],
+            "reference_point_xy": None
+            if self.reference_point_xy is None
+            else [self.reference_point_xy[0], self.reference_point_xy[1]],
+            "notes": self.notes,
+            "sub_rois": {
+                roi_name: list(roi_value) for roi_name, roi_value in self.sub_rois.items()
+            },
+            "exclusion_polygons": [
+                [[point_x, point_y] for point_x, point_y in polygon]
+                for polygon in self.exclusion_polygons
+            ],
+        }
+
+
+@dataclass(slots=True, frozen=True)
+class CalibratedSceneProfile:
+    scene_name: str
+    reference_frame_path: Path | None
+    reference_frame_size: tuple[int, int] | None
+    frame_size: tuple[int, int]
+    spawn_zone_polygon: tuple[tuple[float, float], ...]
+    reference_point_xy: tuple[float, float] | None = None
+    notes: str | None = None
+    sub_rois: dict[str, tuple[int, int, int, int]] = field(default_factory=dict)
+    exclusion_polygons: tuple[tuple[tuple[float, float], ...], ...] = ()
+    scale_x: float = 1.0
+    scale_y: float = 1.0
+    offset_xy: tuple[float, float] = (0.0, 0.0)
+    warning: str | None = None
 
     def contains_point(self, point_xy: tuple[float, float]) -> bool:
         if not self.spawn_zone_polygon:
@@ -32,20 +162,23 @@ class SceneProfile:
             "reference_frame_path": None
             if self.reference_frame_path is None
             else str(self.reference_frame_path),
+            "reference_frame_size": None
+            if self.reference_frame_size is None
+            else [self.reference_frame_size[0], self.reference_frame_size[1]],
+            "frame_size": [self.frame_size[0], self.frame_size[1]],
             "spawn_zone_polygon": [
                 [point_x, point_y] for point_x, point_y in self.spawn_zone_polygon
             ],
             "reference_point_xy": None
             if self.reference_point_xy is None
             else [self.reference_point_xy[0], self.reference_point_xy[1]],
-            "notes": self.notes,
             "sub_rois": {
                 roi_name: list(roi_value) for roi_name, roi_value in self.sub_rois.items()
             },
-            "exclusion_polygons": [
-                [[point_x, point_y] for point_x, point_y in polygon]
-                for polygon in self.exclusion_polygons
-            ],
+            "scale_x": self.scale_x,
+            "scale_y": self.scale_y,
+            "offset_xy": [self.offset_xy[0], self.offset_xy[1]],
+            "warning": self.warning,
         }
 
 
@@ -81,6 +214,7 @@ class SceneProfileLoader:
             payload.get("reference_frame_path"),
             source_path=path,
         )
+        reference_frame_size = _detect_reference_frame_size(reference_frame_path)
         reference_point_xy = _parse_optional_point(payload.get("reference_point_xy"))
         sub_rois = _parse_sub_rois(payload.get("sub_rois"), source_path=path)
         exclusion_polygons = _parse_exclusion_polygons(
@@ -95,6 +229,7 @@ class SceneProfileLoader:
             scene_name=raw_scene_name.strip(),
             reference_frame_path=reference_frame_path,
             spawn_zone_polygon=spawn_zone_polygon,
+            reference_frame_size=reference_frame_size,
             reference_point_xy=reference_point_xy,
             notes=notes,
             sub_rois=sub_rois,
@@ -170,6 +305,13 @@ def _parse_optional_path(raw_value: object, *, source_path: Path) -> Path | None
     if candidate.is_absolute():
         return candidate.resolve()
     return (source_path.parent / candidate).resolve()
+
+
+def _detect_reference_frame_size(reference_frame_path: Path | None) -> tuple[int, int] | None:
+    if reference_frame_path is None or Image is None or not reference_frame_path.exists():
+        return None
+    with Image.open(reference_frame_path) as image:
+        return (int(image.size[0]), int(image.size[1]))
 
 
 def _parse_optional_point(raw_value: object) -> tuple[float, float] | None:

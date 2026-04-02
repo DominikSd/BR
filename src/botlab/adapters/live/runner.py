@@ -72,6 +72,7 @@ from botlab.domain.fsm import CycleFSM
 from botlab.domain.recovery import RecoveryManager
 from botlab.domain.scheduler import CycleScheduler
 from botlab.domain.targeting import RetargetPolicy, TargetSelectionPolicy, TargetValidationPolicy
+from botlab.domain.world import GroupSnapshot
 from botlab.types import BotState, CombatSnapshot, Observation, TelemetryRecord
 
 
@@ -379,6 +380,8 @@ class LiveTargetApproachProvider(TargetApproachProvider):
         movement_speed_units_per_s: float = 4.0,
         interaction_range: float = 0.5,
         step_distance_units: float = 1.0,
+        engage_min_target_confidence: float = 0.70,
+        engage_min_seen_frames: int = 1,
     ) -> None:
         self._runtime = runtime
         self._input_driver = input_driver
@@ -386,6 +389,8 @@ class LiveTargetApproachProvider(TargetApproachProvider):
         self._movement_speed_units_per_s = movement_speed_units_per_s
         self._interaction_range = interaction_range
         self._step_distance_units = step_distance_units
+        self._engage_min_target_confidence = engage_min_target_confidence
+        self._engage_min_seen_frames = engage_min_seen_frames
 
     def approach_target(self, target_resolution: TargetResolution) -> TargetApproachResult:
         world_snapshot = target_resolution.world_snapshot
@@ -418,6 +423,26 @@ class LiveTargetApproachProvider(TargetApproachProvider):
                 initial_target_id=target_id,
                 retargeted=False,
                 metadata={},
+            )
+
+        quality_gate_reason = self._evaluate_target_for_engage(target_group)
+        if quality_gate_reason is not None:
+            return TargetApproachResult(
+                cycle_id=target_resolution.cycle_id,
+                target_id=target_id,
+                started_at_ts=started_at_ts,
+                completed_at_ts=started_at_ts,
+                travel_s=0.0,
+                arrived=False,
+                reason=quality_gate_reason,
+                initial_target_id=target_id,
+                retargeted=False,
+                metadata={
+                    "engage_quality_gate_rejected": True,
+                    "target_confidence": target_group.metadata.get("confidence"),
+                    "target_seen_frames": target_group.metadata.get("seen_frames"),
+                    "target_in_scene_zone": target_group.metadata.get("in_scene_zone"),
+                },
             )
 
         self._input_driver.right_click_target(
@@ -482,6 +507,21 @@ class LiveTargetApproachProvider(TargetApproachProvider):
                 "movement_step_count": len(movement_steps),
             },
         )
+
+    def _evaluate_target_for_engage(self, target_group: GroupSnapshot) -> str | None:
+        if target_group.engaged_by_other:
+            return "engage_quality_gate_target_occupied"
+        if not target_group.reachable:
+            return "engage_quality_gate_target_unreachable"
+        if not bool(target_group.metadata.get("in_scene_zone", True)):
+            return "engage_quality_gate_out_of_zone"
+        confidence = float(target_group.metadata.get("confidence", 1.0))
+        if confidence < self._engage_min_target_confidence:
+            return "engage_quality_gate_low_confidence"
+        seen_frames = int(target_group.metadata.get("seen_frames", 1))
+        if seen_frames < self._engage_min_seen_frames:
+            return "engage_quality_gate_not_stable"
+        return None
 
     def _build_movement_steps(
         self,
@@ -624,7 +664,9 @@ class LiveVerificationProvider(VerificationProvider):
             started_at_ts=observation.observed_at_ts + 0.03,
             completed_at_ts=frame.captured_at_ts,
             reason=reason,
-            metadata={},
+            metadata={
+                "state_detection": state.metadata,
+            },
         )
 
 
@@ -696,6 +738,8 @@ class LiveCombatResolver:
                             "input_sequence": list(round_keys),
                             "input_key": round_keys[0],
                             "reward_visible": state.reward_visible,
+                            "state_detection": state.metadata,
+                            "resource_detection": resources.metadata,
                             "starting_hp_ratio": self._runtime.session_state.hp_ratio,
                             "starting_condition_ratio": self._runtime.session_state.condition_ratio,
                         },
@@ -726,6 +770,8 @@ class LiveCombatResolver:
                 "reward_started_ts": final_event_ts,
                 "reward_completed_ts": final_event_ts + reward_duration_s,
                 "reward_visible": state.reward_visible,
+                "state_detection": state.metadata,
+                "resource_detection": resources.metadata,
                 "starting_hp_ratio": self._runtime.session_state.hp_ratio,
                 "starting_condition_ratio": self._runtime.session_state.condition_ratio,
             },
@@ -788,7 +834,11 @@ class LiveRestProvider(RestProvider):
                         enemy_count=0,
                         strategy="live_rest",
                         in_combat=False,
-                        metadata={"cycle_id": cycle_id, "phase": "rest_tick"},
+                        metadata={
+                            "cycle_id": cycle_id,
+                            "phase": "rest_tick",
+                            "resource_detection": final_resources.metadata,
+                        },
                     ),
                 )
             )
@@ -879,12 +929,14 @@ class LiveRunner:
         input_driver = LiveInputDriver(
             logger=logger,
             dry_run=settings.live.dry_run,
+            enable_real_clicks=settings.live.enable_real_clicks,
+            enable_real_keys=settings.live.enable_real_keys,
             screen_offset_xy=(
                 settings.live.capture_region[0],
                 settings.live.capture_region[1],
             ),
         )
-        state_detector = SimpleStateDetector()
+        state_detector = SimpleStateDetector(settings.live)
         resource_provider = LiveResourceProvider(settings.live)
         world_provider = LiveWorldStateProvider(runtime)
         retarget_policy = RetargetPolicy(
@@ -900,6 +952,8 @@ class LiveRunner:
                 runtime,
                 input_driver=input_driver,
                 stall_detector=StallDetector(settings.live.stall_timeout_s),
+                engage_min_target_confidence=settings.live.engage_min_target_confidence,
+                engage_min_seen_frames=settings.live.engage_min_seen_frames,
             ),
             approach_world_state_provider=world_provider,
             retarget_policy=retarget_policy,

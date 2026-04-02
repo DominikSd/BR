@@ -60,6 +60,8 @@ class VisionConfig:
 class LiveConfig:
     dry_run: bool = False
     foreground_only: bool = True
+    enable_real_clicks: bool = False
+    enable_real_keys: bool = False
     window_title: str = "Game Window"
     capture_region: tuple[int, int, int, int] = (0, 0, 1280, 720)
     spawn_roi: tuple[int, int, int, int] = (320, 140, 640, 320)
@@ -82,6 +84,7 @@ class LiveConfig:
         default_factory=lambda: PROJECT_ROOT / "assets" / "live" / "sample_frames"
     )
     scene_profile_path: Path | None = None
+    scene_calibration_offset_xy: tuple[int, int] = (0, 0)
     mobs_template_directory: Path = field(
         default_factory=lambda: PROJECT_ROOT / "assets" / "live" / "templates" / "mobs"
     )
@@ -104,6 +107,18 @@ class LiveConfig:
     combat_indicator_red_green_delta: int = 35
     combat_indicator_red_blue_delta: int = 25
     combat_indicator_min_ratio: float = 0.01
+    hp_bar_min_red: int = 150
+    hp_bar_red_green_delta: int = 40
+    hp_bar_red_blue_delta: int = 30
+    hp_bar_min_fill_ratio: float = 0.01
+    condition_bar_min_green: int = 120
+    condition_bar_green_red_delta: int = 15
+    condition_bar_green_blue_delta: int = 10
+    condition_bar_min_fill_ratio: float = 0.01
+    reward_min_red: int = 170
+    reward_min_green: int = 130
+    reward_max_blue: int = 170
+    reward_min_ratio: float = 0.01
     swords_min_green: int = 120
     swords_green_red_delta: int = 20
     swords_green_blue_delta: int = 10
@@ -129,6 +144,8 @@ class LiveConfig:
     engage_verify_delay_s: float = 0.20
     engage_click_offset_y_px: int = 0
     engage_target_match_max_distance_px: int = 72
+    engage_min_target_confidence: float = 0.70
+    engage_min_seen_frames: int = 1
     preview_refresh_interval_ms: int = 120
     preview_max_width_px: int = 1600
     preview_max_height_px: int = 900
@@ -203,6 +220,8 @@ def load_config(config_path: str | Path) -> Settings:
     live_config = LiveConfig(
         dry_run=_optional_bool(live_section, "dry_run", False),
         foreground_only=_optional_bool(live_section, "foreground_only", True),
+        enable_real_clicks=_optional_bool(live_section, "enable_real_clicks", False),
+        enable_real_keys=_optional_bool(live_section, "enable_real_keys", False),
         window_title=_optional_str(live_section, "window_title", "Game Window"),
         capture_region=_optional_int_quad(live_section, "capture_region", (0, 0, 1280, 720)),
         spawn_roi=_optional_int_quad(live_section, "spawn_roi", (320, 140, 640, 320)),
@@ -242,6 +261,11 @@ def load_config(config_path: str | Path) -> Settings:
             live_section,
             "scene_profile_path",
             None,
+        ),
+        scene_calibration_offset_xy=_optional_int_pair(
+            live_section,
+            "scene_calibration_offset_xy",
+            (0, 0),
         ),
         mobs_template_directory=_resolve_project_relative_path(
             _optional_str(live_section, "mobs_template_directory", "assets/live/templates/mobs")
@@ -309,6 +333,84 @@ def load_config(config_path: str | Path) -> Settings:
         combat_indicator_min_ratio=_optional_ratio_float(
             live_section,
             "combat_indicator_min_ratio",
+            0.01,
+        ),
+        hp_bar_min_red=_optional_int_range(
+            live_section,
+            "hp_bar_min_red",
+            150,
+            min_value=0,
+            max_value=255,
+        ),
+        hp_bar_red_green_delta=_optional_int_range(
+            live_section,
+            "hp_bar_red_green_delta",
+            40,
+            min_value=0,
+            max_value=255,
+        ),
+        hp_bar_red_blue_delta=_optional_int_range(
+            live_section,
+            "hp_bar_red_blue_delta",
+            30,
+            min_value=0,
+            max_value=255,
+        ),
+        hp_bar_min_fill_ratio=_optional_ratio_float(
+            live_section,
+            "hp_bar_min_fill_ratio",
+            0.01,
+        ),
+        condition_bar_min_green=_optional_int_range(
+            live_section,
+            "condition_bar_min_green",
+            120,
+            min_value=0,
+            max_value=255,
+        ),
+        condition_bar_green_red_delta=_optional_int_range(
+            live_section,
+            "condition_bar_green_red_delta",
+            15,
+            min_value=0,
+            max_value=255,
+        ),
+        condition_bar_green_blue_delta=_optional_int_range(
+            live_section,
+            "condition_bar_green_blue_delta",
+            10,
+            min_value=0,
+            max_value=255,
+        ),
+        condition_bar_min_fill_ratio=_optional_ratio_float(
+            live_section,
+            "condition_bar_min_fill_ratio",
+            0.01,
+        ),
+        reward_min_red=_optional_int_range(
+            live_section,
+            "reward_min_red",
+            170,
+            min_value=0,
+            max_value=255,
+        ),
+        reward_min_green=_optional_int_range(
+            live_section,
+            "reward_min_green",
+            130,
+            min_value=0,
+            max_value=255,
+        ),
+        reward_max_blue=_optional_int_range(
+            live_section,
+            "reward_max_blue",
+            170,
+            min_value=0,
+            max_value=255,
+        ),
+        reward_min_ratio=_optional_ratio_float(
+            live_section,
+            "reward_min_ratio",
             0.01,
         ),
         swords_min_green=_optional_int_range(
@@ -441,6 +543,16 @@ def load_config(config_path: str | Path) -> Settings:
             live_section,
             "engage_target_match_max_distance_px",
             72,
+        ),
+        engage_min_target_confidence=_optional_ratio_float(
+            live_section,
+            "engage_min_target_confidence",
+            0.70,
+        ),
+        engage_min_seen_frames=_optional_positive_int(
+            live_section,
+            "engage_min_seen_frames",
+            1,
         ),
         preview_refresh_interval_ms=_optional_positive_int(
             live_section,
@@ -698,6 +810,22 @@ def _optional_int_quad(
             f"Pole '{key}' musi zawierac nieujemne x/y i dodatnie width/height."
         )
     return (x, y, width, height)
+
+
+def _optional_int_pair(
+    data: Mapping[str, Any],
+    key: str,
+    default: tuple[int, int],
+) -> tuple[int, int]:
+    value = data.get(key, default)
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise ConfigError(f"Pole '{key}' musi byc para [x, y].")
+    parsed: list[int] = []
+    for item in value:
+        if not isinstance(item, int):
+            raise ConfigError(f"Pole '{key}' musi zawierac liczby calkowite.")
+        parsed.append(item)
+    return (parsed[0], parsed[1])
 
 
 def _validate_cycle_config(config: CycleConfig) -> None:
