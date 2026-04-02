@@ -1,19 +1,35 @@
 {
   "scene_name": "single_spot_scene",
   "reference_frame_path": "../sample_frames/raw/live_spot_scene_1.png",
-  "reference_point_xy": [1380, 700],
-  "notes": "Pierwszy profil konkretnego spota. Poligon obejmuje glowny obszar lapania na snieznych sciezkach i grzbietach, a spatial filtering odrzuca detections spoza sensownej strefy engage.",
+  "reference_point_xy": [760, 285],
+  "notes": "Profil pojedynczego spota skalibrowany pod realny spawn bliżej srodka i dolu ekranu. W live path scena moze byc dodatkowo kotwiczona do srodka kadru, zeby polygon i ROI lepiej podazaly za kamera przy ruchu postaci po spocie.",
   "spawn_zone_polygon": [
-    [980, 300],
-    [1970, 300],
-    [2050, 540],
-    [2030, 1030],
-    [1180, 1040],
-    [900, 760],
-    [930, 470]
+    [100, 560],
+    [120, 470],
+    [240, 410],
+    [430, 350],
+    [620, 325],
+    [845, 332],
+    [980, 375],
+    [1025, 452],
+    [985, 545],
+    [915, 614],
+    [1015, 618],
+    [1188, 565],
+    [1360, 544],
+    [1424, 605],
+    [1422, 804],
+    [1326, 894],
+    [1118, 922],
+    [886, 908],
+    [760, 824],
+    [620, 842],
+    [470, 930],
+    [246, 900],
+    [120, 804]
   ],
   "sub_rois": {
-    "spawn_focus_roi": [960, 280, 1120, 800]
+    "spawn_focus_roi": [0, 32, 1955, 988]
   },
   "exclusion_polygons": []
 }

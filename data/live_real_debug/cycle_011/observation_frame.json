@@ -1,6 +1,6 @@
 {
   "captured_at_ts": 595.0,
-  "height": 720,
+  "height": 0,
   "metadata": {
     "condition_ratio": 1.0,
     "cycle_id": 11,
@@ -60,5 +60,5 @@
     ]
   },
   "source": "dry_run:single_spot_mvp",
-  "width": 1280
+  "width": 0
 }

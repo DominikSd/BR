@@ -5,7 +5,7 @@ import logging
 import sys
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from botlab.adapters.live.models import LiveTargetDetection
 
@@ -31,6 +31,7 @@ class LiveInputDriver:
         enable_real_clicks: bool = False,
         enable_real_keys: bool = False,
         screen_offset_xy: tuple[int, int] = (0, 0),
+        real_input_guard: Callable[[], tuple[bool, str, dict[str, Any]]] | None = None,
     ) -> None:
         self._logger = logger
         self._dry_run = dry_run
@@ -38,6 +39,7 @@ class LiveInputDriver:
         self._enable_real_clicks = enable_real_clicks
         self._enable_real_keys = enable_real_keys
         self._screen_offset_xy = screen_offset_xy
+        self._real_input_guard = real_input_guard
         self._events: list[LiveInputEvent] = []
 
     @property
@@ -54,11 +56,25 @@ class LiveInputDriver:
         absolute_x = self._screen_offset_xy[0] + click_x
         absolute_y = self._screen_offset_xy[1] + click_y
         execution_status = "dry_run"
+        guard_reason = None
+        guard_context: dict[str, Any] = {}
         if not self._dry_run and self._enable_real_input and self._enable_real_clicks:
-            execution_status = self._perform_right_click(
-                absolute_x=absolute_x,
-                absolute_y=absolute_y,
-            )
+            guard_allowed, guard_reason, guard_context = self._evaluate_real_input_guard()
+            guard_capture_bbox = guard_context.get("capture_bbox")
+            if (
+                isinstance(guard_capture_bbox, list)
+                and len(guard_capture_bbox) == 4
+                and all(isinstance(item, (int, float)) for item in guard_capture_bbox)
+            ):
+                absolute_x = int(guard_capture_bbox[0]) + click_x
+                absolute_y = int(guard_capture_bbox[1]) + click_y
+            if guard_allowed:
+                execution_status = self._perform_right_click(
+                    absolute_x=absolute_x,
+                    absolute_y=absolute_y,
+                )
+            else:
+                execution_status = "window_guard_blocked"
         elif not self._dry_run and not self._enable_real_input:
             execution_status = "real_input_disabled"
         elif not self._dry_run:
@@ -75,13 +91,21 @@ class LiveInputDriver:
                 "enable_real_input": self._enable_real_input,
                 "enable_real_clicks": self._enable_real_clicks,
                 "execution_status": execution_status,
+                "guard_reason": guard_reason,
+                "guard_context": guard_context,
             },
         )
 
     def press_key(self, key: str) -> None:
         execution_status = "dry_run"
+        guard_reason = None
+        guard_context: dict[str, Any] = {}
         if not self._dry_run and self._enable_real_input and self._enable_real_keys:
-            execution_status = self._perform_key_press(key=key)
+            guard_allowed, guard_reason, guard_context = self._evaluate_real_input_guard()
+            if guard_allowed:
+                execution_status = self._perform_key_press(key=key)
+            else:
+                execution_status = "window_guard_blocked"
         elif not self._dry_run and not self._enable_real_input:
             execution_status = "real_input_disabled"
         elif not self._dry_run:
@@ -94,15 +118,23 @@ class LiveInputDriver:
                 "enable_real_input": self._enable_real_input,
                 "enable_real_keys": self._enable_real_keys,
                 "execution_status": execution_status,
+                "guard_reason": guard_reason,
+                "guard_context": guard_context,
             },
         )
 
     def press_sequence(self, keys: tuple[str, ...]) -> None:
         execution_statuses: list[str] = []
+        guard_reason = None
+        guard_context: dict[str, Any] = {}
         if not self._dry_run and self._enable_real_input and self._enable_real_keys:
-            for key in keys:
-                execution_statuses.append(self._perform_key_press(key=key))
-                time.sleep(0.03)
+            guard_allowed, guard_reason, guard_context = self._evaluate_real_input_guard()
+            if guard_allowed:
+                for key in keys:
+                    execution_statuses.append(self._perform_key_press(key=key))
+                    time.sleep(0.03)
+            else:
+                execution_statuses = ["window_guard_blocked" for _ in keys]
         elif not self._dry_run and not self._enable_real_input:
             execution_statuses = ["real_input_disabled" for _ in keys]
         elif not self._dry_run:
@@ -117,8 +149,20 @@ class LiveInputDriver:
                 "enable_real_input": self._enable_real_input,
                 "enable_real_keys": self._enable_real_keys,
                 "execution_statuses": execution_statuses,
+                "guard_reason": guard_reason,
+                "guard_context": guard_context,
             },
         )
+
+    def _evaluate_real_input_guard(self) -> tuple[bool, str | None, dict[str, Any]]:
+        if self._real_input_guard is None:
+            return True, None, {}
+        try:
+            allowed, reason, context = self._real_input_guard()
+        except Exception as exc:  # pragma: no cover - defensive path
+            self._logger.exception("live_input guard callback failed: %s", exc)
+            return False, "window_guard_error", {"error": str(exc)}
+        return bool(allowed), reason, dict(context)
 
     def _perform_right_click(self, *, absolute_x: int, absolute_y: int) -> str:
         if sys.platform != "win32":

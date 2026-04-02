@@ -3,36 +3,300 @@
   "candidate_hit_count": 0,
   "cycle_id": 15,
   "detections": [],
+  "diagnostics": {
+    "duplicate_merges": [],
+    "final_candidates": [],
+    "low_confidence_hits": [],
+    "occupied_rejections": [],
+    "out_of_zone_rejections": [],
+    "raw_hit_summary": {},
+    "selection_reason": null,
+    "summary_lines": [
+      "thresholds=mob>=0.60 occupied>=0.75 merge_px=28 stride=6",
+      "raw=0 low_conf=0 merged=0 dup=0 unstable=0",
+      "rejects=occupied=0 out_of_zone=0 selected=None"
+    ],
+    "tuning_parameters": {
+      "candidate_confirmation_frames": 1,
+      "candidate_loss_frames": 2,
+      "confirmation_confidence_threshold": 0.6,
+      "merge_distance_px": 28,
+      "occupied_confidence_threshold": 0.75,
+      "occupied_confirmation_frames": 1,
+      "perception_confidence_threshold": 0.75,
+      "scene_profile_path": "C:\\Users\\d-sad\\Desktop\\Fun\\boty\\SOPLARZ\\assets\\live\\scenes\\single_spot_scene.json",
+      "template_match_stride_px": 6,
+      "template_rotations_deg": [
+        0,
+        90,
+        180,
+        270
+      ]
+    },
+    "unstable_rejections": []
+  },
   "expectations": {},
-  "frame_height": 720,
-  "frame_source": "foreground_window_capture",
-  "frame_width": 1280,
+  "frame_height": 0,
+  "frame_source": "dry_run:single_spot_mvp",
+  "frame_width": 0,
   "free_target_count": 0,
+  "ground_truth": {},
+  "in_zone_target_count": 0,
   "merged_hit_count": 0,
+  "out_of_zone_target_count": 0,
   "phase": "observation",
+  "pipeline_mode": "metadata_fallback",
   "raw_hits": [],
   "reference_point_xy": [
-    640.0,
-    360.0
+    0.0,
+    0.0
   ],
   "roi": {
-    "frame_height": 720,
-    "frame_width": 1280,
-    "height": 320,
-    "name": "spawn_roi",
-    "width": 640,
-    "x": 320,
-    "y": 140
+    "frame_height": 0,
+    "frame_width": 0,
+    "height": 1,
+    "name": "spawn_focus_roi",
+    "source": "scene_profile",
+    "width": 1,
+    "x": 0,
+    "y": 0
   },
+  "scene_calibration": {
+    "anchor_adjustment_xy": [
+      0.0,
+      0.0
+    ],
+    "anchor_mode": "frame_center",
+    "anchor_target_xy": null,
+    "frame_size": [
+      0,
+      0
+    ],
+    "offset_xy": [
+      0.0,
+      0.0
+    ],
+    "reference_frame_path": "C:\\Users\\d-sad\\Desktop\\Fun\\boty\\SOPLARZ\\assets\\live\\sample_frames\\raw\\live_spot_scene_1.png",
+    "reference_frame_size": [
+      2559,
+      1439
+    ],
+    "reference_point_xy": [
+      0.0,
+      0.0
+    ],
+    "scale_x": 0.0,
+    "scale_y": 0.0,
+    "scene_name": "single_spot_scene",
+    "spawn_zone_polygon": [
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0
+      ]
+    ],
+    "sub_rois": {
+      "spawn_focus_roi": [
+        0,
+        0,
+        1,
+        1
+      ]
+    },
+    "warning": null
+  },
+  "scene_name": "single_spot_scene",
+  "scene_zone_polygon": [
+    [
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0
+    ]
+  ],
+  "selectable_target_count": 0,
   "selected_target_id": null,
   "timings": {
-    "action_ready_ts": 775.0346770000033,
-    "detection_finished_ts": 775.0346731000027,
-    "detection_latency_ms": 34.67310000269208,
+    "action_ready_ts": 775.016,
+    "detection_finished_ts": 775.011,
+    "detection_latency_ms": 10.999999999967258,
     "detection_started_ts": 775.0,
     "frame_captured_ts": 775.0,
-    "selection_latency_ms": 0.0039000005926936865,
-    "target_selected_ts": 775.0346770000033,
-    "total_reaction_latency_ms": 34.677000003284775
+    "selection_latency_ms": 3.0000000000427463,
+    "target_selected_ts": 775.014,
+    "total_reaction_latency_ms": 15.99999999996271
   }
 }

@@ -331,6 +331,78 @@ W summary pojawia sie dodatkowo:
 
 To jest preferowany tryb do porownywania kolejnych zmian w heurystykach vision.
 
+### Strojenie wykrywania mobow
+
+Najwazniejsze parametry detection do dokrecania siedza teraz w jednym miejscu, w `live` configu:
+
+- `perception_confidence_threshold`
+- `confirmation_confidence_threshold`
+- `occupied_confidence_threshold`
+- `template_match_stride_px`
+- `template_rotations_deg`
+- `merge_distance_px`
+- `candidate_confirmation_frames`
+- `occupied_confirmation_frames`
+- `candidate_loss_frames`
+
+Po kazdej analizie w `perception_session_summary.json` dostajesz:
+
+- `tuning_parameters`
+- `worst_frames`
+- per-frame `diagnostics`
+
+W `diagnostics` dla kazdej klatki zobaczysz m.in.:
+
+- `raw_hit_summary`
+- `low_confidence_hits`
+- `duplicate_merges`
+- `occupied_rejections`
+- `out_of_zone_rejections`
+- `unstable_rejections`
+- `final_candidates`
+- `selection_reason`
+
+To jest teraz glowny material do recznego strojenia template packow i progow.
+
+### Raport najgorszych klatek
+
+Po batch runie summary zapisuje tez `worst_frames`.
+
+To jest skrocona lista najgorszych przypadkow, z priorytetem na:
+
+- bledny `selected target`
+- false negatives
+- false positives
+- bledne `occupied/free`
+- wysoka latency
+
+CLI wypisuje je tez jako:
+
+```bash
+perception_worst_frame=...
+```
+
+To jest preferowany punkt startowy do recznego przegladania overlayow.
+
+### Porownywanie dwoch runow detection
+
+Mozesz porownac dwa zapisane `perception_session_summary.json`:
+
+```bash
+python -m botlab.main --compare-perception-summaries data/run_a/perception_session_summary.json data/run_b/perception_session_summary.json
+```
+
+CLI wypisze roznice dla:
+
+- `target_recall`
+- `target_precision`
+- `occupied_classification_accuracy`
+- `selected_target_accuracy`
+- false positives / false negatives
+- srednich latency
+
+To ma byc prosty, praktyczny diff do porownywania wersji heurystyk, nie duzy system eksperymentow.
+
 ### Live Preview
 
 ```bash
@@ -342,11 +414,34 @@ Preview pokazuje:
 - aktualna klatke,
 - spawn ROI,
 - scene polygon / strefe spota, jesli aktywny jest `scene_profile_path`,
+- status okna gry i window guard,
 - kandydatow,
 - occupied/free,
 - detections out-of-zone,
 - selected target,
 - podstawowe latency vision.
+
+### Live capture skupiony na oknie gry
+
+Live capture jest teraz pilnowany przez prosty window guard:
+
+- szuka okna po `live.window_title`,
+- liczy region capture wzgledem okna gry,
+- respektuje `live.foreground_only`,
+- blokuje realny input, jesli foreground nie zgadza sie z oknem gry.
+
+Praktyczna uwaga:
+
+- `live.capture_region: [0, 0, 0, 0]` oznacza "bierz cale okno gry",
+- to jest preferowany tryb, jesli nie chcesz recznie trzymac stalego cropa dla jednej rozdzielczosci.
+
+W artefaktach debugowych zobaczysz:
+
+- jakie okno zostalo dopasowane,
+- jaki jest bbox okna,
+- jaki jest finalny `capture_bbox`,
+- czy foreground zgadza sie z gra,
+- czy input zostal zablokowany przez `window_guard`.
 
 ### Pixel-based state/resource detection
 
@@ -362,6 +457,42 @@ Live path korzysta teraz z prostych, pikselowych detektorow UI:
   prosta widocznosc rewardu
 
 Fallback do `frame.metadata` nadal istnieje dla dry-run i starszych fixture'ow, ale gdy klatka ma prawdziwy obraz rasterowy, wykrywanie stanu i zasobow idzie po pikselach.
+
+### Stabilny odczyt zasobow podczas restu
+
+Podczas odpoczynku live path nie opiera sie juz na pojedynczym odczycie paska. Zamiast tego:
+
+- pobiera kilka kolejnych probek z `hp_bar_roi` i `condition_bar_roi`,
+- agreguje je medianą,
+- liczy prosty `resource_confidence`,
+- zapisuje warningi, jesli odczyt jest niestabilny albo podejrzany.
+
+Najwazniejsze pola konfiguracyjne:
+
+- `live.rest_resource_sample_count`
+- `live.rest_resource_sample_interval_s`
+- `live.rest_resource_min_confidence`
+- `live.rest_resource_max_ticks`
+- `live.rest_resource_growth_min_delta`
+- `live.rest_resource_warning_spread_threshold`
+- `live.rest_resource_stall_warning_ticks`
+
+W praktyce rest tick zapisuje teraz:
+
+- kolejne probki zasobow,
+- zagregowany `hp_ratio` i `condition_ratio`,
+- `resource_confidence`,
+- `resource_warnings`,
+- decyzje:
+  - `rest_continue`
+  - `rest_stop_threshold_reached`
+  - `rest_stalled_or_uncertain`
+
+Jesli overlay albo warningi sugeruja, ze odczyt jest niestabilny, najpierw warto:
+
+1. sprawdzic czy `hp_bar_roi` i `condition_bar_roi` nadal pokrywaja prawdziwy HUD,
+2. zapisac nowe screenshoty referencyjne,
+3. dopiero potem stroic progi i liczbe probek.
 
 ### Live Engage Observe
 

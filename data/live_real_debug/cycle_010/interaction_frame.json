@@ -1,6 +1,6 @@
 {
-  "captured_at_ts": 576.5079213568471,
-  "height": 720,
+  "captured_at_ts": 550.0,
+  "height": 0,
   "metadata": {
     "cycle_id": 10,
     "in_combat": false,
@@ -24,5 +24,5 @@
     ]
   },
   "source": "dry_run:single_spot_mvp",
-  "width": 1280
+  "width": 0
 }

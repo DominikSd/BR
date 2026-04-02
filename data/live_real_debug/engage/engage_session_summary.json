@@ -1,46 +1,53 @@
 {
   "approach_stalled_count": 0,
   "approach_timeout_count": 0,
+  "calibration_warning_count": 0,
   "detection_latency": {
-    "avg_ms": 10.999999999967258,
+    "avg_ms": 11.000000000422006,
     "count": 1,
-    "max_ms": 10.999999999967258,
-    "min_ms": 10.999999999967258,
+    "max_ms": 11.000000000422006,
+    "min_ms": 11.000000000422006,
     "name": "engage_detection_latency_ms",
-    "p50_ms": 10.999999999967258,
-    "p95_ms": 10.999999999967258
+    "p50_ms": 11.000000000422006,
+    "p95_ms": 11.000000000422006
   },
-  "engage_success_rate": 1.0,
-  "engaged_count": 1,
+  "engage_success_rate": 0.0,
+  "engaged_count": 0,
+  "key_press_action_count": 0,
+  "key_sequence_action_count": 0,
   "misclick_count": 0,
-  "no_target_available_count": 0,
+  "no_target_available_count": 1,
+  "occupied_rejection_count": 0,
+  "out_of_zone_rejection_count": 0,
+  "real_input_action_count": 0,
+  "right_click_action_count": 0,
   "selection_latency": {
-    "avg_ms": 3.0000000000427463,
+    "avg_ms": 2.9999999997016857,
     "count": 1,
-    "max_ms": 3.0000000000427463,
-    "min_ms": 3.0000000000427463,
+    "max_ms": 2.9999999997016857,
+    "min_ms": 2.9999999997016857,
     "name": "engage_selection_latency_ms",
-    "p50_ms": 3.0000000000427463,
-    "p95_ms": 3.0000000000427463
+    "p50_ms": 2.9999999997016857,
+    "p95_ms": 2.9999999997016857
   },
   "target_stolen_count": 0,
   "total_attempts": 1,
   "total_reaction_latency": {
-    "avg_ms": 15.99999999996271,
+    "avg_ms": 16.000000000531145,
     "count": 1,
-    "max_ms": 15.99999999996271,
-    "min_ms": 15.99999999996271,
+    "max_ms": 16.000000000531145,
+    "min_ms": 16.000000000531145,
     "name": "engage_total_reaction_latency_ms",
-    "p50_ms": 15.99999999996271,
-    "p95_ms": 15.99999999996271
+    "p50_ms": 16.000000000531145,
+    "p95_ms": 16.000000000531145
   },
   "verification_latency": {
-    "avg_ms": 200.00000000004547,
+    "avg_ms": 0.0,
     "count": 1,
-    "max_ms": 200.00000000004547,
-    "min_ms": 200.00000000004547,
+    "max_ms": 0.0,
+    "min_ms": 0.0,
     "name": "engage_verification_latency_ms",
-    "p50_ms": 200.00000000004547,
-    "p95_ms": 200.00000000004547
+    "p50_ms": 0.0,
+    "p95_ms": 0.0
   }
 }

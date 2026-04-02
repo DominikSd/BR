@@ -29,6 +29,56 @@
       "target_id": "front-free"
     }
   ],
+  "diagnostics": {
+    "duplicate_merges": [],
+    "final_candidates": [
+      {
+        "confidence": 1.0,
+        "distance": 63.245553203367585,
+        "in_scene_zone": true,
+        "occupied": false,
+        "reachable": true,
+        "reasons": [
+          "selected_nearest_free_in_zone"
+        ],
+        "screen_xy": [
+          620,
+          300
+        ],
+        "target_id": "front-free"
+      }
+    ],
+    "low_confidence_hits": [],
+    "occupied_rejections": [],
+    "out_of_zone_rejections": [],
+    "raw_hit_summary": {
+      "mob_b": 1
+    },
+    "selection_reason": "nearest_free_in_zone_reachable_target",
+    "summary_lines": [
+      "thresholds=mob>=0.60 occupied>=0.75 merge_px=28 stride=4",
+      "raw=1 low_conf=0 merged=1 dup=0 unstable=0",
+      "rejects=occupied=0 out_of_zone=0 selected=front-free"
+    ],
+    "tuning_parameters": {
+      "candidate_confirmation_frames": 1,
+      "candidate_loss_frames": 2,
+      "confirmation_confidence_threshold": 0.6,
+      "merge_distance_px": 28,
+      "occupied_confidence_threshold": 0.75,
+      "occupied_confirmation_frames": 1,
+      "perception_confidence_threshold": 0.75,
+      "scene_profile_path": null,
+      "template_match_stride_px": 4,
+      "template_rotations_deg": [
+        0,
+        90,
+        180,
+        270
+      ]
+    },
+    "unstable_rejections": []
+  },
   "expectations": {},
   "frame_height": 720,
   "frame_source": "dry_run:engage_timeout",
@@ -63,6 +113,7 @@
     "frame_width": 1280,
     "height": 320,
     "name": "spawn_roi",
+    "source": "config",
     "width": 640,
     "x": 320,
     "y": 140
@@ -73,13 +124,13 @@
   "selectable_target_count": 1,
   "selected_target_id": "front-free",
   "timings": {
-    "action_ready_ts": 160.68642380084162,
-    "detection_finished_ts": 160.68642100084168,
-    "detection_latency_ms": 0.032699999792384915,
+    "action_ready_ts": 160.68644540084375,
+    "detection_finished_ts": 160.68644110084375,
+    "detection_latency_ms": 0.05280000186758116,
     "detection_started_ts": 160.68638830084188,
     "frame_captured_ts": 160.68638830084188,
-    "selection_latency_ms": 0.0027999999474559445,
-    "target_selected_ts": 160.68642380084162,
-    "total_reaction_latency_ms": 0.03549999973984086
+    "selection_latency_ms": 0.004300000000512227,
+    "target_selected_ts": 160.68644540084375,
+    "total_reaction_latency_ms": 0.057100001868093386
   }
 }

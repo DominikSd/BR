@@ -619,6 +619,9 @@ class CycleOrchestrator:
             combat_metadata["rest_final_hp_ratio"] = timed_snapshot.snapshot.hp_ratio
             combat_metadata["rest_final_condition_ratio"] = timed_snapshot.snapshot.condition_ratio
 
+        if rest_timeline.metadata:
+            combat_metadata.update(rest_timeline.metadata)
+
         if self._fsm.current_state is not BotState.WAIT_NEXT_CYCLE:
             raise RuntimeError("REST nie zakończył się przejściem do WAIT_NEXT_CYCLE.")
 

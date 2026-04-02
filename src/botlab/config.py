@@ -86,6 +86,8 @@ class LiveConfig:
     )
     scene_profile_path: Path | None = None
     scene_calibration_offset_xy: tuple[int, int] = (0, 0)
+    scene_reference_anchor_mode: str = "static"
+    scene_reference_anchor_xy: tuple[int, int] = (0, 0)
     mobs_template_directory: Path = field(
         default_factory=lambda: PROJECT_ROOT / "assets" / "live" / "templates" / "mobs"
     )
@@ -94,15 +96,23 @@ class LiveConfig:
     )
     template_match_stride_px: int = 4
     template_rotations_deg: tuple[int, ...] = (0, 90, 180, 270)
+    marker_color_mode: str = "red"
     marker_min_red: int = 170
+    marker_min_green: int = 120
     marker_red_green_delta: int = 35
+    marker_green_blue_delta: int = 25
     marker_red_blue_delta: int = 25
+    marker_red_green_balance_delta: int = 80
     marker_min_blob_pixels: int = 6
     marker_max_blob_pixels: int = 180
     marker_min_width_px: int = 3
     marker_max_width_px: int = 36
     marker_min_height_px: int = 3
     marker_max_height_px: int = 36
+    marker_min_fill_density: float = 0.0
+    marker_max_fill_density: float = 1.0
+    marker_dark_core_max_rgb: int = 110
+    marker_min_dark_core_ratio: float = 0.0
     marker_confidence_threshold: float = 0.55
     combat_indicator_min_red: int = 170
     combat_indicator_red_green_delta: int = 35
@@ -120,6 +130,13 @@ class LiveConfig:
     reward_min_green: int = 130
     reward_max_blue: int = 170
     reward_min_ratio: float = 0.01
+    rest_resource_sample_count: int = 3
+    rest_resource_sample_interval_s: float = 0.10
+    rest_resource_min_confidence: float = 0.60
+    rest_resource_max_ticks: int = 6
+    rest_resource_growth_min_delta: float = 0.01
+    rest_resource_warning_spread_threshold: float = 0.10
+    rest_resource_stall_warning_ticks: int = 2
     swords_min_green: int = 120
     swords_green_red_delta: int = 20
     swords_green_blue_delta: int = 10
@@ -225,7 +242,12 @@ def load_config(config_path: str | Path) -> Settings:
         enable_real_clicks=_optional_bool(live_section, "enable_real_clicks", False),
         enable_real_keys=_optional_bool(live_section, "enable_real_keys", False),
         window_title=_optional_str(live_section, "window_title", "Game Window"),
-        capture_region=_optional_int_quad(live_section, "capture_region", (0, 0, 1280, 720)),
+        capture_region=_optional_int_quad(
+            live_section,
+            "capture_region",
+            (0, 0, 1280, 720),
+            allow_zero_size=True,
+        ),
         spawn_roi=_optional_int_quad(live_section, "spawn_roi", (320, 140, 640, 320)),
         hp_bar_roi=_optional_int_quad(live_section, "hp_bar_roi", (40, 40, 220, 18)),
         condition_bar_roi=_optional_int_quad(live_section, "condition_bar_roi", (40, 68, 220, 18)),
@@ -269,6 +291,16 @@ def load_config(config_path: str | Path) -> Settings:
             "scene_calibration_offset_xy",
             (0, 0),
         ),
+        scene_reference_anchor_mode=_optional_scene_anchor_mode(
+            live_section,
+            "scene_reference_anchor_mode",
+            "static",
+        ),
+        scene_reference_anchor_xy=_optional_int_pair(
+            live_section,
+            "scene_reference_anchor_xy",
+            (0, 0),
+        ),
         mobs_template_directory=_resolve_project_relative_path(
             _optional_str(live_section, "mobs_template_directory", "assets/live/templates/mobs")
         ),
@@ -285,11 +317,30 @@ def load_config(config_path: str | Path) -> Settings:
             "template_rotations_deg",
             (0, 90, 180, 270),
         ),
+        marker_color_mode=_optional_marker_color_mode(
+            live_section,
+            "marker_color_mode",
+            "red",
+        ),
         marker_min_red=_optional_int_range(live_section, "marker_min_red", 170, min_value=0, max_value=255),
+        marker_min_green=_optional_int_range(
+            live_section,
+            "marker_min_green",
+            120,
+            min_value=0,
+            max_value=255,
+        ),
         marker_red_green_delta=_optional_int_range(
             live_section,
             "marker_red_green_delta",
             35,
+            min_value=0,
+            max_value=255,
+        ),
+        marker_green_blue_delta=_optional_int_range(
+            live_section,
+            "marker_green_blue_delta",
+            25,
             min_value=0,
             max_value=255,
         ),
@@ -300,12 +351,41 @@ def load_config(config_path: str | Path) -> Settings:
             min_value=0,
             max_value=255,
         ),
+        marker_red_green_balance_delta=_optional_int_range(
+            live_section,
+            "marker_red_green_balance_delta",
+            80,
+            min_value=0,
+            max_value=255,
+        ),
         marker_min_blob_pixels=_optional_positive_int(live_section, "marker_min_blob_pixels", 6),
         marker_max_blob_pixels=_optional_positive_int(live_section, "marker_max_blob_pixels", 180),
         marker_min_width_px=_optional_positive_int(live_section, "marker_min_width_px", 3),
         marker_max_width_px=_optional_positive_int(live_section, "marker_max_width_px", 36),
         marker_min_height_px=_optional_positive_int(live_section, "marker_min_height_px", 3),
         marker_max_height_px=_optional_positive_int(live_section, "marker_max_height_px", 36),
+        marker_min_fill_density=_optional_ratio_float(
+            live_section,
+            "marker_min_fill_density",
+            0.0,
+        ),
+        marker_max_fill_density=_optional_ratio_float(
+            live_section,
+            "marker_max_fill_density",
+            1.0,
+        ),
+        marker_dark_core_max_rgb=_optional_int_range(
+            live_section,
+            "marker_dark_core_max_rgb",
+            110,
+            min_value=0,
+            max_value=255,
+        ),
+        marker_min_dark_core_ratio=_optional_ratio_float(
+            live_section,
+            "marker_min_dark_core_ratio",
+            0.0,
+        ),
         marker_confidence_threshold=_optional_ratio_float(
             live_section,
             "marker_confidence_threshold",
@@ -414,6 +494,41 @@ def load_config(config_path: str | Path) -> Settings:
             live_section,
             "reward_min_ratio",
             0.01,
+        ),
+        rest_resource_sample_count=_optional_positive_int(
+            live_section,
+            "rest_resource_sample_count",
+            3,
+        ),
+        rest_resource_sample_interval_s=_optional_positive_float(
+            live_section,
+            "rest_resource_sample_interval_s",
+            0.10,
+        ),
+        rest_resource_min_confidence=_optional_ratio_float(
+            live_section,
+            "rest_resource_min_confidence",
+            0.60,
+        ),
+        rest_resource_max_ticks=_optional_positive_int(
+            live_section,
+            "rest_resource_max_ticks",
+            6,
+        ),
+        rest_resource_growth_min_delta=_optional_ratio_float(
+            live_section,
+            "rest_resource_growth_min_delta",
+            0.01,
+        ),
+        rest_resource_warning_spread_threshold=_optional_ratio_float(
+            live_section,
+            "rest_resource_warning_spread_threshold",
+            0.10,
+        ),
+        rest_resource_stall_warning_ticks=_optional_positive_int(
+            live_section,
+            "rest_resource_stall_warning_ticks",
+            2,
         ),
         swords_min_green=_optional_int_range(
             live_section,
@@ -797,6 +912,8 @@ def _optional_int_quad(
     data: Mapping[str, Any],
     key: str,
     default: tuple[int, int, int, int],
+    *,
+    allow_zero_size: bool = False,
 ) -> tuple[int, int, int, int]:
     value = data.get(key, default)
     if not isinstance(value, (list, tuple)) or len(value) != 4:
@@ -807,7 +924,14 @@ def _optional_int_quad(
             raise ConfigError(f"Pole '{key}' musi zawierac liczby calkowite.")
         parsed.append(item)
     x, y, width, height = parsed
-    if x < 0 or y < 0 or width <= 0 or height <= 0:
+    if x < 0 or y < 0:
+        raise ConfigError(f"Pole '{key}' musi zawierac nieujemne x/y.")
+    if allow_zero_size:
+        if width < 0 or height < 0:
+            raise ConfigError(
+                f"Pole '{key}' musi zawierac nieujemne width/height."
+            )
+    elif width <= 0 or height <= 0:
         raise ConfigError(
             f"Pole '{key}' musi zawierac nieujemne x/y i dodatnie width/height."
         )
@@ -828,6 +952,36 @@ def _optional_int_pair(
             raise ConfigError(f"Pole '{key}' musi zawierac liczby calkowite.")
         parsed.append(item)
     return (parsed[0], parsed[1])
+
+
+def _optional_scene_anchor_mode(
+    data: Mapping[str, Any],
+    key: str,
+    default: str,
+) -> str:
+    value = _optional_str(data, key, default)
+    normalized = value.strip().lower()
+    allowed_values = {"static", "frame_center", "custom"}
+    if normalized not in allowed_values:
+        raise ConfigError(
+            f"Pole '{key}' musi miec jedna z wartosci: {', '.join(sorted(allowed_values))}."
+        )
+    return normalized
+
+
+def _optional_marker_color_mode(
+    data: Mapping[str, Any],
+    key: str,
+    default: str,
+) -> str:
+    value = _optional_str(data, key, default)
+    normalized = value.strip().lower()
+    allowed_values = {"red", "yellow"}
+    if normalized not in allowed_values:
+        raise ConfigError(
+            f"Pole '{key}' musi miec jedna z wartosci: {', '.join(sorted(allowed_values))}."
+        )
+    return normalized
 
 
 def _validate_cycle_config(config: CycleConfig) -> None:

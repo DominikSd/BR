@@ -30,7 +30,7 @@ live:
   enable_real_input: false
   enable_real_clicks: false
   enable_real_keys: false
-  window_title: "Game Window"
+  window_title: "BrokenRanks"
   capture_region: [0, 0, 1280, 720]
   spawn_roi: [320, 140, 640, 320]
   hp_bar_roi: [40, 40, 220, 18]
@@ -67,6 +67,13 @@ live:
   combat_indicator_red_green_delta: 35
   combat_indicator_red_blue_delta: 25
   combat_indicator_min_ratio: 0.01
+  rest_resource_sample_count: 3
+  rest_resource_sample_interval_s: 0.10
+  rest_resource_min_confidence: 0.60
+  rest_resource_max_ticks: 6
+  rest_resource_growth_min_delta: 0.01
+  rest_resource_warning_spread_threshold: 0.10
+  rest_resource_stall_warning_ticks: 2
   swords_min_green: 120
   swords_green_red_delta: 20
   swords_green_blue_delta: 10

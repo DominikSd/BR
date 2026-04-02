@@ -2,7 +2,7 @@ To miejsce jest przeznaczone na assety dla pixel-based MVP w `adapters/live`.
 
 Kanoniczna struktura:
 - `markers/`
-  Opcjonalne sample i cropy czerwonych markerow. W obecnym etapie marker detector jest color-first,
+  Opcjonalne sample i cropy markerow nad mobami. W obecnym etapie marker detector jest color-first,
   ale to miejsce zostaje na przyszle porownania i referencje.
 - `mobs/mob_a/`
   Lokalny template pack dla pierwszego wariantu moba.
@@ -13,8 +13,15 @@ Kanoniczna struktura:
 
 Zasady tego etapu:
 - pipeline jest marker-first:
-  `sample frame -> ROI -> red marker detector -> occupied swords detector -> local mob confirmation -> merge/smoothing -> occupied/free -> nearest target`.
-- czerwony marker jest wykrywany szybkim, color-based detektorem w ograniczonym ROI.
+  `sample frame -> ROI -> marker detector -> occupied swords detector -> local mob confirmation -> merge/smoothing -> occupied/free -> nearest target`.
+- marker nad mobem jest wykrywany szybkim, color-based detektorem w ograniczonym ROI.
+- aktualny live spot korzysta z zoltego markera nad mobami, dlatego `live_real_mvp.yaml` ustawia `marker_color_mode: "yellow"`.
+- starsze fixture'y i czesc test harnessu nadal moga korzystac z czerwonego markera, dlatego detector wspiera oba tryby: `red` i `yellow`.
+- dla zoltego markera live profil uzywa dodatkowo prostych filtrow ksztaltu blobu:
+  - sensowna gestosc wypelnienia,
+  - maksymalny rozmiar plamki,
+  - minimalny udzial ciemnego srodka.
+- to ma ograniczac falszywe trafienia na zoltych ikonach swiata, efektach i elementach otoczenia.
 - template packi dla `mobs/` sa uzywane tylko do lokalnego potwierdzenia pod markerem,
   a nie do globalnego skanowania calego ekranu.
 - w katalogach `mobs/` mozna trzymac:
@@ -36,7 +43,7 @@ To jest swiadomie MVP:
 - bez przebudowy `domain` i `application`.
 
 W kolejnych etapach ten sam katalog moze przechowywac:
-- sample czerwonych markerow dla roznych spotow,
+- sample markerow dla roznych spotow,
 - dodatkowe template packi,
 - lepiej przyciete warianty,
 - osobne profile dla roznych spotow lub kamer.

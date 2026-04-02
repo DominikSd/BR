@@ -38,6 +38,8 @@ class SceneProfile:
         frame_width: int,
         frame_height: int,
         offset_xy: tuple[int, int] = (0, 0),
+        anchor_target_xy: tuple[float, float] | None = None,
+        anchor_mode: str = "static",
     ) -> "CalibratedSceneProfile":
         scale_x = 1.0
         scale_y = 1.0
@@ -55,6 +57,23 @@ class SceneProfile:
 
         offset_x = float(offset_xy[0])
         offset_y = float(offset_xy[1])
+        anchor_adjustment_x = 0.0
+        anchor_adjustment_y = 0.0
+        anchor_target = None if anchor_target_xy is None else (
+            float(anchor_target_xy[0]),
+            float(anchor_target_xy[1]),
+        )
+        scaled_reference_point_xy = None
+        if self.reference_point_xy is not None:
+            scaled_reference_point_xy = (
+                self.reference_point_xy[0] * scale_x,
+                self.reference_point_xy[1] * scale_y,
+            )
+        if anchor_target is not None and scaled_reference_point_xy is not None:
+            anchor_adjustment_x = anchor_target[0] - scaled_reference_point_xy[0]
+            anchor_adjustment_y = anchor_target[1] - scaled_reference_point_xy[1]
+            offset_x += anchor_adjustment_x
+            offset_y += anchor_adjustment_y
 
         calibrated_polygon = tuple(
             (
@@ -101,6 +120,9 @@ class SceneProfile:
             scale_x=scale_x,
             scale_y=scale_y,
             offset_xy=(offset_x, offset_y),
+            anchor_mode=anchor_mode,
+            anchor_target_xy=anchor_target,
+            anchor_adjustment_xy=(anchor_adjustment_x, anchor_adjustment_y),
             warning=warning,
         )
 
@@ -144,6 +166,9 @@ class CalibratedSceneProfile:
     scale_x: float = 1.0
     scale_y: float = 1.0
     offset_xy: tuple[float, float] = (0.0, 0.0)
+    anchor_mode: str = "static"
+    anchor_target_xy: tuple[float, float] | None = None
+    anchor_adjustment_xy: tuple[float, float] = (0.0, 0.0)
     warning: str | None = None
 
     def contains_point(self, point_xy: tuple[float, float]) -> bool:
@@ -178,6 +203,14 @@ class CalibratedSceneProfile:
             "scale_x": self.scale_x,
             "scale_y": self.scale_y,
             "offset_xy": [self.offset_xy[0], self.offset_xy[1]],
+            "anchor_mode": self.anchor_mode,
+            "anchor_target_xy": None
+            if self.anchor_target_xy is None
+            else [self.anchor_target_xy[0], self.anchor_target_xy[1]],
+            "anchor_adjustment_xy": [
+                self.anchor_adjustment_xy[0],
+                self.anchor_adjustment_xy[1],
+            ],
             "warning": self.warning,
         }
 

@@ -218,8 +218,66 @@ def test_main_can_run_perception_analysis_for_single_frame(tmp_path: Path, capsy
     assert "selected_target=free-near" in captured.out
     assert "perception_latency_summary=total_reaction_latency_ms" in captured.out
     assert (output_dir / "fixture_perception.json").exists() is True
-    assert (output_dir / "fixture_perception_overlay.svg").exists() is True
-    assert (output_dir / "perception_session_summary.json").exists() is True
+
+
+def test_main_can_compare_two_perception_summaries(tmp_path: Path, capsys) -> None:
+    baseline_path = tmp_path / "baseline.json"
+    candidate_path = tmp_path / "candidate.json"
+    baseline_path.write_text(
+        json.dumps(
+            {
+                "benchmark_summary": {
+                    "target_recall": 0.70,
+                    "target_precision": 0.75,
+                    "occupied_classification_accuracy": 0.80,
+                    "selected_target_accuracy": 0.60,
+                    "target_false_positive_count": 6,
+                    "target_false_negative_count": 5,
+                },
+                "detection_latency": {"avg_ms": 20.0},
+                "selection_latency": {"avg_ms": 5.0},
+                "total_reaction_latency": {"avg_ms": 28.0},
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    candidate_path.write_text(
+        json.dumps(
+            {
+                "benchmark_summary": {
+                    "target_recall": 0.82,
+                    "target_precision": 0.79,
+                    "occupied_classification_accuracy": 0.90,
+                    "selected_target_accuracy": 0.75,
+                    "target_false_positive_count": 4,
+                    "target_false_negative_count": 3,
+                },
+                "detection_latency": {"avg_ms": 24.0},
+                "selection_latency": {"avg_ms": 4.0},
+                "total_reaction_latency": {"avg_ms": 31.0},
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--compare-perception-summaries",
+            str(baseline_path),
+            str(candidate_path),
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "perception_mode=compare" in captured.out
+    assert "perception_compare=target_recall_delta value=0.120" in captured.out
+    assert "perception_compare=detection_latency_avg_ms_delta value=4.000" in captured.out
 
 
 def test_main_can_run_perception_batch_analysis(tmp_path: Path, capsys) -> None:

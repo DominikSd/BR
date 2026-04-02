@@ -1,7 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+<svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" viewBox="0 0 0 0">
 <rect width="100%" height="100%" fill="#111827" />
-<rect x="320" y="140" width="640" height="320" fill="none" stroke="#60a5fa" stroke-width="2" />
-<text x="324" y="156" fill="#93c5fd" font-size="14">spawn_roi</text>
+<rect x="80" y="280" width="1450" height="650" fill="none" stroke="#60a5fa" stroke-width="2" />
+<text x="84" y="296" fill="#93c5fd" font-size="14">spawn_roi</text>
 <rect x="40" y="40" width="220" height="18" fill="none" stroke="#60a5fa" stroke-width="2" />
 <text x="44" y="56" fill="#93c5fd" font-size="14">hp_bar_roi</text>
 <rect x="40" y="68" width="220" height="18" fill="none" stroke="#60a5fa" stroke-width="2" />
@@ -10,4 +10,6 @@
 <text x="564" y="636" fill="#93c5fd" font-size="14">combat_indicator_roi</text>
 <rect x="500" y="120" width="260" height="120" fill="none" stroke="#60a5fa" stroke-width="2" />
 <text x="504" y="136" fill="#93c5fd" font-size="14">reward_roi</text>
+<circle cx="732" cy="302" r="12" fill="none" stroke="#22c55e" stroke-width="3" />
+<text x="748" y="296" fill="#f9fafb" font-size="14">live-spawn-31-2</text>
 </svg>

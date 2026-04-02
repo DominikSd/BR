@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import json
+import logging
 from pathlib import Path
 
 import pytest
@@ -22,15 +23,25 @@ from botlab.adapters.live import (
     select_nearest_target,
     should_start_rest,
 )
+from botlab.adapters.live.capture import CaptureRegion, _calculate_window_relative_capture_bbox
 from botlab.adapters.live.input import LiveInputDriver
-from botlab.adapters.live.models import LiveEngageOutcome, LiveFrame, LiveStateSnapshot, LiveTargetDetection
+from botlab.adapters.live.models import (
+    LiveEngageOutcome,
+    LiveFrame,
+    LiveResourceSnapshot,
+    LiveSessionState,
+    LiveStateSnapshot,
+    LiveTargetDetection,
+)
 from botlab.adapters.live.perception import (
     BenchmarkDatasetLoader,
     PerceptionFrameLoader,
     ReactionLatency,
     TemplateHit,
     TemplatePackLoader,
+    compare_perception_summary_payloads,
 )
+from botlab.adapters.live.runner import LiveRestProvider
 from botlab.adapters.live.vision import LiveResourceProvider, SimpleStateDetector, extract_named_roi
 from botlab.application.dto import (
     TargetApproachResult,
@@ -46,6 +57,7 @@ from botlab.domain.targeting import (
     TargetValidationStatus,
 )
 from botlab.domain.world import GroupSnapshot, Position, WorldSnapshot
+from botlab.types import Observation
 
 
 def _build_live_settings(tmp_path: Path) -> Settings:
@@ -80,7 +92,24 @@ def _build_scene_aware_live_settings(tmp_path: Path) -> Settings:
         telemetry=telemetry,
         vision=base.vision,
         source_path=base.source_path,
-        live=load_config("config/live_real_mvp.yaml").live,
+        live=replace(
+            load_config("config/live_real_mvp.yaml").live,
+            marker_color_mode="red",
+            marker_min_green=120,
+            marker_green_blue_delta=25,
+            marker_red_green_balance_delta=80,
+            marker_min_blob_pixels=6,
+            marker_max_blob_pixels=180,
+            marker_min_width_px=3,
+            marker_max_width_px=36,
+            marker_min_height_px=3,
+            marker_max_height_px=36,
+            marker_min_fill_density=0.0,
+            marker_max_fill_density=1.0,
+            marker_dark_core_max_rgb=110,
+            marker_min_dark_core_ratio=0.0,
+            marker_confidence_threshold=0.55,
+        ),
     )
 
 
@@ -90,6 +119,135 @@ def _build_live_settings_with_profile(tmp_path: Path, dry_run_profile: str) -> S
         settings,
         live=replace(settings.live, dry_run_profile=dry_run_profile),
     )
+
+
+def _draw_bar_fill(image, roi: tuple[int, int, int, int], ratio: float, fill_rgb: tuple[int, int, int]) -> None:
+    from PIL import ImageDraw
+
+    draw = ImageDraw.Draw(image)
+    x, y, width, height = roi
+    draw.rectangle((x, y, x + width - 1, y + height - 1), fill=(20, 20, 20))
+    fill_width = max(0, min(width, int(round(width * ratio))))
+    if fill_width > 0:
+        draw.rectangle((x, y, x + fill_width - 1, y + height - 1), fill=fill_rgb)
+
+
+def _draw_roi_fill(image, roi: tuple[int, int, int, int], fill_rgb: tuple[int, int, int]) -> None:
+    from PIL import ImageDraw
+
+    draw = ImageDraw.Draw(image)
+    x, y, width, height = roi
+    draw.rectangle((x, y, x + width - 1, y + height - 1), fill=fill_rgb)
+
+
+def _build_state_resource_frame(
+    settings: Settings,
+    *,
+    hp_ratio: float,
+    condition_ratio: float,
+    in_combat: bool = False,
+    reward_visible: bool = False,
+    captured_at_ts: float = 100.0,
+    source: str = "resource-frame",
+) -> LiveFrame:
+    from PIL import Image
+
+    _, _, width, height = settings.live.capture_region
+    image = Image.new("RGB", (width, height), color=(15, 15, 15))
+    _draw_bar_fill(
+        image,
+        settings.live.hp_bar_roi,
+        hp_ratio,
+        (
+            max(settings.live.hp_bar_min_red + 30, 200),
+            30,
+            30,
+        ),
+    )
+    _draw_bar_fill(
+        image,
+        settings.live.condition_bar_roi,
+        condition_ratio,
+        (
+            30,
+            max(settings.live.condition_bar_min_green + 40, 180),
+            30,
+        ),
+    )
+    if in_combat:
+        _draw_roi_fill(
+            image,
+            settings.live.combat_indicator_roi,
+            (
+                max(settings.live.combat_indicator_min_red + 30, 200),
+                20,
+                20,
+            ),
+        )
+    if reward_visible:
+        _draw_roi_fill(
+            image,
+            settings.live.reward_roi,
+            (
+                max(settings.live.reward_min_red + 20, 220),
+                max(settings.live.reward_min_green + 20, 180),
+                max(0, settings.live.reward_max_blue - 20),
+            ),
+        )
+    return LiveFrame(
+        width=width,
+        height=height,
+        captured_at_ts=captured_at_ts,
+        source=source,
+        metadata={},
+        image=image,
+    )
+
+
+def _build_resource_frame(
+    settings: Settings,
+    *,
+    hp_ratio: float,
+    condition_ratio: float,
+    in_combat: bool = False,
+    reward_visible: bool = False,
+    captured_at_ts: float = 100.0,
+    source: str = "resource-frame",
+) -> LiveFrame:
+    return _build_state_resource_frame(
+        settings,
+        hp_ratio=hp_ratio,
+        condition_ratio=condition_ratio,
+        in_combat=in_combat,
+        reward_visible=reward_visible,
+        captured_at_ts=captured_at_ts,
+        source=source,
+    )
+
+
+class _FakeRestRuntime:
+    def __init__(self, settings: Settings, frames: list[LiveFrame]) -> None:
+        self.settings = settings
+        self._frames = list(frames)
+        self._session_state = LiveSessionState()
+        self.updated_resources: tuple[float, float] | None = None
+
+    @property
+    def session_state(self) -> LiveSessionState:
+        return self._session_state
+
+    def capture_frame(self, *, cycle_id: int, phase: str, default_ts: float) -> LiveFrame:
+        assert cycle_id >= 0
+        assert phase.startswith("rest_sample_")
+        assert default_ts >= 0.0
+        if not self._frames:
+            raise AssertionError("Brak kolejnych klatek dla fake runtime.")
+        return self._frames.pop(0)
+
+    def update_resources(self, *, hp_ratio: float, condition_ratio: float) -> None:
+        self.updated_resources = (hp_ratio, condition_ratio)
+        self._session_state.hp_ratio = hp_ratio
+        self._session_state.condition_ratio = condition_ratio
 
 
 def _write_simple_marker_first_templates(root: Path) -> tuple[Path, Path]:
@@ -359,12 +517,269 @@ def test_point_in_polygon_accepts_points_inside_and_on_edge() -> None:
     assert point_in_polygon(point_xy=(150.0, 50.0), polygon=polygon) is False
 
 
+def test_window_relative_capture_bbox_is_computed_from_window_bbox() -> None:
+    capture_bbox = _calculate_window_relative_capture_bbox(
+        (100, 200, 1380, 920),
+        CaptureRegion(left=20, top=30, width=640, height=320),
+    )
+
+    assert capture_bbox == (120, 230, 760, 550)
+
+
 def test_should_start_rest_when_hp_or_condition_is_below_threshold() -> None:
     combat_config = load_default_config().combat
 
     assert should_start_rest(hp_ratio=0.49, condition_ratio=0.95, combat_config=combat_config) is True
     assert should_start_rest(hp_ratio=0.95, condition_ratio=0.49, combat_config=combat_config) is True
     assert should_start_rest(hp_ratio=0.95, condition_ratio=0.95, combat_config=combat_config) is False
+
+
+def test_live_resource_provider_reads_hp_and_condition_from_pixels(tmp_path: Path) -> None:
+    settings = _build_live_settings(tmp_path)
+    frame = _build_state_resource_frame(
+        settings,
+        hp_ratio=0.74,
+        condition_ratio=0.58,
+        captured_at_ts=101.0,
+    )
+
+    snapshot = LiveResourceProvider(settings.live).read_resources(frame)
+
+    assert snapshot.metadata["source"] == "pixel"
+    assert snapshot.hp_ratio == pytest.approx(0.74, abs=0.03)
+    assert snapshot.condition_ratio == pytest.approx(0.58, abs=0.03)
+    assert snapshot.metadata["hp"]["roi"]["name"] == "hp_bar_roi"
+    assert snapshot.metadata["condition"]["roi"]["name"] == "condition_bar_roi"
+
+
+def test_simple_state_detector_reads_combat_and_reward_from_pixels(tmp_path: Path) -> None:
+    settings = _build_live_settings(tmp_path)
+    frame = _build_state_resource_frame(
+        settings,
+        hp_ratio=0.80,
+        condition_ratio=0.80,
+        in_combat=True,
+        reward_visible=True,
+        captured_at_ts=102.0,
+    )
+
+    snapshot = SimpleStateDetector(settings.live).detect_state(frame)
+
+    assert snapshot.in_combat is True
+    assert snapshot.reward_visible is True
+    assert snapshot.metadata["source"] == "pixel"
+    assert snapshot.metadata["combat_indicator"]["active_ratio"] >= settings.live.combat_indicator_min_ratio
+    assert snapshot.metadata["reward_visibility"]["active_ratio"] >= settings.live.reward_min_ratio
+
+
+def test_live_resource_provider_aggregates_multi_frame_reads_with_median(tmp_path: Path) -> None:
+    settings = _build_live_settings(tmp_path)
+    provider = LiveResourceProvider(settings.live)
+    samples = (
+        LiveResourceSnapshot(
+            hp_ratio=0.60,
+            condition_ratio=0.40,
+            metadata={
+                "source": "pixel",
+                "hp": {"fill_ratio": 0.60, "matching_pixels": 40, "total_pixels": 100},
+                "condition": {"fill_ratio": 0.40, "matching_pixels": 32, "total_pixels": 100},
+            },
+        ),
+        LiveResourceSnapshot(
+            hp_ratio=0.63,
+            condition_ratio=0.45,
+            metadata={
+                "source": "pixel",
+                "hp": {"fill_ratio": 0.63, "matching_pixels": 42, "total_pixels": 100},
+                "condition": {"fill_ratio": 0.45, "matching_pixels": 35, "total_pixels": 100},
+            },
+        ),
+        LiveResourceSnapshot(
+            hp_ratio=0.61,
+            condition_ratio=0.43,
+            metadata={
+                "source": "pixel",
+                "hp": {"fill_ratio": 0.61, "matching_pixels": 41, "total_pixels": 100},
+                "condition": {"fill_ratio": 0.43, "matching_pixels": 34, "total_pixels": 100},
+            },
+        ),
+    )
+
+    aggregate = provider.aggregate_resource_reads(samples)
+
+    assert aggregate.sample_count == 3
+    assert aggregate.hp_ratio == pytest.approx(0.61)
+    assert aggregate.condition_ratio == pytest.approx(0.43)
+    assert aggregate.hp_spread == pytest.approx(0.03)
+    assert aggregate.condition_spread == pytest.approx(0.05)
+    assert aggregate.confidence > 0.45
+    assert "resource_confidence_low" in aggregate.warnings
+
+
+def test_live_resource_provider_marks_unstable_reads_with_warnings(tmp_path: Path) -> None:
+    settings = _build_live_settings(tmp_path)
+    provider = LiveResourceProvider(settings.live)
+    samples = (
+        LiveResourceSnapshot(
+            hp_ratio=0.20,
+            condition_ratio=0.25,
+            metadata={
+                "source": "pixel",
+                "hp": {"fill_ratio": 0.20, "matching_pixels": 8, "total_pixels": 100},
+                "condition": {"fill_ratio": 0.25, "matching_pixels": 10, "total_pixels": 100},
+            },
+        ),
+        LiveResourceSnapshot(
+            hp_ratio=0.78,
+            condition_ratio=0.82,
+            metadata={
+                "source": "pixel",
+                "hp": {"fill_ratio": 0.78, "matching_pixels": 45, "total_pixels": 100},
+                "condition": {"fill_ratio": 0.82, "matching_pixels": 48, "total_pixels": 100},
+            },
+        ),
+        LiveResourceSnapshot(
+            hp_ratio=0.34,
+            condition_ratio=0.36,
+            metadata={
+                "source": "metadata_fallback",
+                "hp": {"fill_ratio": 0.34, "matching_pixels": 0, "total_pixels": 100},
+                "condition": {"fill_ratio": 0.36, "matching_pixels": 0, "total_pixels": 100},
+            },
+        ),
+    )
+
+    aggregate = provider.aggregate_resource_reads(
+        samples,
+        previous_snapshot=LiveResourceSnapshot(
+            hp_ratio=0.70,
+            condition_ratio=0.75,
+            metadata={"source": "previous"},
+        ),
+    )
+
+    assert aggregate.confidence < settings.live.rest_resource_min_confidence
+    assert "resource_metadata_fallback_used" in aggregate.warnings
+    assert "hp_read_spread_high" in aggregate.warnings
+    assert "condition_read_spread_high" in aggregate.warnings
+    assert "resource_confidence_low" in aggregate.warnings
+    assert "hp_dropped_during_rest" in aggregate.warnings
+    assert "condition_dropped_during_rest" in aggregate.warnings
+
+
+def test_live_rest_provider_stops_when_threshold_is_stably_reached(tmp_path: Path) -> None:
+    settings = _build_live_settings(tmp_path)
+    settings = replace(
+        settings,
+        live=replace(
+            settings.live,
+            rest_resource_sample_count=3,
+            rest_resource_max_ticks=4,
+            rest_resource_min_confidence=0.60,
+            rest_resource_growth_min_delta=0.01,
+        ),
+    )
+    frames = [
+        _build_state_resource_frame(settings, hp_ratio=0.58, condition_ratio=0.55, captured_at_ts=100.00, source="rest-1-1"),
+        _build_state_resource_frame(settings, hp_ratio=0.60, condition_ratio=0.56, captured_at_ts=100.10, source="rest-1-2"),
+        _build_state_resource_frame(settings, hp_ratio=0.59, condition_ratio=0.57, captured_at_ts=100.20, source="rest-1-3"),
+        _build_state_resource_frame(settings, hp_ratio=0.93, condition_ratio=0.92, captured_at_ts=100.50, source="rest-2-1"),
+        _build_state_resource_frame(settings, hp_ratio=0.94, condition_ratio=0.93, captured_at_ts=100.60, source="rest-2-2"),
+        _build_state_resource_frame(settings, hp_ratio=0.95, condition_ratio=0.94, captured_at_ts=100.70, source="rest-2-3"),
+    ]
+    runtime = _FakeRestRuntime(settings, frames)
+    provider = LiveRestProvider(
+        runtime,
+        input_driver=LiveInputDriver(
+            logger=logging.getLogger("botlab.test.rest"),
+            dry_run=True,
+            enable_real_input=False,
+            enable_real_clicks=False,
+            enable_real_keys=False,
+        ),
+        resource_provider=LiveResourceProvider(settings.live),
+    )
+
+    timeline = provider.apply_rest(
+        1,
+        rest_started_ts=100.0,
+        starting_hp_ratio=0.55,
+        starting_condition_ratio=0.50,
+        observation=Observation(
+            cycle_id=1,
+            observed_at_ts=99.0,
+            signal_detected=True,
+            actual_spawn_ts=99.0,
+            source="test",
+            confidence=1.0,
+            metadata={},
+        ),
+    )
+
+    assert len(timeline.snapshots) == 2
+    assert timeline.snapshots[-1].snapshot.metadata["rest_decision"] == "rest_stop_threshold_reached"
+    assert timeline.metadata["rest_stop_threshold_reached_count"] == 1
+    assert timeline.metadata["rest_stalled_or_uncertain_count"] == 0
+    assert timeline.metadata["rest_stabilized_tick_index"] == 2
+    assert timeline.metadata["resource_final_hp_ratio"] == pytest.approx(0.94, abs=0.03)
+    assert timeline.metadata["resource_final_condition_ratio"] == pytest.approx(0.93, abs=0.03)
+    assert runtime.updated_resources is not None
+    assert runtime.updated_resources[0] >= settings.combat.rest_stop_threshold
+
+
+def test_live_rest_provider_warns_when_read_is_unstable(tmp_path: Path) -> None:
+    settings = _build_live_settings(tmp_path)
+    settings = replace(
+        settings,
+        live=replace(
+            settings.live,
+            rest_resource_sample_count=3,
+            rest_resource_max_ticks=1,
+            rest_resource_min_confidence=0.70,
+            rest_resource_warning_spread_threshold=0.08,
+        ),
+    )
+    frames = [
+        _build_state_resource_frame(settings, hp_ratio=0.20, condition_ratio=0.20, captured_at_ts=100.00, source="rest-u-1"),
+        _build_state_resource_frame(settings, hp_ratio=0.80, condition_ratio=0.82, captured_at_ts=100.10, source="rest-u-2"),
+        _build_state_resource_frame(settings, hp_ratio=0.35, condition_ratio=0.30, captured_at_ts=100.20, source="rest-u-3"),
+    ]
+    runtime = _FakeRestRuntime(settings, frames)
+    provider = LiveRestProvider(
+        runtime,
+        input_driver=LiveInputDriver(
+            logger=logging.getLogger("botlab.test.rest"),
+            dry_run=True,
+            enable_real_input=False,
+            enable_real_clicks=False,
+            enable_real_keys=False,
+        ),
+        resource_provider=LiveResourceProvider(settings.live),
+    )
+
+    timeline = provider.apply_rest(
+        1,
+        rest_started_ts=100.0,
+        starting_hp_ratio=0.25,
+        starting_condition_ratio=0.25,
+        observation=Observation(
+            cycle_id=1,
+            observed_at_ts=99.0,
+            signal_detected=True,
+            actual_spawn_ts=99.0,
+            source="test",
+            confidence=1.0,
+            metadata={},
+        ),
+    )
+
+    assert len(timeline.snapshots) == 1
+    snapshot_metadata = timeline.snapshots[0].snapshot.metadata
+    assert snapshot_metadata["rest_decision"] == "rest_stalled_or_uncertain"
+    assert snapshot_metadata["resource_warning_count"] >= 1
+    assert "resource_confidence_low" in snapshot_metadata["resource_warnings"]
+    assert timeline.metadata["rest_stalled_or_uncertain_count"] == 1
+    assert timeline.metadata["resource_warning_count"] >= 1
 
 
 def test_stall_detector_marks_stall_after_one_second_without_progress() -> None:
@@ -516,6 +931,110 @@ def test_scene_profile_calibration_scales_polygon_and_reference_point(tmp_path: 
     assert calibrated.reference_point_xy == pytest.approx((60.0, 29.0))
     assert calibrated.spawn_zone_polygon[0] == pytest.approx((20.0, 9.0))
     assert calibrated.spawn_zone_polygon[2] == pytest.approx((100.0, 49.0))
+
+
+def test_scene_profile_calibration_can_follow_frame_center_anchor(tmp_path: Path) -> None:
+    from PIL import Image
+
+    reference_path = tmp_path / "reference_scene.png"
+    Image.new("RGB", (200, 100), color=(0, 0, 0)).save(reference_path)
+    profile_path = tmp_path / "scene_profile_anchor.json"
+    profile_path.write_text(
+        json.dumps(
+            {
+                "scene_name": "anchored_scene",
+                "reference_frame_path": str(reference_path),
+                "reference_point_xy": [60, 40],
+                "spawn_zone_polygon": [
+                    [20, 20],
+                    [120, 20],
+                    [120, 80],
+                    [20, 80],
+                ],
+                "sub_rois": {
+                    "spawn_focus_roi": [10, 15, 80, 40]
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    profile = SceneProfileLoader(profile_path).load()
+
+    assert profile is not None
+    calibrated = profile.calibrate(
+        frame_width=200,
+        frame_height=100,
+        offset_xy=(0, 0),
+        anchor_target_xy=(100.0, 50.0),
+        anchor_mode="frame_center",
+    )
+
+    assert calibrated.reference_point_xy == pytest.approx((100.0, 50.0))
+    assert calibrated.anchor_mode == "frame_center"
+    assert calibrated.anchor_target_xy == pytest.approx((100.0, 50.0))
+    assert calibrated.anchor_adjustment_xy == pytest.approx((40.0, 10.0))
+    assert calibrated.spawn_zone_polygon[0] == pytest.approx((60.0, 30.0))
+    assert calibrated.sub_rois["spawn_focus_roi"] == (50, 25, 80, 40)
+
+
+def test_scene_profile_spawn_focus_roi_overrides_config_spawn_roi(tmp_path: Path) -> None:
+    settings = _build_live_settings(tmp_path)
+    scene_profile_path = tmp_path / "scene_profile.json"
+    scene_profile_path.write_text(
+        json.dumps(
+            {
+                "scene_name": "spawn_focus_scene",
+                "reference_frame_path": None,
+                "reference_point_xy": [100, 100],
+                "spawn_zone_polygon": [
+                    [10, 10],
+                    [210, 10],
+                    [210, 210],
+                    [10, 210],
+                ],
+                "sub_rois": {
+                    "spawn_focus_roi": [30, 40, 120, 90]
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    settings = replace(settings, live=replace(settings.live, scene_profile_path=scene_profile_path))
+    runner = PerceptionAnalysisRunner(
+        live_config=settings.live,
+        output_directory=tmp_path / "scene-focus-output",
+    )
+    frame_path = tmp_path / "frame.json"
+    frame_path.write_text(
+        json.dumps(
+            {
+                "width": 240,
+                "height": 220,
+                "captured_at_ts": 1.0,
+                "source": "scene-focus",
+                "metadata": {
+                    "template_hits": [],
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    summary = runner.analyze_frame_path(frame_path)
+    result = summary.frame_results[0]
+
+    assert result.roi["x"] == 30
+    assert result.roi["y"] == 40
+    assert result.roi["width"] == 120
+    assert result.roi["height"] == 90
+    assert result.roi["source"] == "scene_profile"
 
 
 def test_scene_calibration_is_applied_before_zone_filtering(tmp_path: Path) -> None:
@@ -981,6 +1500,118 @@ def test_benchmark_summary_aggregates_false_positive_and_false_negative_counts(t
     assert summary.benchmark_summary.false_negative_count.max_value == pytest.approx(0.0)
 
 
+def test_perception_result_contains_detection_diagnostics(tmp_path: Path) -> None:
+    settings = _build_live_settings(tmp_path)
+    frame_path = tmp_path / "diagnostics_frame.json"
+    frame_path.write_text(
+        json.dumps(
+            {
+                "width": 320,
+                "height": 240,
+                "captured_at_ts": 30.0,
+                "source": "diagnostics-frame",
+                "metadata": {
+                    "reference_point_xy": [160, 210],
+                    "template_hits": [
+                        {
+                            "label": "mob_a",
+                            "x": 120,
+                            "y": 80,
+                            "width": 40,
+                            "height": 50,
+                            "confidence": 0.90,
+                            "target_id": "inside-free",
+                            "metadata": {"raw_hit_count": 2},
+                        },
+                        {
+                            "label": "mob_b",
+                            "x": 220,
+                            "y": 80,
+                            "width": 40,
+                            "height": 50,
+                            "confidence": 0.20,
+                            "target_id": "low-confidence",
+                        },
+                    ],
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    runner = PerceptionAnalysisRunner(
+        live_config=settings.live,
+        output_directory=tmp_path / "diagnostics-output",
+    )
+
+    summary = runner.analyze_frame_path(frame_path)
+    diagnostics = summary.frame_results[0].diagnostics
+
+    assert diagnostics["raw_hit_summary"]["mob_a"] == 1
+    assert diagnostics["raw_hit_summary"]["mob_b"] == 1
+    assert len(diagnostics["low_confidence_hits"]) == 1
+    assert diagnostics["low_confidence_hits"][0]["rejection_reason"] == "low_confidence"
+    assert diagnostics["selection_reason"] == "nearest_free_in_zone_reachable_target"
+    assert len(diagnostics["summary_lines"]) >= 3
+
+
+def test_benchmark_summary_contains_worst_frames_ranked_by_errors(tmp_path: Path) -> None:
+    settings = _write_marker_first_benchmark_dataset(tmp_path)
+    runner = PerceptionAnalysisRunner(
+        live_config=settings.live,
+        output_directory=tmp_path / "worst-frame-output",
+        strict_pixel_only=True,
+    )
+
+    summary = runner.analyze_benchmark_split("regression")
+
+    assert len(summary.worst_frames) >= 1
+    assert "frame_source" in summary.worst_frames[0]
+    assert "false_positive_count" in summary.worst_frames[0]
+    persisted = json.loads(
+        (tmp_path / "worst-frame-output" / "perception_session_summary.json").read_text(encoding="utf-8")
+    )
+    assert isinstance(persisted["worst_frames"], list)
+
+
+def test_compare_perception_summary_payloads_reports_accuracy_and_latency_deltas() -> None:
+    baseline_payload = {
+        "benchmark_summary": {
+            "target_recall": 0.70,
+            "target_precision": 0.75,
+            "occupied_classification_accuracy": 0.80,
+            "selected_target_accuracy": 0.60,
+            "target_false_positive_count": 6,
+            "target_false_negative_count": 5,
+        },
+        "detection_latency": {"avg_ms": 20.0},
+        "selection_latency": {"avg_ms": 5.0},
+        "total_reaction_latency": {"avg_ms": 28.0},
+    }
+    candidate_payload = {
+        "benchmark_summary": {
+            "target_recall": 0.82,
+            "target_precision": 0.79,
+            "occupied_classification_accuracy": 0.90,
+            "selected_target_accuracy": 0.75,
+            "target_false_positive_count": 4,
+            "target_false_negative_count": 3,
+        },
+        "detection_latency": {"avg_ms": 24.0},
+        "selection_latency": {"avg_ms": 4.0},
+        "total_reaction_latency": {"avg_ms": 31.0},
+    }
+
+    comparison = compare_perception_summary_payloads(baseline_payload, candidate_payload)
+
+    assert comparison["target_recall_delta"] == pytest.approx(0.12)
+    assert comparison["target_precision_delta"] == pytest.approx(0.04)
+    assert comparison["selected_target_accuracy_delta"] == pytest.approx(0.15)
+    assert comparison["false_positive_total_delta"] == pytest.approx(-2.0)
+    assert comparison["detection_latency_avg_ms_delta"] == pytest.approx(4.0)
+
+
 def test_benchmark_summary_tracks_out_of_zone_rejections_for_scene_aware_frames(
     tmp_path: Path,
 ) -> None:
@@ -1141,6 +1772,129 @@ def test_marker_first_perception_detects_occupied_and_selects_nearest_free_targe
     assert "occupied_template_match_enabled" in result.selected_target.metadata
     assert "confirmation_foreground_score" in result.selected_target.metadata
     assert (output_directory / "marker_frame_perception.json").exists() is True
+
+
+def test_marker_first_perception_can_detect_yellow_marker_for_live_profile(
+    tmp_path: Path,
+) -> None:
+    from PIL import Image, ImageDraw
+
+    settings = _build_marker_first_settings(tmp_path)
+    settings = replace(
+        settings,
+        live=replace(
+            settings.live,
+            marker_color_mode="yellow",
+            marker_min_red=170,
+            marker_min_green=145,
+            marker_red_blue_delta=25,
+            marker_green_blue_delta=40,
+            marker_red_green_balance_delta=70,
+            marker_confidence_threshold=0.40,
+        ),
+    )
+    output_directory = tmp_path / "perception-yellow-marker"
+    frame_path = tmp_path / "yellow_marker_frame.png"
+    sidecar_path = tmp_path / "yellow_marker_frame.json"
+
+    frame_image = Image.new("RGB", (320, 240), color=(40, 40, 40))
+    draw = ImageDraw.Draw(frame_image)
+    mob_a_template = Image.open(settings.live.mobs_template_directory / "mob_a" / "base.png").convert("RGB")
+
+    frame_image.paste(mob_a_template, (150, 102))
+    draw.polygon([(159, 90), (163, 84), (167, 90), (163, 96)], fill=(230, 205, 32))
+
+    frame_image.save(frame_path)
+    sidecar_path.write_text(
+        json.dumps(
+            {
+                "captured_at_ts": 101.0,
+                "source": "yellow-marker-test",
+                "metadata": {
+                    "spawn_roi": [0, 0, 320, 240],
+                    "reference_point_xy": [160, 210],
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    runner = PerceptionAnalysisRunner(
+        live_config=settings.live,
+        output_directory=output_directory,
+    )
+    summary = runner.analyze_frame_path(frame_path)
+    result = summary.frame_results[0]
+
+    assert result.candidate_hit_count >= 1
+    assert any(hit.label == "yellow_marker" for hit in result.raw_hits)
+    assert len(result.detections) >= 1
+
+
+def test_marker_first_perception_rejects_large_yellow_blob_without_dark_core(
+    tmp_path: Path,
+) -> None:
+    from PIL import Image, ImageDraw
+
+    settings = _build_marker_first_settings(tmp_path)
+    settings = replace(
+        settings,
+        live=replace(
+            settings.live,
+            marker_color_mode="yellow",
+            marker_min_red=170,
+            marker_min_green=145,
+            marker_red_blue_delta=25,
+            marker_green_blue_delta=40,
+            marker_red_green_balance_delta=70,
+            marker_min_blob_pixels=10,
+            marker_max_blob_pixels=72,
+            marker_min_width_px=5,
+            marker_max_width_px=18,
+            marker_min_height_px=6,
+            marker_max_height_px=20,
+            marker_min_fill_density=0.18,
+            marker_max_fill_density=0.78,
+            marker_dark_core_max_rgb=125,
+            marker_min_dark_core_ratio=0.08,
+            marker_confidence_threshold=0.40,
+        ),
+    )
+    output_directory = tmp_path / "perception-yellow-blob"
+    frame_path = tmp_path / "yellow_blob_frame.png"
+    sidecar_path = tmp_path / "yellow_blob_frame.json"
+
+    frame_image = Image.new("RGB", (320, 240), color=(40, 40, 40))
+    draw = ImageDraw.Draw(frame_image)
+    draw.ellipse((150, 90, 178, 118), fill=(240, 190, 25))
+    frame_image.save(frame_path)
+    sidecar_path.write_text(
+        json.dumps(
+            {
+                "captured_at_ts": 102.0,
+                "source": "yellow-blob-test",
+                "metadata": {
+                    "spawn_roi": [0, 0, 320, 240],
+                    "reference_point_xy": [160, 210],
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    runner = PerceptionAnalysisRunner(
+        live_config=settings.live,
+        output_directory=output_directory,
+    )
+    summary = runner.analyze_frame_path(frame_path)
+    result = summary.frame_results[0]
+
+    assert all(hit.label != "yellow_marker" for hit in result.raw_hits)
+    assert len(result.detections) == 0
 
 
 def test_live_preview_state_and_renderer_prepare_debug_overlay(tmp_path: Path) -> None:
@@ -1329,6 +2083,156 @@ def test_simple_state_detector_can_detect_reward_from_pixels(tmp_path: Path) -> 
     assert state.metadata["source"] == "pixel"
 
 
+def test_live_resource_provider_aggregates_multi_frame_reads_with_median_and_confidence(
+    tmp_path: Path,
+) -> None:
+    settings = _build_live_settings(tmp_path)
+    provider = LiveResourceProvider(settings.live)
+    samples = (
+        provider.read_resources(_build_resource_frame(settings, hp_ratio=0.50, condition_ratio=0.60)),
+        provider.read_resources(_build_resource_frame(settings, hp_ratio=0.55, condition_ratio=0.62)),
+        provider.read_resources(_build_resource_frame(settings, hp_ratio=0.90, condition_ratio=0.95)),
+    )
+
+    aggregate = provider.aggregate_resource_reads(samples)
+
+    assert aggregate.sample_count == 3
+    assert aggregate.hp_ratio == pytest.approx(0.55, rel=0.05)
+    assert aggregate.condition_ratio == pytest.approx(0.62, rel=0.05)
+    assert aggregate.confidence > 0.0
+
+
+def test_live_resource_provider_marks_unstable_reads_with_warning(tmp_path: Path) -> None:
+    settings = _build_live_settings(tmp_path)
+    provider = LiveResourceProvider(
+        replace(settings.live, rest_resource_warning_spread_threshold=0.05, rest_resource_min_confidence=0.8)
+    )
+    samples = (
+        provider.read_resources(_build_resource_frame(settings, hp_ratio=0.20, condition_ratio=0.30)),
+        provider.read_resources(_build_resource_frame(settings, hp_ratio=0.85, condition_ratio=0.88)),
+        provider.read_resources(_build_resource_frame(settings, hp_ratio=0.25, condition_ratio=0.32)),
+    )
+
+    aggregate = provider.aggregate_resource_reads(samples)
+
+    assert "hp_read_spread_high" in aggregate.warnings
+    assert "condition_read_spread_high" in aggregate.warnings
+    assert "resource_confidence_low" in aggregate.warnings
+
+
+def test_live_rest_provider_uses_stable_multi_frame_read_to_stop_rest(tmp_path: Path) -> None:
+    settings = _build_live_settings(tmp_path)
+    live_settings = replace(
+        settings.live,
+        rest_resource_sample_count=3,
+        rest_resource_sample_interval_s=0.01,
+        rest_resource_max_ticks=4,
+        rest_resource_min_confidence=0.50,
+    )
+    settings = replace(settings, live=live_settings)
+    frames = [
+        _build_resource_frame(settings, hp_ratio=0.55, condition_ratio=0.60),
+        _build_resource_frame(settings, hp_ratio=0.57, condition_ratio=0.61),
+        _build_resource_frame(settings, hp_ratio=0.56, condition_ratio=0.62),
+        _build_resource_frame(settings, hp_ratio=0.93, condition_ratio=0.91),
+        _build_resource_frame(settings, hp_ratio=0.94, condition_ratio=0.92),
+        _build_resource_frame(settings, hp_ratio=0.95, condition_ratio=0.93),
+    ]
+
+    class FakeRuntime:
+        def __init__(self, settings_obj: Settings, frame_list: list[LiveFrame]) -> None:
+            self.settings = settings_obj
+            self._frames = list(frame_list)
+            self.updated_resources: tuple[float, float] | None = None
+
+        def capture_frame(self, *, cycle_id: int, phase: str, default_ts: float) -> LiveFrame:
+            assert self._frames, f"Brak przygotowanej klatki dla phase={phase}"
+            return self._frames.pop(0)
+
+        def update_resources(self, *, hp_ratio: float, condition_ratio: float) -> None:
+            self.updated_resources = (hp_ratio, condition_ratio)
+
+    import logging
+
+    runtime = FakeRuntime(settings, frames)
+    provider = LiveRestProvider(
+        runtime,
+        input_driver=LiveInputDriver(logger=logging.getLogger("botlab.live.test.rest"), dry_run=True),
+        resource_provider=LiveResourceProvider(settings.live),
+    )
+
+    timeline = provider.apply_rest(
+        cycle_id=1,
+        rest_started_ts=100.0,
+        starting_hp_ratio=0.40,
+        starting_condition_ratio=0.45,
+        observation=Observation(cycle_id=1, observed_at_ts=100.0, signal_detected=True),
+    )
+
+    assert len(timeline.snapshots) == 2
+    assert timeline.snapshots[-1].snapshot.metadata["rest_decision"] == "rest_stop_threshold_reached"
+    assert timeline.metadata["rest_stop_threshold_reached_count"] == 1
+    assert timeline.metadata["rest_stalled_or_uncertain_count"] == 0
+    assert runtime.updated_resources is not None
+    assert runtime.updated_resources[0] >= 0.9
+    assert runtime.updated_resources[1] >= 0.9
+
+
+def test_live_rest_provider_warns_when_rest_read_is_uncertain(tmp_path: Path) -> None:
+    settings = _build_live_settings(tmp_path)
+    live_settings = replace(
+        settings.live,
+        rest_resource_sample_count=3,
+        rest_resource_sample_interval_s=0.01,
+        rest_resource_max_ticks=2,
+        rest_resource_min_confidence=0.80,
+        rest_resource_warning_spread_threshold=0.04,
+    )
+    settings = replace(settings, live=live_settings)
+    frames = [
+        _build_resource_frame(settings, hp_ratio=0.40, condition_ratio=0.40),
+        _build_resource_frame(settings, hp_ratio=0.85, condition_ratio=0.88),
+        _build_resource_frame(settings, hp_ratio=0.35, condition_ratio=0.42),
+        _build_resource_frame(settings, hp_ratio=0.41, condition_ratio=0.41),
+        _build_resource_frame(settings, hp_ratio=0.84, condition_ratio=0.87),
+        _build_resource_frame(settings, hp_ratio=0.36, condition_ratio=0.43),
+    ]
+
+    class FakeRuntime:
+        def __init__(self, settings_obj: Settings, frame_list: list[LiveFrame]) -> None:
+            self.settings = settings_obj
+            self._frames = list(frame_list)
+            self.updated_resources: tuple[float, float] | None = None
+
+        def capture_frame(self, *, cycle_id: int, phase: str, default_ts: float) -> LiveFrame:
+            return self._frames.pop(0)
+
+        def update_resources(self, *, hp_ratio: float, condition_ratio: float) -> None:
+            self.updated_resources = (hp_ratio, condition_ratio)
+
+    import logging
+
+    runtime = FakeRuntime(settings, frames)
+    provider = LiveRestProvider(
+        runtime,
+        input_driver=LiveInputDriver(logger=logging.getLogger("botlab.live.test.rest.uncertain"), dry_run=True),
+        resource_provider=LiveResourceProvider(settings.live),
+    )
+
+    timeline = provider.apply_rest(
+        cycle_id=2,
+        rest_started_ts=200.0,
+        starting_hp_ratio=0.30,
+        starting_condition_ratio=0.30,
+        observation=Observation(cycle_id=2, observed_at_ts=200.0, signal_detected=True),
+    )
+
+    assert timeline.metadata["rest_stop_threshold_reached_count"] == 0
+    assert timeline.metadata["rest_stalled_or_uncertain_count"] >= 1
+    assert timeline.metadata["resource_warning_count"] >= 1
+    assert "resource_confidence_low" in timeline.snapshots[0].snapshot.metadata["resource_warnings"]
+
+
 def test_live_input_driver_real_path_plumbing_can_be_mocked(monkeypatch) -> None:
     import logging
 
@@ -1362,6 +2266,43 @@ def test_live_input_driver_real_path_plumbing_can_be_mocked(monkeypatch) -> None
     assert driver.events[-1].payload["absolute_y"] == 500
 
 
+def test_live_input_driver_uses_capture_bbox_from_window_guard_for_click_offset(monkeypatch) -> None:
+    import logging
+
+    logger = logging.getLogger("botlab.live.test.input.guard.offset")
+    driver = LiveInputDriver(
+        logger=logger,
+        dry_run=False,
+        enable_real_input=True,
+        enable_real_clicks=True,
+        screen_offset_xy=(100, 200),
+        real_input_guard=lambda: (
+            True,
+            "window_guard_ok",
+            {"capture_bbox": [1000, 300, 2280, 1020]},
+        ),
+    )
+    calls: list[tuple[int, int]] = []
+
+    def fake_perform_right_click(*, absolute_x: int, absolute_y: int) -> str:
+        calls.append((absolute_x, absolute_y))
+        return "real_click_sent"
+
+    monkeypatch.setattr(driver, "_perform_right_click", fake_perform_right_click)
+    driver.right_click_target(
+        LiveTargetDetection(
+            target_id="front-free",
+            screen_x=620,
+            screen_y=300,
+            distance=1.5,
+        )
+    )
+
+    assert calls == [(1620, 600)]
+    assert driver.events[-1].payload["absolute_x"] == 1620
+    assert driver.events[-1].payload["absolute_y"] == 600
+
+
 def test_live_input_driver_real_key_path_can_be_mocked(monkeypatch) -> None:
     import logging
 
@@ -1386,6 +2327,37 @@ def test_live_input_driver_real_key_path_can_be_mocked(monkeypatch) -> None:
     assert pressed_keys == ["r", "1", "space"]
     assert driver.events[0].payload["execution_status"] == "real_key_sent"
     assert driver.events[1].payload["execution_statuses"] == ["real_key_sent", "real_key_sent"]
+
+
+def test_live_input_driver_blocks_real_input_when_window_guard_rejects() -> None:
+    import logging
+
+    driver = LiveInputDriver(
+        logger=logging.getLogger("botlab.live.test.window_guard"),
+        dry_run=False,
+        enable_real_input=True,
+        enable_real_clicks=True,
+        enable_real_keys=True,
+        real_input_guard=lambda: (
+            False,
+            "foreground_window_mismatch",
+            {"foreground_matches": False, "configured_window_title": "Game Window"},
+        ),
+    )
+
+    driver.right_click_target(
+        LiveTargetDetection(
+            target_id="guarded-target",
+            screen_x=320,
+            screen_y=240,
+            distance=1.0,
+        )
+    )
+    driver.press_key("r")
+
+    assert driver.events[0].payload["execution_status"] == "window_guard_blocked"
+    assert driver.events[0].payload["guard_reason"] == "foreground_window_mismatch"
+    assert driver.events[1].payload["execution_status"] == "window_guard_blocked"
 
 
 def test_live_input_driver_does_not_send_real_keys_when_disabled() -> None:
@@ -1463,12 +2435,12 @@ def test_live_spot_scene_sidecar_is_loaded_for_real_sample_frames() -> None:
     roi = extract_named_roi(frame, roi_name="spawn_roi", live_config=settings.live)
 
     assert frame.source == "live_spot_scene_1"
-    assert frame.metadata["reference_point_xy"] == [1380, 700]
+    assert frame.metadata["reference_point_xy"] == [760, 285]
     assert frame.metadata["template_match_stride_px"] == 12
-    assert roi["x"] == 720
-    assert roi["y"] == 220
-    assert roi["width"] == 1280
-    assert roi["height"] == 720
+    assert roi["x"] == 80
+    assert roi["y"] == 300
+    assert roi["width"] == 1360
+    assert roi["height"] == 640
 
 
 def test_live_spot_scenes_match_expected_perception_contracts(tmp_path: Path) -> None:
@@ -1621,6 +2593,24 @@ def test_live_runner_dry_run_executes_minimal_vertical_slice(tmp_path: Path) -> 
     debug_root = settings.live.debug_directory
     assert (debug_root / "cycle_001" / "observation_frame.json").exists() is True
     assert (debug_root / "cycle_001" / "observation_overlay.svg").exists() is True
+
+
+def test_live_runner_cycle_report_contains_rest_resource_metadata(tmp_path: Path) -> None:
+    settings = _build_live_settings(tmp_path)
+    runner = LiveRunner.from_settings(
+        settings,
+        initial_anchor_spawn_ts=100.0,
+        initial_anchor_cycle_id=0,
+        enable_console=False,
+    )
+
+    report = runner.run_cycles(1)
+
+    assert len(report.cycle_records) == 1
+    metadata = report.cycle_records[0]["metadata"]
+    assert metadata["resource_sample_count"] >= 1
+    assert "resource_confidence" in metadata
+    assert "resource_warning_count" in metadata
 
 
 def test_live_engage_session_summary_aggregates_outcomes_and_latencies() -> None:

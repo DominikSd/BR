@@ -331,6 +331,7 @@ class PerceptionFrameResult:
     pipeline_mode: str = "pixel"
     expectations: dict[str, Any] = field(default_factory=dict)
     ground_truth: dict[str, Any] = field(default_factory=dict)
+    diagnostics: dict[str, Any] = field(default_factory=dict)
     artifact_paths: dict[str, Path] = field(default_factory=dict)
 
     @property
@@ -437,6 +438,7 @@ class PerceptionFrameResult:
             "pipeline_mode": self.pipeline_mode,
             "expectations": self.expectations,
             "ground_truth": self.ground_truth,
+            "diagnostics": self.diagnostics,
             "timings": self.timings.to_dict(),
             "artifact_paths": {key: str(path) for key, path in self.artifact_paths.items()},
         }
@@ -471,6 +473,8 @@ class PerceptionSessionSummary:
     strict_pixel_only: bool = False
     accuracy_summary: AccuracySummary | None = None
     benchmark_summary: BenchmarkSummary | None = None
+    tuning_parameters: dict[str, Any] = field(default_factory=dict)
+    worst_frames: tuple[dict[str, Any], ...] = ()
 
     def real_scene_regression_entries(self) -> tuple[dict[str, Any], ...]:
         entries: list[dict[str, Any]] = []
@@ -514,6 +518,8 @@ class PerceptionSessionSummary:
             "selection_latency": self.selection_latency.to_dict(),
             "total_reaction_latency": self.total_reaction_latency.to_dict(),
             "strict_pixel_only": self.strict_pixel_only,
+            "tuning_parameters": self.tuning_parameters,
+            "worst_frames": list(self.worst_frames),
             "frames": [result.to_dict() for result in self.frame_results],
         }
         if self.accuracy_summary is not None:
@@ -600,11 +606,14 @@ class PerceptionAnalyzer:
         cycle_id: int,
         phase: str,
     ) -> PerceptionFrameResult:
-        roi = extract_named_roi(frame, roi_name="spawn_roi", live_config=self._live_config)
         scene_profile = self._scene_profile_loader.load()
         calibrated_scene_profile = self._calibrate_scene_profile(
             scene_profile=scene_profile,
             frame=frame,
+        )
+        roi = self._resolve_spawn_roi(
+            frame=frame,
+            calibrated_scene_profile=calibrated_scene_profile,
         )
         reference_point_xy = _resolve_reference_point(
             frame,
@@ -632,7 +641,7 @@ class PerceptionAnalyzer:
                 reference_point_xy=reference_point_xy,
             )
             pipeline_mode = "metadata_fallback"
-        detections = self._smooth_detections(detections)
+        detections, unstable_rejections = self._smooth_detections(detections)
         detections = self._apply_scene_zone_filter(
             detections=detections,
             scene_profile=calibrated_scene_profile,
@@ -660,6 +669,12 @@ class PerceptionAnalyzer:
             frame=frame,
             phase_key="action_ready_duration_s",
             measured_duration_s=0.0,
+        )
+        diagnostics = self._build_detection_diagnostics(
+            raw_hits=roi_hits,
+            detections=detections,
+            unstable_rejections=unstable_rejections,
+            selected_target=selected_target,
         )
 
         return PerceptionFrameResult(
@@ -690,6 +705,7 @@ class PerceptionAnalyzer:
             pipeline_mode=pipeline_mode,
             expectations=dict(frame.metadata.get("expected_perception", {})),
             ground_truth=dict(frame.metadata.get("ground_truth", {})),
+            diagnostics=diagnostics,
         )
 
     def summarize_session(
@@ -733,6 +749,8 @@ class PerceptionAnalyzer:
                 results,
                 strict_pixel_only=self._strict_pixel_only,
             ),
+            tuning_parameters=_build_detection_tuning_parameters(self._live_config),
+            worst_frames=_build_worst_frame_entries(results),
         )
 
     def _load_metadata_template_hits(self, frame: LiveFrame) -> tuple[TemplateHit, ...]:
@@ -793,11 +811,29 @@ class PerceptionAnalyzer:
     ) -> CalibratedSceneProfile | None:
         if scene_profile is None:
             return None
+        anchor_target_xy = self._resolve_scene_anchor_target(frame=frame)
         return scene_profile.calibrate(
             frame_width=frame.width,
             frame_height=frame.height,
             offset_xy=self._live_config.scene_calibration_offset_xy,
+            anchor_target_xy=anchor_target_xy,
+            anchor_mode=self._live_config.scene_reference_anchor_mode,
         )
+
+    def _resolve_scene_anchor_target(self, *, frame: LiveFrame) -> tuple[float, float] | None:
+        anchor_mode = self._live_config.scene_reference_anchor_mode
+        if anchor_mode == "static":
+            return None
+        if not str(frame.source).startswith("foreground_window_capture"):
+            return None
+        if anchor_mode == "frame_center":
+            return (frame.width / 2.0, frame.height / 2.0)
+        if anchor_mode == "custom":
+            return (
+                float(self._live_config.scene_reference_anchor_xy[0]),
+                float(self._live_config.scene_reference_anchor_xy[1]),
+            )
+        return None
 
     def _run_marker_first_pipeline(
         self,
@@ -819,7 +855,7 @@ class PerceptionAnalyzer:
         roi_image = image.crop(roi_box)
         stride_px = self._resolve_match_stride_px(frame)
 
-        marker_hits = _detect_red_marker_hits(
+        marker_hits = _detect_marker_hits(
             roi_image=roi_image,
             roi_offset_xy=(roi_box[0], roi_box[1]),
             live_config=self._live_config,
@@ -1027,11 +1063,12 @@ class PerceptionAnalyzer:
     def _smooth_detections(
         self,
         detections: tuple[LiveTargetDetection, ...],
-    ) -> tuple[LiveTargetDetection, ...]:
+    ) -> tuple[tuple[LiveTargetDetection, ...], tuple[LiveTargetDetection, ...]]:
         if not detections and not self._track_states:
-            return ()
+            return (), ()
         matched_track_ids: set[str] = set()
         smoothed: list[LiveTargetDetection] = []
+        unstable: list[LiveTargetDetection] = []
         for detection in detections:
             track_id = self._match_track_id(detection, matched_track_ids)
             if track_id is None:
@@ -1056,6 +1093,19 @@ class PerceptionAnalyzer:
             matched_track_ids.add(track_id)
             stable = seen_frames >= self._live_config.candidate_confirmation_frames
             if not stable:
+                unstable.append(
+                    replace(
+                        detection,
+                        metadata={
+                            **detection.metadata,
+                            "track_id": track_id,
+                            "seen_frames": seen_frames,
+                            "occupied_seen_frames": occupied_seen_frames,
+                            "stable_candidate": False,
+                            "rejection_reason": "unstable_candidate",
+                        },
+                    )
+                )
                 continue
             smoothed_occupied = detection.occupied and (
                 occupied_seen_frames >= self._live_config.occupied_confirmation_frames
@@ -1083,7 +1133,10 @@ class PerceptionAnalyzer:
                 stale_track_ids.append(track_id)
         for track_id in stale_track_ids:
             del self._track_states[track_id]
-        return tuple(sorted(smoothed, key=lambda item: (item.distance, item.target_id)))
+        return (
+            tuple(sorted(smoothed, key=lambda item: (item.distance, item.target_id))),
+            tuple(sorted(unstable, key=lambda item: (item.distance, item.target_id))),
+        )
 
     def _match_track_id(
         self,
@@ -1120,6 +1173,130 @@ class PerceptionAnalyzer:
             if isinstance(override_value, (int, float)) and float(override_value) >= 0.0:
                 return float(override_value)
         return measured_duration_s
+
+    def _resolve_spawn_roi(
+        self,
+        *,
+        frame: LiveFrame,
+        calibrated_scene_profile: CalibratedSceneProfile | None,
+    ) -> dict[str, Any]:
+        if calibrated_scene_profile is not None:
+            for roi_name in ("spawn_focus_roi", "spawn_roi"):
+                roi_value = calibrated_scene_profile.sub_rois.get(roi_name)
+                if roi_value is None:
+                    continue
+                return {
+                    "name": roi_name,
+                    "x": int(roi_value[0]),
+                    "y": int(roi_value[1]),
+                    "width": int(roi_value[2]),
+                    "height": int(roi_value[3]),
+                    "frame_width": frame.width,
+                    "frame_height": frame.height,
+                    "source": "scene_profile",
+                }
+        roi = extract_named_roi(frame, roi_name="spawn_roi", live_config=self._live_config)
+        return {
+            **roi,
+            "source": "config",
+        }
+
+    def _build_detection_diagnostics(
+        self,
+        *,
+        raw_hits: tuple[TemplateHit, ...],
+        detections: tuple[LiveTargetDetection, ...],
+        unstable_rejections: tuple[LiveTargetDetection, ...],
+        selected_target: LiveTargetDetection | None,
+    ) -> dict[str, Any]:
+        low_confidence_hits: list[dict[str, Any]] = []
+        duplicate_hits: list[dict[str, Any]] = []
+        for hit in raw_hits:
+            threshold = None
+            if hit.label in {"mob_a", "mob_b"}:
+                threshold = self._live_config.confirmation_confidence_threshold
+            elif hit.label == "occupied_swords":
+                threshold = self._live_config.occupied_confidence_threshold
+            if threshold is not None and hit.confidence < threshold:
+                low_confidence_hits.append(_template_hit_to_dict(hit, rejection_reason="low_confidence"))
+
+        for detection in detections:
+            raw_hit_count = int(detection.metadata.get("raw_hit_count", 1))
+            if raw_hit_count > 1:
+                duplicate_hits.append(
+                    {
+                        "target_id": detection.target_id,
+                        "raw_hit_count": raw_hit_count,
+                        "bbox": None if detection.bbox is None else list(detection.bbox),
+                    }
+                )
+
+        occupied_rejections = [
+            _detection_to_diagnostic_entry(detection, rejection_reason="occupied")
+            for detection in detections
+            if detection.occupied
+        ]
+        out_of_zone_rejections = [
+            _detection_to_diagnostic_entry(detection, rejection_reason="out_of_zone")
+            for detection in detections
+            if not bool(detection.metadata.get("in_scene_zone", True))
+        ]
+        unstable_entries = [
+            _detection_to_diagnostic_entry(detection, rejection_reason="unstable")
+            for detection in unstable_rejections
+        ]
+        candidate_entries: list[dict[str, Any]] = []
+        for detection in detections:
+            reasons: list[str] = []
+            if detection.occupied:
+                reasons.append("occupied")
+            if not bool(detection.metadata.get("in_scene_zone", True)):
+                reasons.append("out_of_zone")
+            if not detection.reachable:
+                reasons.append("unreachable")
+            if selected_target is not None and detection.target_id == selected_target.target_id:
+                reasons.append("selected_nearest_free_in_zone")
+            elif not reasons:
+                reasons.append("candidate_not_selected_farther_than_best")
+            candidate_entries.append(
+                {
+                    "target_id": detection.target_id,
+                    "screen_xy": [detection.screen_x, detection.screen_y],
+                    "confidence": detection.confidence,
+                    "distance": detection.distance,
+                    "occupied": detection.occupied,
+                    "in_scene_zone": bool(detection.metadata.get("in_scene_zone", True)),
+                    "reachable": detection.reachable,
+                    "reasons": reasons,
+                }
+            )
+
+        summary_lines = [
+            "thresholds="
+            f"mob>={self._live_config.confirmation_confidence_threshold:.2f} "
+            f"occupied>={self._live_config.occupied_confidence_threshold:.2f} "
+            f"merge_px={self._live_config.merge_distance_px} stride={self._live_config.template_match_stride_px}",
+            "raw="
+            f"{len(raw_hits)} low_conf={len(low_confidence_hits)} "
+            f"merged={len(detections)} dup={len(duplicate_hits)} unstable={len(unstable_entries)}",
+            "rejects="
+            f"occupied={len(occupied_rejections)} out_of_zone={len(out_of_zone_rejections)} "
+            f"selected={None if selected_target is None else selected_target.target_id}",
+        ]
+        return {
+            "tuning_parameters": _build_detection_tuning_parameters(self._live_config),
+            "raw_hit_summary": _count_hits_by_label(raw_hits),
+            "low_confidence_hits": low_confidence_hits,
+            "duplicate_merges": duplicate_hits,
+            "occupied_rejections": occupied_rejections,
+            "out_of_zone_rejections": out_of_zone_rejections,
+            "unstable_rejections": unstable_entries,
+            "final_candidates": candidate_entries,
+            "selection_reason": None
+            if selected_target is None
+            else "nearest_free_in_zone_reachable_target",
+            "summary_lines": summary_lines,
+        }
 
 
 class PerceptionArtifactWriter:
@@ -1237,6 +1414,20 @@ class PerceptionArtifactWriter:
         lines.append(
             f'<line x1="{reference_x}" y1="{reference_y - 10}" x2="{reference_x}" y2="{reference_y + 10}" stroke="#fde047" stroke-width="2" />'
         )
+        window_guard = frame.metadata.get("window_guard")
+        if isinstance(window_guard, dict):
+            lines.append(
+                '<rect x="8" y="8" width="660" height="78" fill="#0f172a" fill-opacity="0.80" stroke="#334155" stroke-width="1" />'
+            )
+            lines.append(
+                f'<text x="16" y="28" fill="#f8fafc" font-size="14">window={window_guard.get("configured_window_title")} matched={window_guard.get("matched_window_title")} foreground={window_guard.get("foreground_window_title")}</text>'
+            )
+            lines.append(
+                f'<text x="16" y="46" fill="#f8fafc" font-size="14">foreground_matches={window_guard.get("foreground_matches")} reliable={window_guard.get("reliable")} capture_bbox={window_guard.get("capture_bbox")}</text>'
+            )
+            lines.append(
+                f'<text x="16" y="64" fill="#f8fafc" font-size="14">block_reason={window_guard.get("block_reason")} warning={window_guard.get("warning")}</text>'
+            )
         if result.scene_zone_polygon:
             polygon_points = " ".join(
                 f"{point_x},{point_y}" for point_x, point_y in result.scene_zone_polygon
@@ -1249,8 +1440,8 @@ class PerceptionArtifactWriter:
             )
         for hit in result.raw_hits:
             hit_color = "#9ca3af"
-            if hit.label == "red_marker":
-                hit_color = "#ef4444"
+            if hit.label in {"red_marker", "yellow_marker"}:
+                hit_color = "#facc15" if hit.label == "yellow_marker" else "#ef4444"
             elif hit.label == "occupied_swords":
                 hit_color = "#f97316"
             elif hit.label in {"mob_a", "mob_b"}:
@@ -1282,7 +1473,7 @@ class PerceptionArtifactWriter:
             confirmation_roi = detection.metadata.get("confirmation_roi")
             if isinstance(marker_bbox, list) and len(marker_bbox) == 4:
                 lines.append(
-                    f'<rect x="{marker_bbox[0]}" y="{marker_bbox[1]}" width="{marker_bbox[2]}" height="{marker_bbox[3]}" fill="none" stroke="#ef4444" stroke-width="2" />'
+                    f'<rect x="{marker_bbox[0]}" y="{marker_bbox[1]}" width="{marker_bbox[2]}" height="{marker_bbox[3]}" fill="none" stroke="#facc15" stroke-width="2" />'
                 )
             if isinstance(occupied_roi, list) and len(occupied_roi) == 4:
                 lines.append(
@@ -1304,6 +1495,28 @@ class PerceptionArtifactWriter:
             if selected:
                 lines.append(
                     f'<text x="{bbox[0]}" y="{bbox[1] + bbox[3] + 18}" fill="#fde047" font-size="14">selected</text>'
+                )
+        unstable_rejections = result.diagnostics.get("unstable_rejections", [])
+        if isinstance(unstable_rejections, list):
+            for entry in unstable_rejections:
+                bbox = entry.get("bbox")
+                if not isinstance(bbox, list) or len(bbox) != 4:
+                    continue
+                lines.append(
+                    f'<rect x="{bbox[0]}" y="{bbox[1]}" width="{bbox[2]}" height="{bbox[3]}" fill="none" stroke="#a855f7" stroke-dasharray="5 4" stroke-width="2" />'
+                )
+                lines.append(
+                    f'<text x="{bbox[0]}" y="{max(14, bbox[1] - 4)}" fill="#e9d5ff" font-size="12">{entry.get("target_id")} unstable seen={entry.get("seen_frames")}</text>'
+                )
+        summary_lines = result.diagnostics.get("summary_lines", [])
+        if isinstance(summary_lines, list) and summary_lines:
+            base_y = max(110, frame.height - (len(summary_lines) * 18) - 12)
+            lines.append(
+                f'<rect x="8" y="{base_y - 18}" width="760" height="{(len(summary_lines) * 18) + 24}" fill="#020617" fill-opacity="0.80" stroke="#334155" stroke-width="1" />'
+            )
+            for index, summary_line in enumerate(summary_lines, start=1):
+                lines.append(
+                    f'<text x="16" y="{base_y + (index * 16)}" fill="#f8fafc" font-size="13">{summary_line}</text>'
                 )
         lines.append("</svg>")
         return "\n".join(lines)
@@ -1597,7 +1810,7 @@ def build_world_snapshot_from_perception(
     )
 
 
-def _detect_red_marker_hits(
+def _detect_marker_hits(
     *,
     roi_image: Any,
     roi_offset_xy: tuple[int, int],
@@ -1608,23 +1821,25 @@ def _detect_red_marker_hits(
     rgb_image = roi_image.convert("RGB")
     width, height = rgb_image.size
     pixels = rgb_image.load()
-    red_mask = bytearray(width * height)
+    marker_mask = bytearray(width * height)
     for y in range(height):
         for x in range(width):
             red, green, blue = pixels[x, y]
-            if (
-                red >= live_config.marker_min_red
-                and (red - green) >= live_config.marker_red_green_delta
-                and (red - blue) >= live_config.marker_red_blue_delta
+            if _is_marker_pixel(
+                red=red,
+                green=green,
+                blue=blue,
+                live_config=live_config,
             ):
-                red_mask[(y * width) + x] = 1
+                marker_mask[(y * width) + x] = 1
 
     hits: list[TemplateHit] = []
     visited = bytearray(width * height)
+    marker_label = "yellow_marker" if live_config.marker_color_mode == "yellow" else "red_marker"
     for y in range(height):
         for x in range(width):
             index = (y * width) + x
-            if red_mask[index] == 0 or visited[index] == 1:
+            if marker_mask[index] == 0 or visited[index] == 1:
                 continue
             queue: list[tuple[int, int]] = [(x, y)]
             visited[index] = 1
@@ -1633,7 +1848,7 @@ def _detect_red_marker_hits(
             max_x = x
             min_y = y
             max_y = y
-            red_strength_sum = 0.0
+            marker_strength_sum = 0.0
             while queue:
                 current_x, current_y = queue.pop()
                 component_pixels.append((current_x, current_y))
@@ -1642,7 +1857,7 @@ def _detect_red_marker_hits(
                 min_y = min(min_y, current_y)
                 max_y = max(max_y, current_y)
                 red, green, blue = pixels[current_x, current_y]
-                red_strength_sum += _compute_marker_pixel_strength(
+                marker_strength_sum += _compute_marker_pixel_strength(
                     red=red,
                     green=green,
                     blue=blue,
@@ -1661,7 +1876,7 @@ def _detect_red_marker_hits(
                     if not (0 <= neighbor_x < width and 0 <= neighbor_y < height):
                         continue
                     neighbor_index = (neighbor_y * width) + neighbor_x
-                    if red_mask[neighbor_index] == 0 or visited[neighbor_index] == 1:
+                    if marker_mask[neighbor_index] == 0 or visited[neighbor_index] == 1:
                         continue
                     visited[neighbor_index] = 1
                     queue.append((neighbor_x, neighbor_y))
@@ -1681,12 +1896,28 @@ def _detect_red_marker_hits(
                 continue
             if component_height > live_config.marker_max_height_px:
                 continue
-            confidence = min(1.0, red_strength_sum / max(1.0, float(pixel_count)))
+            bbox_area = max(1, component_width * component_height)
+            fill_density = float(pixel_count) / float(bbox_area)
+            dark_core_ratio = _compute_marker_dark_core_ratio(
+                pixels=pixels,
+                min_x=min_x,
+                min_y=min_y,
+                max_x=max_x,
+                max_y=max_y,
+                dark_core_max_rgb=live_config.marker_dark_core_max_rgb,
+            )
+            if fill_density < live_config.marker_min_fill_density:
+                continue
+            if fill_density > live_config.marker_max_fill_density:
+                continue
+            if dark_core_ratio < live_config.marker_min_dark_core_ratio:
+                continue
+            confidence = min(1.0, marker_strength_sum / max(1.0, float(pixel_count)))
             if confidence < live_config.marker_confidence_threshold:
                 continue
             hits.append(
                 TemplateHit(
-                    label="red_marker",
+                    label=marker_label,
                     x=roi_offset_xy[0] + min_x,
                     y=roi_offset_xy[1] + min_y,
                     width=component_width,
@@ -1698,10 +1929,34 @@ def _detect_red_marker_hits(
                     metadata={
                         "pixel_count": pixel_count,
                         "mean_marker_strength": confidence,
+                        "fill_density": fill_density,
+                        "dark_core_ratio": dark_core_ratio,
                     },
                 )
             )
     return tuple(hits)
+
+
+def _is_marker_pixel(
+    *,
+    red: int,
+    green: int,
+    blue: int,
+    live_config: LiveConfig,
+) -> bool:
+    if live_config.marker_color_mode == "yellow":
+        return (
+            red >= live_config.marker_min_red
+            and green >= live_config.marker_min_green
+            and (red - blue) >= live_config.marker_red_blue_delta
+            and (green - blue) >= live_config.marker_green_blue_delta
+            and abs(red - green) <= live_config.marker_red_green_balance_delta
+        )
+    return (
+        red >= live_config.marker_min_red
+        and (red - green) >= live_config.marker_red_green_delta
+        and (red - blue) >= live_config.marker_red_blue_delta
+    )
 
 
 def _compute_marker_pixel_strength(
@@ -1711,6 +1966,31 @@ def _compute_marker_pixel_strength(
     blue: int,
     live_config: LiveConfig,
 ) -> float:
+    if live_config.marker_color_mode == "yellow":
+        red_term = max(0.0, float(red - live_config.marker_min_red)) / max(
+            1.0,
+            float(255 - live_config.marker_min_red),
+        )
+        green_term = max(0.0, float(green - live_config.marker_min_green)) / max(
+            1.0,
+            float(255 - live_config.marker_min_green),
+        )
+        red_blue_term = max(
+            0.0,
+            float((red - blue) - live_config.marker_red_blue_delta),
+        ) / max(1.0, float(255 - live_config.marker_red_blue_delta))
+        green_blue_term = max(
+            0.0,
+            float((green - blue) - live_config.marker_green_blue_delta),
+        ) / max(1.0, float(255 - live_config.marker_green_blue_delta))
+        balance_term = 1.0 - min(
+            1.0,
+            abs(float(red - green)) / max(1.0, float(live_config.marker_red_green_balance_delta)),
+        )
+        return min(
+            1.0,
+            (red_term + green_term + red_blue_term + green_blue_term + balance_term) / 5.0,
+        )
     red_term = max(0.0, float(red - live_config.marker_min_red)) / max(
         1.0,
         float(255 - live_config.marker_min_red),
@@ -1724,6 +2004,28 @@ def _compute_marker_pixel_strength(
         float((red - blue) - live_config.marker_red_blue_delta),
     ) / max(1.0, float(255 - live_config.marker_red_blue_delta))
     return min(1.0, (red_term + green_delta_term + blue_delta_term) / 3.0)
+
+
+def _compute_marker_dark_core_ratio(
+    *,
+    pixels: Any,
+    min_x: int,
+    min_y: int,
+    max_x: int,
+    max_y: int,
+    dark_core_max_rgb: int,
+) -> float:
+    dark_pixels = 0
+    total_pixels = 0
+    for current_y in range(min_y, max_y + 1):
+        for current_x in range(min_x, max_x + 1):
+            red, green, blue = pixels[current_x, current_y]
+            total_pixels += 1
+            if max(red, green, blue) <= dark_core_max_rgb:
+                dark_pixels += 1
+    if total_pixels <= 0:
+        return 0.0
+    return float(dark_pixels) / float(total_pixels)
 
 
 def _build_local_roi_box(
@@ -2340,6 +2642,179 @@ def _parse_ground_truth_candidates(ground_truth: dict[str, Any]) -> tuple[Ground
             )
         )
     return tuple(candidates)
+
+
+def _build_detection_tuning_parameters(live_config: LiveConfig) -> dict[str, Any]:
+    return {
+        "perception_confidence_threshold": live_config.perception_confidence_threshold,
+        "confirmation_confidence_threshold": live_config.confirmation_confidence_threshold,
+        "occupied_confidence_threshold": live_config.occupied_confidence_threshold,
+        "template_match_stride_px": live_config.template_match_stride_px,
+        "template_rotations_deg": list(live_config.template_rotations_deg),
+        "merge_distance_px": live_config.merge_distance_px,
+        "candidate_confirmation_frames": live_config.candidate_confirmation_frames,
+        "occupied_confirmation_frames": live_config.occupied_confirmation_frames,
+        "candidate_loss_frames": live_config.candidate_loss_frames,
+        "scene_profile_path": None
+        if live_config.scene_profile_path is None
+        else str(live_config.scene_profile_path),
+    }
+
+
+def _build_worst_frame_entries(
+    results: tuple[PerceptionFrameResult, ...],
+) -> tuple[dict[str, Any], ...]:
+    scored_entries: list[tuple[float, dict[str, Any]]] = []
+    benchmark_summary = _build_benchmark_summary(results, strict_pixel_only=False)
+    benchmark_reports = {}
+    if benchmark_summary is not None:
+        benchmark_reports = {
+            report.frame_source: report
+            for report in benchmark_summary.frame_reports
+        }
+    for result in results:
+        report = benchmark_reports.get(result.frame_source)
+        false_positive_count = 0 if report is None else report.false_positive_count
+        false_negative_count = 0 if report is None else report.false_negative_count
+        selected_wrong = False if report is None else not report.selected_target_correct
+        occupied_wrong = (
+            False
+            if report is None or report.occupied_classification_accuracy is None
+            else report.occupied_classification_accuracy < 1.0
+        )
+        score = (
+            (25.0 if selected_wrong else 0.0)
+            + (15.0 if occupied_wrong else 0.0)
+            + (10.0 * false_negative_count)
+            + (4.0 * false_positive_count)
+            + (result.timings.total_reaction_latency_ms / 250.0)
+        )
+        scored_entries.append(
+            (
+                score,
+                {
+                    "frame_source": result.frame_source,
+                    "selected_target_id": result.selected_target_id,
+                    "selected_target_correct": None if report is None else report.selected_target_correct,
+                    "false_positive_count": false_positive_count,
+                    "false_negative_count": false_negative_count,
+                    "occupied_classification_accuracy": None
+                    if report is None
+                    else report.occupied_classification_accuracy,
+                    "out_of_zone_target_count": len(result.out_of_zone_detections),
+                    "detection_latency_ms": result.timings.detection_latency_ms,
+                    "selection_latency_ms": result.timings.selection_latency_ms,
+                    "total_reaction_latency_ms": result.timings.total_reaction_latency_ms,
+                    "rejection_summary": {
+                        "low_confidence": len(result.diagnostics.get("low_confidence_hits", [])),
+                        "occupied": len(result.diagnostics.get("occupied_rejections", [])),
+                        "out_of_zone": len(result.diagnostics.get("out_of_zone_rejections", [])),
+                        "unstable": len(result.diagnostics.get("unstable_rejections", [])),
+                    },
+                    "score": score,
+                },
+            )
+        )
+    scored_entries.sort(key=lambda item: item[0], reverse=True)
+    return tuple(entry for _, entry in scored_entries[:5])
+
+
+def compare_perception_summary_payloads(
+    baseline_payload: dict[str, Any],
+    candidate_payload: dict[str, Any],
+) -> dict[str, Any]:
+    baseline_benchmark = dict(baseline_payload.get("benchmark_summary", {}))
+    candidate_benchmark = dict(candidate_payload.get("benchmark_summary", {}))
+    baseline_detection = dict(baseline_payload.get("detection_latency", {}))
+    candidate_detection = dict(candidate_payload.get("detection_latency", {}))
+    baseline_selection = dict(baseline_payload.get("selection_latency", {}))
+    candidate_selection = dict(candidate_payload.get("selection_latency", {}))
+    baseline_total = dict(baseline_payload.get("total_reaction_latency", {}))
+    candidate_total = dict(candidate_payload.get("total_reaction_latency", {}))
+
+    def _delta(left: Any, right: Any) -> float | None:
+        if not isinstance(left, (int, float)) or not isinstance(right, (int, float)):
+            return None
+        return float(right) - float(left)
+
+    comparison = {
+        "target_recall_delta": _delta(
+            baseline_benchmark.get("target_recall"),
+            candidate_benchmark.get("target_recall"),
+        ),
+        "target_precision_delta": _delta(
+            baseline_benchmark.get("target_precision"),
+            candidate_benchmark.get("target_precision"),
+        ),
+        "occupied_accuracy_delta": _delta(
+            baseline_benchmark.get("occupied_classification_accuracy"),
+            candidate_benchmark.get("occupied_classification_accuracy"),
+        ),
+        "selected_target_accuracy_delta": _delta(
+            baseline_benchmark.get("selected_target_accuracy"),
+            candidate_benchmark.get("selected_target_accuracy"),
+        ),
+        "false_positive_total_delta": _delta(
+            baseline_benchmark.get("target_false_positive_count"),
+            candidate_benchmark.get("target_false_positive_count"),
+        ),
+        "false_negative_total_delta": _delta(
+            baseline_benchmark.get("target_false_negative_count"),
+            candidate_benchmark.get("target_false_negative_count"),
+        ),
+        "detection_latency_avg_ms_delta": _delta(
+            baseline_detection.get("avg_ms"),
+            candidate_detection.get("avg_ms"),
+        ),
+        "selection_latency_avg_ms_delta": _delta(
+            baseline_selection.get("avg_ms"),
+            candidate_selection.get("avg_ms"),
+        ),
+        "total_reaction_latency_avg_ms_delta": _delta(
+            baseline_total.get("avg_ms"),
+            candidate_total.get("avg_ms"),
+        ),
+    }
+    return comparison
+
+
+def _template_hit_to_dict(hit: TemplateHit, *, rejection_reason: str | None = None) -> dict[str, Any]:
+    payload = {
+        "label": hit.label,
+        "bbox": [hit.x, hit.y, hit.width, hit.height],
+        "confidence": hit.confidence,
+        "rotation_deg": hit.rotation_deg,
+        "source": hit.source,
+        "target_id": hit.target_id,
+        "metadata": hit.metadata,
+    }
+    if rejection_reason is not None:
+        payload["rejection_reason"] = rejection_reason
+    return payload
+
+
+def _detection_to_diagnostic_entry(
+    detection: LiveTargetDetection,
+    *,
+    rejection_reason: str,
+) -> dict[str, Any]:
+    return {
+        "target_id": detection.target_id,
+        "screen_xy": [detection.screen_x, detection.screen_y],
+        "bbox": None if detection.bbox is None else list(detection.bbox),
+        "confidence": detection.confidence,
+        "distance": detection.distance,
+        "mob_variant": detection.mob_variant,
+        "seen_frames": int(detection.metadata.get("seen_frames", 0)),
+        "rejection_reason": rejection_reason,
+    }
+
+
+def _count_hits_by_label(hits: tuple[TemplateHit, ...]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for hit in hits:
+        counts[hit.label] = counts.get(hit.label, 0) + 1
+    return counts
 
 
 def _optional_str(value: object) -> str | None:

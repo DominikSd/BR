@@ -93,6 +93,13 @@ def test_load_default_config_returns_settings() -> None:
     assert settings.live.engage_target_match_max_distance_px == 72
     assert settings.live.engage_min_target_confidence == 0.70
     assert settings.live.engage_min_seen_frames == 1
+    assert settings.live.rest_resource_sample_count == 3
+    assert settings.live.rest_resource_sample_interval_s == 0.10
+    assert settings.live.rest_resource_min_confidence == 0.60
+    assert settings.live.rest_resource_max_ticks == 6
+    assert settings.live.rest_resource_growth_min_delta == 0.01
+    assert settings.live.rest_resource_warning_spread_threshold == 0.10
+    assert settings.live.rest_resource_stall_warning_ticks == 2
     assert settings.live.preview_refresh_interval_ms == 120
     assert settings.live.preview_max_width_px == 1600
     assert settings.live.preview_max_height_px == 900
@@ -131,6 +138,13 @@ def test_live_config_profile_can_be_loaded_from_yaml() -> None:
     assert settings.live.engage_target_match_max_distance_px == 72
     assert settings.live.engage_min_target_confidence == 0.70
     assert settings.live.engage_min_seen_frames == 1
+    assert settings.live.rest_resource_sample_count == 3
+    assert settings.live.rest_resource_sample_interval_s == 0.10
+    assert settings.live.rest_resource_min_confidence == 0.60
+    assert settings.live.rest_resource_max_ticks == 6
+    assert settings.live.rest_resource_growth_min_delta == 0.01
+    assert settings.live.rest_resource_warning_spread_threshold == 0.10
+    assert settings.live.rest_resource_stall_warning_ticks == 2
     assert settings.live.preview_refresh_interval_ms == 120
 
 
@@ -144,14 +158,41 @@ def test_live_real_mvp_config_can_be_loaded_from_yaml() -> None:
     assert settings.live.enable_real_keys is False
     assert settings.live.debug_directory.name == "live_real_debug"
     assert settings.live.benchmark_dataset_directory.name == "sample_frames"
+    assert settings.live.capture_region == (0, 0, 0, 0)
+    assert settings.live.spawn_roi == (0, 85, 1668, 845)
     assert settings.live.scene_profile_path is not None
     assert settings.live.scene_profile_path.name == "single_spot_scene.json"
     assert settings.live.scene_calibration_offset_xy == (0, 0)
+    assert settings.live.scene_reference_anchor_mode == "frame_center"
+    assert settings.live.scene_reference_anchor_xy == (1024, 576)
+    assert settings.live.marker_color_mode == "yellow"
+    assert settings.live.marker_min_green == 135
+    assert settings.live.marker_green_blue_delta == 22
+    assert settings.live.marker_red_green_balance_delta == 70
+    assert settings.live.marker_min_blob_pixels == 10
+    assert settings.live.marker_max_blob_pixels == 120
+    assert settings.live.marker_min_width_px == 5
+    assert settings.live.marker_max_width_px == 24
+    assert settings.live.marker_min_height_px == 6
+    assert settings.live.marker_max_height_px == 24
+    assert settings.live.marker_min_fill_density == 0.08
+    assert settings.live.marker_max_fill_density == 0.90
+    assert settings.live.marker_dark_core_max_rgb == 135
+    assert settings.live.marker_min_dark_core_ratio == 0.02
     assert settings.live.combat_indicator_min_ratio == 0.01
     assert settings.live.reward_min_ratio == 0.01
+    assert settings.live.template_match_stride_px == 6
     assert settings.live.engage_verify_delay_s == 0.20
     assert settings.live.engage_min_target_confidence == 0.80
     assert settings.live.engage_min_seen_frames == 2
+    assert settings.live.preview_refresh_interval_ms == 80
+    assert settings.live.rest_resource_sample_count == 5
+    assert settings.live.rest_resource_sample_interval_s == 0.10
+    assert settings.live.rest_resource_min_confidence == 0.65
+    assert settings.live.rest_resource_max_ticks == 8
+    assert settings.live.rest_resource_growth_min_delta == 0.01
+    assert settings.live.rest_resource_warning_spread_threshold == 0.08
+    assert settings.live.rest_resource_stall_warning_ticks == 2
 
 
 def test_cycle_prediction_window_methods() -> None:

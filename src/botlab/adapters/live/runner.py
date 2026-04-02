@@ -19,6 +19,7 @@ from botlab.adapters.live.input import LiveInputDriver
 from botlab.adapters.live.models import (
     LiveEngageResult,
     LiveFrame,
+    LiveResourceSnapshot,
     LiveSessionState,
     LiveTargetDetection,
 )
@@ -32,6 +33,7 @@ from botlab.adapters.live.vision import (
     LiveResourceProvider,
     SimpleStateDetector,
     StallDetector,
+    ready_after_rest,
 )
 from botlab.adapters.simulation.combat_profiles import SimulatedCombatProfileCatalog
 from botlab.adapters.simulation.combat_plans import SimulatedCombatPlanCatalog
@@ -804,32 +806,86 @@ class LiveRestProvider(RestProvider):
     ) -> RestTimeline:
         self._input_driver.press_key("esc")
         self._input_driver.press_key("r")
-        frame = self._runtime.capture_frame(
-            cycle_id=cycle_id,
-            phase="rest",
-            default_ts=rest_started_ts + 0.50,
-        )
-        final_resources = self._resource_provider.read_resources(frame)
-        rest_tick_count = int(frame.metadata.get("rest_tick_count", 1))
         snapshots: list[TimedCombatSnapshot] = []
-        current_hp_ratio = starting_hp_ratio
-        current_condition_ratio = starting_condition_ratio
-        hp_step = 0.0
-        condition_step = 0.0
-        if rest_tick_count > 0:
-            hp_step = max(0.0, final_resources.hp_ratio - starting_hp_ratio) / rest_tick_count
-            condition_step = max(0.0, final_resources.condition_ratio - starting_condition_ratio) / rest_tick_count
+        previous_resources = LiveResourceSnapshot(
+            hp_ratio=starting_hp_ratio,
+            condition_ratio=starting_condition_ratio,
+            metadata={"source": "starting_snapshot"},
+        )
+        previous_aggregate = None
+        warning_count = 0
+        stalled_or_uncertain_count = 0
+        threshold_reached_count = 0
+        stabilized_tick_index = 0
+        consecutive_stalled_ticks = 0
 
-        for tick_index in range(1, rest_tick_count + 1):
-            current_hp_ratio = min(final_resources.hp_ratio, current_hp_ratio + hp_step)
-            current_condition_ratio = min(final_resources.condition_ratio, current_condition_ratio + condition_step)
-            event_ts = rest_started_ts + (tick_index * 0.50)
+        for tick_index in range(1, self._runtime.settings.live.rest_resource_max_ticks + 1):
+            sample_snapshots: list[LiveResourceSnapshot] = []
+            sample_frame_sources: list[str] = []
+            sample_base_ts = rest_started_ts + ((tick_index - 1) * 0.50)
+            for sample_index in range(1, self._runtime.settings.live.rest_resource_sample_count + 1):
+                sample_ts = sample_base_ts + (
+                    (sample_index - 1) * self._runtime.settings.live.rest_resource_sample_interval_s
+                )
+                frame = self._runtime.capture_frame(
+                    cycle_id=cycle_id,
+                    phase=f"rest_sample_{tick_index:02d}_{sample_index:02d}",
+                    default_ts=sample_ts,
+                )
+                sample_snapshots.append(self._resource_provider.read_resources(frame))
+                sample_frame_sources.append(frame.source)
+
+            aggregate = self._resource_provider.aggregate_resource_reads(
+                tuple(sample_snapshots),
+                previous_snapshot=previous_resources,
+            )
+            hp_growth = aggregate.hp_ratio - previous_resources.hp_ratio
+            condition_growth = aggregate.condition_ratio - previous_resources.condition_ratio
+            progress_detected = (
+                hp_growth >= self._runtime.settings.live.rest_resource_growth_min_delta
+                or condition_growth >= self._runtime.settings.live.rest_resource_growth_min_delta
+            )
+            ready = ready_after_rest(
+                hp_ratio=aggregate.hp_ratio,
+                condition_ratio=aggregate.condition_ratio,
+                combat_config=self._runtime.settings.combat,
+            )
+            stop_reason = "rest_continue"
+            aggregate_warnings = list(aggregate.warnings)
+            if ready and aggregate.confidence >= self._runtime.settings.live.rest_resource_min_confidence:
+                stop_reason = "rest_stop_threshold_reached"
+                threshold_reached_count += 1
+                consecutive_stalled_ticks = 0
+                if stabilized_tick_index == 0:
+                    stabilized_tick_index = tick_index
+            elif not progress_detected or aggregate.confidence < self._runtime.settings.live.rest_resource_min_confidence:
+                stalled_or_uncertain_count += 1
+                consecutive_stalled_ticks += 1
+                stop_reason = "rest_stalled_or_uncertain"
+                if not progress_detected:
+                    aggregate_warnings.append("rest_progress_not_detected")
+                if aggregate.confidence < self._runtime.settings.live.rest_resource_min_confidence:
+                    aggregate_warnings.append("rest_confidence_below_threshold")
+                if (
+                    consecutive_stalled_ticks
+                    >= self._runtime.settings.live.rest_resource_stall_warning_ticks
+                ):
+                    aggregate_warnings.append("rest_sampling_stalled")
+            else:
+                consecutive_stalled_ticks = 0
+
+            warning_count += len(aggregate_warnings)
+
+            event_ts = sample_base_ts + (
+                self._runtime.settings.live.rest_resource_sample_count
+                * self._runtime.settings.live.rest_resource_sample_interval_s
+            )
             snapshots.append(
                 TimedCombatSnapshot(
                     event_ts=event_ts,
                     snapshot=CombatSnapshot(
-                        hp_ratio=current_hp_ratio,
-                        condition_ratio=current_condition_ratio,
+                        hp_ratio=aggregate.hp_ratio,
+                        condition_ratio=aggregate.condition_ratio,
                         turn_index=tick_index,
                         enemy_count=0,
                         strategy="live_rest",
@@ -837,11 +893,26 @@ class LiveRestProvider(RestProvider):
                         metadata={
                             "cycle_id": cycle_id,
                             "phase": "rest_tick",
-                            "resource_detection": final_resources.metadata,
+                            "resource_detection": aggregate.to_dict(),
+                            "resource_confidence": aggregate.confidence,
+                            "resource_warning_count": len(aggregate_warnings),
+                            "resource_warnings": aggregate_warnings,
+                            "rest_decision": stop_reason,
+                            "rest_progress_detected": progress_detected,
+                            "sample_frame_sources": sample_frame_sources,
+                            "sample_count": aggregate.sample_count,
                         },
                     ),
                 )
             )
+            previous_resources = LiveResourceSnapshot(
+                hp_ratio=aggregate.hp_ratio,
+                condition_ratio=aggregate.condition_ratio,
+                metadata={"source": "aggregated"},
+            )
+            previous_aggregate = aggregate
+            if stop_reason == "rest_stop_threshold_reached":
+                break
 
         if snapshots:
             final_snapshot = snapshots[-1].snapshot
@@ -849,7 +920,22 @@ class LiveRestProvider(RestProvider):
                 hp_ratio=final_snapshot.hp_ratio,
                 condition_ratio=final_snapshot.condition_ratio,
             )
-        return RestTimeline(cycle_id=cycle_id, snapshots=snapshots, metadata={})
+        return RestTimeline(
+            cycle_id=cycle_id,
+            snapshots=snapshots,
+            metadata={
+                "resource_sample_count": self._runtime.settings.live.rest_resource_sample_count,
+                "resource_confidence": None if previous_aggregate is None else previous_aggregate.confidence,
+                "resource_warning_count": warning_count,
+                "rest_stop_threshold_reached_count": threshold_reached_count,
+                "rest_stalled_or_uncertain_count": stalled_or_uncertain_count,
+                "rest_stabilized_tick_index": stabilized_tick_index,
+                "resource_final_hp_ratio": None if previous_aggregate is None else previous_aggregate.hp_ratio,
+                "resource_final_condition_ratio": None
+                if previous_aggregate is None
+                else previous_aggregate.condition_ratio,
+            },
+        )
 
 
 class LiveTelemetrySink(TelemetrySink):
@@ -936,6 +1022,7 @@ class LiveRunner:
                 settings.live.capture_region[0],
                 settings.live.capture_region[1],
             ),
+            real_input_guard=getattr(capture, "real_input_guard_status", None),
         )
         state_detector = SimpleStateDetector(settings.live)
         resource_provider = LiveResourceProvider(settings.live)

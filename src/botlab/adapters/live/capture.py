@@ -1,18 +1,22 @@
 from __future__ import annotations
 
+import ctypes
+import ctypes.wintypes
 import json
 from dataclasses import dataclass
 from math import cos, pi, sin, sqrt
 from pathlib import Path
 from random import Random
+import sys
 from typing import Any
 
 from botlab.adapters.live.models import LiveFrame, LiveSessionState, LiveTargetDetection
 from botlab.config import LiveConfig
 
 try:
-    from PIL import ImageGrab
+    from PIL import Image, ImageGrab
 except Exception:  # pragma: no cover - optional dependency path
+    Image = None
     ImageGrab = None
 
 
@@ -30,6 +34,34 @@ class CaptureRegion:
     @property
     def bottom(self) -> int:
         return self.top + self.height
+
+
+@dataclass(slots=True, frozen=True)
+class WindowCaptureStatus:
+    configured_window_title: str
+    matched_window_title: str | None
+    foreground_window_title: str | None
+    window_bbox: tuple[int, int, int, int] | None
+    capture_bbox: tuple[int, int, int, int]
+    foreground_matches: bool
+    reliable: bool
+    real_input_allowed: bool
+    block_reason: str | None = None
+    warning: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "configured_window_title": self.configured_window_title,
+            "matched_window_title": self.matched_window_title,
+            "foreground_window_title": self.foreground_window_title,
+            "window_bbox": None if self.window_bbox is None else list(self.window_bbox),
+            "capture_bbox": list(self.capture_bbox),
+            "foreground_matches": self.foreground_matches,
+            "reliable": self.reliable,
+            "real_input_allowed": self.real_input_allowed,
+            "block_reason": self.block_reason,
+            "warning": self.warning,
+        }
 
 
 class DebugArtifactWriter:
@@ -96,6 +128,24 @@ class DebugArtifactWriter:
             lines.append(
                 f'<text x="{roi[0] + 4}" y="{roi[1] + 16}" fill="#93c5fd" font-size="14">{roi_name}</text>'
             )
+        window_guard = frame.metadata.get("window_guard")
+        if isinstance(window_guard, dict):
+            lines.append(
+                '<rect x="8" y="8" width="520" height="76" fill="#0f172a" fill-opacity="0.80" stroke="#334155" stroke-width="1" />'
+            )
+            configured_title = window_guard.get("configured_window_title")
+            matched_title = window_guard.get("matched_window_title")
+            foreground_title = window_guard.get("foreground_window_title")
+            capture_bbox = window_guard.get("capture_bbox")
+            lines.append(
+                f'<text x="16" y="28" fill="#f8fafc" font-size="14">window={configured_title} matched={matched_title}</text>'
+            )
+            lines.append(
+                f'<text x="16" y="46" fill="#f8fafc" font-size="14">foreground={foreground_title} matches={window_guard.get("foreground_matches")} reliable={window_guard.get("reliable")}</text>'
+            )
+            lines.append(
+                f'<text x="16" y="64" fill="#f8fafc" font-size="14">capture_bbox={capture_bbox} block_reason={window_guard.get("block_reason")}</text>'
+            )
         for target in targets:
             color = "#ef4444" if target.occupied else "#22c55e"
             lines.append(
@@ -119,6 +169,23 @@ class ForegroundWindowCapture:
     def __init__(self, live_config: LiveConfig) -> None:
         self._live_config = live_config
         self._region = CaptureRegion(*live_config.capture_region)
+        self._last_window_status: WindowCaptureStatus | None = None
+
+    def real_input_guard_status(self) -> tuple[bool, str, dict[str, Any]]:
+        status = self._last_window_status
+        if status is None:
+            return (
+                False,
+                "window_guard_no_capture_yet",
+                {
+                    "configured_window_title": self._live_config.window_title,
+                },
+            )
+        return (
+            status.real_input_allowed,
+            "window_guard_ok" if status.real_input_allowed else str(status.block_reason or "window_guard_blocked"),
+            status.to_dict(),
+        )
 
     def capture_frame(
         self,
@@ -132,20 +199,23 @@ class ForegroundWindowCapture:
             raise RuntimeError(
                 "Brak Pillow/ImageGrab. Tryb live bez dry-run wymaga Pillow albo dalszej implementacji capture."
             )
-
-        image = ImageGrab.grab(
-            bbox=(
-                self._region.left,
-                self._region.top,
-                self._region.right,
-                self._region.bottom,
-            )
-        )
+        window_status = self._resolve_window_status()
+        self._last_window_status = window_status
+        if window_status.reliable:
+            image = ImageGrab.grab(bbox=window_status.capture_bbox)
+            source = "foreground_window_capture"
+        else:
+            if Image is None:
+                raise RuntimeError("Brak Pillow/Image. Window guard wymaga mozliwosci utworzenia placeholder frame.")
+            blocked_width = max(1, int(window_status.capture_bbox[2] - window_status.capture_bbox[0]))
+            blocked_height = max(1, int(window_status.capture_bbox[3] - window_status.capture_bbox[1]))
+            image = Image.new("RGB", (blocked_width, blocked_height), color=(8, 8, 8))
+            source = "foreground_window_capture_blocked"
         return LiveFrame(
-            width=self._region.width,
-            height=self._region.height,
+            width=int(image.size[0]),
+            height=int(image.size[1]),
             captured_at_ts=default_ts,
-            source="foreground_window_capture",
+            source=source,
             metadata={
                 "cycle_id": cycle_id,
                 "phase": phase,
@@ -153,8 +223,77 @@ class ForegroundWindowCapture:
                 "rest_available": True,
                 "resource_fallback_enabled": False,
                 "state_fallback_enabled": False,
+                "window_guard": window_status.to_dict(),
+                "capture_reliability": "trusted" if window_status.reliable else "blocked",
             },
             image=image,
+        )
+
+    def _resolve_window_status(self) -> WindowCaptureStatus:
+        configured_title = self._live_config.window_title
+        fallback_bbox = (
+            self._region.left,
+            self._region.top,
+            self._region.right,
+            self._region.bottom,
+        )
+        if sys.platform != "win32":
+            return WindowCaptureStatus(
+                configured_window_title=configured_title,
+                matched_window_title=None,
+                foreground_window_title=None,
+                window_bbox=None,
+                capture_bbox=fallback_bbox,
+                foreground_matches=not self._live_config.foreground_only,
+                reliable=not self._live_config.foreground_only,
+                real_input_allowed=False,
+                block_reason="window_guard_non_windows",
+                warning="window_guard_non_windows",
+            )
+
+        matched_window = _find_window_by_title(configured_title)
+        foreground_window = _get_foreground_window_info()
+        if matched_window is None:
+            return WindowCaptureStatus(
+                configured_window_title=configured_title,
+                matched_window_title=None,
+                foreground_window_title=None if foreground_window is None else foreground_window["title"],
+                window_bbox=None,
+                capture_bbox=fallback_bbox,
+                foreground_matches=False,
+                reliable=False,
+                real_input_allowed=False,
+                block_reason="window_not_found",
+                warning="window_not_found",
+            )
+
+        window_bbox = matched_window["bbox"]
+        capture_bbox = _calculate_window_relative_capture_bbox(window_bbox, self._region)
+        foreground_matches = False
+        foreground_title: str | None = None
+        if foreground_window is not None:
+            foreground_matches = bool(foreground_window["hwnd"] == matched_window["hwnd"])
+            foreground_title = str(foreground_window["title"])
+
+        reliable = True
+        block_reason: str | None = None
+        warning: str | None = None
+        if self._live_config.foreground_only and not foreground_matches:
+            reliable = False
+            block_reason = "foreground_window_mismatch"
+            warning = "foreground_window_mismatch"
+
+        return WindowCaptureStatus(
+            configured_window_title=configured_title,
+            matched_window_title=str(matched_window["title"]),
+            foreground_window_title=foreground_title,
+            window_bbox=window_bbox,
+            capture_bbox=capture_bbox,
+            foreground_matches=foreground_matches,
+            reliable=reliable,
+            real_input_allowed=reliable and foreground_matches,
+            block_reason=block_reason,
+            warning=warning,
         )
 
 
@@ -194,6 +333,7 @@ class DryRunWindowCapture:
         default_ts: float,
         session_state: LiveSessionState,
     ) -> dict[str, Any]:
+        normalized_phase = _normalize_dry_run_phase(phase)
         profile_builders = {
             "single_spot_mvp": self._single_spot_mvp_payload,
             "engage_target_stolen": self._engage_target_stolen_payload,
@@ -211,13 +351,13 @@ class DryRunWindowCapture:
 
         payload = payload_builder(
             cycle_id=cycle_id,
-            phase=phase,
+            phase=normalized_phase,
             default_ts=default_ts,
             session_state=session_state,
         )
         return {
             "cycle_id": cycle_id,
-            "phase": phase,
+            "phase": normalized_phase,
             **payload,
         }
 
@@ -774,6 +914,12 @@ def create_capture(live_config: LiveConfig):
     return DryRunWindowCapture(live_config) if live_config.dry_run else ForegroundWindowCapture(live_config)
 
 
+def _normalize_dry_run_phase(phase: str) -> str:
+    if phase.startswith("rest_sample_"):
+        return "rest"
+    return phase
+
+
 def _targets_to_metadata(targets: tuple[LiveTargetDetection, ...]) -> list[dict[str, Any]]:
     return [
         {
@@ -858,3 +1004,94 @@ def _generate_circle_targets(
             )
         )
     return tuple(targets)
+
+
+def _calculate_window_relative_capture_bbox(
+    window_bbox: tuple[int, int, int, int],
+    capture_region: CaptureRegion,
+) -> tuple[int, int, int, int]:
+    window_left, window_top, window_right, window_bottom = window_bbox
+    window_width = max(1, window_right - window_left)
+    window_height = max(1, window_bottom - window_top)
+    if capture_region.width <= 0 or capture_region.height <= 0:
+        return (
+            int(window_left),
+            int(window_top),
+            int(window_right),
+            int(window_bottom),
+        )
+    left = window_left + capture_region.left
+    top = window_top + capture_region.top
+    width = min(capture_region.width, max(1, window_width - capture_region.left))
+    height = min(capture_region.height, max(1, window_height - capture_region.top))
+    return (
+        int(left),
+        int(top),
+        int(left + width),
+        int(top + height),
+    )
+
+
+def _find_window_by_title(window_title: str) -> dict[str, Any] | None:
+    if sys.platform != "win32":
+        return None
+    user32 = ctypes.windll.user32
+    results: list[dict[str, Any]] = []
+    enum_windows_proc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+    def callback(hwnd, _lparam):
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        title = _get_window_title(hwnd)
+        if not title:
+            return True
+        if window_title.lower() not in title.lower():
+            return True
+        bbox = _get_window_rect(hwnd)
+        if bbox is None:
+            return True
+        results.append(
+            {
+                "hwnd": int(hwnd),
+                "title": title,
+                "bbox": bbox,
+            }
+        )
+        return True
+
+    user32.EnumWindows(enum_windows_proc(callback), 0)
+    if not results:
+        return None
+    return results[0]
+
+
+def _get_foreground_window_info() -> dict[str, Any] | None:
+    if sys.platform != "win32":
+        return None
+    user32 = ctypes.windll.user32
+    hwnd = user32.GetForegroundWindow()
+    if not hwnd:
+        return None
+    title = _get_window_title(hwnd)
+    bbox = _get_window_rect(hwnd)
+    return {
+        "hwnd": int(hwnd),
+        "title": title,
+        "bbox": bbox,
+    }
+
+
+def _get_window_title(hwnd: int) -> str:
+    user32 = ctypes.windll.user32
+    length = user32.GetWindowTextLengthW(hwnd)
+    buffer = ctypes.create_unicode_buffer(length + 1)
+    user32.GetWindowTextW(hwnd, buffer, length + 1)
+    return str(buffer.value)
+
+
+def _get_window_rect(hwnd: int) -> tuple[int, int, int, int] | None:
+    user32 = ctypes.windll.user32
+    rect = ctypes.wintypes.RECT()
+    if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+        return None
+    return (int(rect.left), int(rect.top), int(rect.right), int(rect.bottom))

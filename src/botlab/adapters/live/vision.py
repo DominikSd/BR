@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from statistics import median
 from typing import Any
 
 from botlab.adapters.live.models import (
@@ -183,6 +184,71 @@ class LiveResourceProvider:
                 "hp": {"roi": hp_roi},
                 "condition": {"roi": condition_roi},
             },
+        )
+
+    def aggregate_resource_reads(
+        self,
+        samples: tuple[LiveResourceSnapshot, ...],
+        *,
+        previous_snapshot: LiveResourceSnapshot | None = None,
+    ) -> "LiveResourceReadAggregate":
+        if not samples:
+            return LiveResourceReadAggregate(
+                sample_count=0,
+                hp_ratio=0.0,
+                condition_ratio=0.0,
+                confidence=0.0,
+                warnings=("resource_sampling_empty",),
+                hp_median=0.0,
+                condition_median=0.0,
+                hp_spread=0.0,
+                condition_spread=0.0,
+                samples=(),
+            )
+
+        hp_values = [sample.hp_ratio for sample in samples]
+        condition_values = [sample.condition_ratio for sample in samples]
+        hp_median = float(median(hp_values))
+        condition_median = float(median(condition_values))
+        hp_spread = max(hp_values) - min(hp_values)
+        condition_spread = max(condition_values) - min(condition_values)
+        per_sample_confidences = [
+            _resource_sample_confidence(sample)
+            for sample in samples
+        ]
+        base_confidence = sum(per_sample_confidences) / len(per_sample_confidences)
+        consistency_penalty = min(1.0, max(hp_spread, condition_spread) / max(
+            self._live_config.rest_resource_warning_spread_threshold,
+            1e-6,
+        ))
+        confidence = max(0.0, min(1.0, base_confidence * (1.0 - (0.5 * consistency_penalty))))
+
+        warnings: list[str] = []
+        if any(sample.metadata.get("source") != "pixel" for sample in samples):
+            warnings.append("resource_metadata_fallback_used")
+        if hp_spread > self._live_config.rest_resource_warning_spread_threshold:
+            warnings.append("hp_read_spread_high")
+        if condition_spread > self._live_config.rest_resource_warning_spread_threshold:
+            warnings.append("condition_read_spread_high")
+        if confidence < self._live_config.rest_resource_min_confidence:
+            warnings.append("resource_confidence_low")
+        if previous_snapshot is not None:
+            if hp_median + 0.05 < previous_snapshot.hp_ratio:
+                warnings.append("hp_dropped_during_rest")
+            if condition_median + 0.05 < previous_snapshot.condition_ratio:
+                warnings.append("condition_dropped_during_rest")
+
+        return LiveResourceReadAggregate(
+            sample_count=len(samples),
+            hp_ratio=hp_median,
+            condition_ratio=condition_median,
+            confidence=confidence,
+            warnings=tuple(warnings),
+            hp_median=hp_median,
+            condition_median=condition_median,
+            hp_spread=hp_spread,
+            condition_spread=condition_spread,
+            samples=samples,
         )
 
     def _read_hp_ratio_from_pixels(
@@ -378,6 +444,71 @@ def _compute_bar_fill_ratio(
             active_columns += 1
     fill_ratio = active_columns / float(roi_width)
     return fill_ratio, matching_pixels, roi_width * roi_height
+
+
+@dataclass(slots=True, frozen=True)
+class LiveResourceReadAggregate:
+    sample_count: int
+    hp_ratio: float
+    condition_ratio: float
+    confidence: float
+    warnings: tuple[str, ...]
+    hp_median: float
+    condition_median: float
+    hp_spread: float
+    condition_spread: float
+    samples: tuple[LiveResourceSnapshot, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "sample_count": self.sample_count,
+            "hp_ratio": self.hp_ratio,
+            "condition_ratio": self.condition_ratio,
+            "confidence": self.confidence,
+            "warnings": list(self.warnings),
+            "hp_median": self.hp_median,
+            "condition_median": self.condition_median,
+            "hp_spread": self.hp_spread,
+            "condition_spread": self.condition_spread,
+            "samples": [
+                {
+                    "hp_ratio": sample.hp_ratio,
+                    "condition_ratio": sample.condition_ratio,
+                    "metadata": sample.metadata,
+                }
+                for sample in self.samples
+            ],
+        }
+
+
+def _resource_sample_confidence(sample: LiveResourceSnapshot) -> float:
+    metadata_source = sample.metadata.get("source")
+    if metadata_source != "pixel":
+        return 0.35
+    hp_meta = sample.metadata.get("hp", {})
+    condition_meta = sample.metadata.get("condition", {})
+    hp_fill = float(hp_meta.get("fill_ratio", sample.hp_ratio))
+    condition_fill = float(condition_meta.get("fill_ratio", sample.condition_ratio))
+    hp_match_ratio = _safe_ratio(
+        float(hp_meta.get("matching_pixels", 0)),
+        float(hp_meta.get("total_pixels", 1)),
+    )
+    condition_match_ratio = _safe_ratio(
+        float(condition_meta.get("matching_pixels", 0)),
+        float(condition_meta.get("total_pixels", 1)),
+    )
+    hp_confidence = max(0.0, min(1.0, (0.7 * hp_fill) + (0.3 * min(1.0, hp_match_ratio * 10.0))))
+    condition_confidence = max(
+        0.0,
+        min(1.0, (0.7 * condition_fill) + (0.3 * min(1.0, condition_match_ratio * 10.0))),
+    )
+    return (hp_confidence + condition_confidence) / 2.0
+
+
+def _safe_ratio(numerator: float, denominator: float) -> float:
+    if denominator <= 0.0:
+        return 0.0
+    return numerator / denominator
 
 
 def build_world_snapshot(

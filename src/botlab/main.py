@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Sequence
 
 from botlab.adapters.live import LiveEngageObserve, LiveRunner, LiveVisionPreview, PerceptionAnalysisRunner
+from botlab.adapters.live.perception import compare_perception_summary_payloads
 from botlab.adapters.simulation.combat_profiles import SimulatedCombatProfileCatalog
 from botlab.adapters.simulation.combat_plans import SimulatedCombatPlanCatalog
 from botlab.adapters.simulation.replay import (
@@ -151,6 +152,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Uruchamia minimalny pion live engage: perception -> nearest free target -> engage attempt -> outcome verification.",
     )
+    parser.add_argument(
+        "--compare-perception-summaries",
+        nargs=2,
+        metavar=("BASELINE_JSON", "CANDIDATE_JSON"),
+        help="Porownuje dwa perception_session_summary.json i wypisuje roznice accuracy/latency.",
+    )
 
     return parser
 
@@ -167,6 +174,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.list_combat_profiles:
         _print_combat_profiles()
+        return 0
+    if args.compare_perception_summaries is not None:
+        baseline_path = Path(args.compare_perception_summaries[0]).expanduser().resolve()
+        candidate_path = Path(args.compare_perception_summaries[1]).expanduser().resolve()
+        _print_perception_comparison_report(
+            baseline_path=baseline_path,
+            candidate_path=candidate_path,
+        )
         return 0
 
     _validate_scenario_args(
@@ -761,6 +776,29 @@ def _print_perception_report(*, summary, output_directory: Path) -> None:
             f"selection_latency_ms={entry['selection_latency_ms']:.3f} "
             f"total_reaction_latency_ms={entry['total_reaction_latency_ms']:.3f}"
         )
+    for worst_entry in summary.worst_frames:
+        print(
+            "perception_worst_frame="
+            f"{worst_entry['frame_source']} "
+            f"selected_ok={worst_entry['selected_target_correct']} "
+            f"false_positive={worst_entry['false_positive_count']} "
+            f"false_negative={worst_entry['false_negative_count']} "
+            f"occupied_accuracy={worst_entry['occupied_classification_accuracy']} "
+            f"latency_ms={worst_entry['total_reaction_latency_ms']:.3f} "
+            f"rejections={worst_entry['rejection_summary']}"
+        )
+
+
+def _print_perception_comparison_report(*, baseline_path: Path, candidate_path: Path) -> None:
+    baseline_payload = json.loads(baseline_path.read_text(encoding="utf-8"))
+    candidate_payload = json.loads(candidate_path.read_text(encoding="utf-8"))
+    comparison = compare_perception_summary_payloads(baseline_payload, candidate_payload)
+    print("perception_mode=compare")
+    print(f"baseline_summary={baseline_path}")
+    print(f"candidate_summary={candidate_path}")
+    for key, value in comparison.items():
+        value_repr = "None" if value is None else f"{value:.3f}"
+        print(f"perception_compare={key} value={value_repr}")
 
 
 def _print_live_engage_report(report) -> None:

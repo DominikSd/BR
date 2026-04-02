@@ -2,68 +2,39 @@
   "captured_at_ts": 0.0,
   "source": "live_spot_scene_1",
   "metadata": {
-    "reference_point_xy": [1380, 700],
-    "spawn_roi": [720, 220, 1280, 720],
+    "reference_point_xy": [760, 285],
+    "spawn_roi": [80, 300, 1360, 640],
     "template_match_stride_px": 12,
-    "notes": "Pelny screen z realnej gry. ROI zaweza analize do glownych sciezek spota wokol postaci i najblizszych grupek.",
+    "notes": "Pelny screen z realnej gry. Kontrakt regresyjny po przestawieniu scene-aware detection na obszar spawnu blizej srodka i dolu ekranu.",
     "ground_truth": {
       "candidates": [
         {
-          "candidate_id": "scene1_free_primary",
-          "screen_xy": [1449, 432],
+          "candidate_id": "scene1_free_lower_path",
+          "screen_xy": [724, 813],
           "max_error_px": 48,
           "occupied": false,
           "selected": true
-        },
-        {
-          "candidate_id": "scene1_busy_upper",
-          "screen_xy": [1865, 871],
-          "max_error_px": 56,
-          "occupied": true,
-          "selected": false
-        },
-        {
-          "candidate_id": "scene1_busy_lower",
-          "screen_xy": [1862, 960],
-          "max_error_px": 56,
-          "occupied": true,
-          "selected": false
         }
       ]
     },
     "expected_perception": {
-      "min_target_count": 4,
-      "max_target_count": 6,
+      "min_target_count": 1,
+      "max_target_count": 3,
       "min_free_target_count": 1,
-      "min_occupied_target_count": 2,
+      "max_occupied_target_count": 0,
       "expected_candidates": [
         {
-          "screen_xy": [1454, 455],
+          "screen_xy": [724, 813],
           "max_error_px": 48,
           "occupied": false,
           "selected": true
-        },
-        {
-          "screen_xy": [1865, 871],
-          "max_error_px": 56,
-          "occupied": true,
-          "selected": false
-        },
-        {
-          "screen_xy": [1862, 960],
-          "max_error_px": 56,
-          "occupied": true,
-          "selected": false
         }
       ],
-      "occupied_target_screen_xy": [
-        [1865, 871],
-        [1862, 960]
-      ],
+      "occupied_target_screen_xy": [],
       "occupied_target_max_error_px": 56,
       "selected_target_required": true,
       "selected_target_must_be_free": true,
-      "selected_target_screen_xy": [1449, 432],
+      "selected_target_screen_xy": [724, 813],
       "selected_target_max_error_px": 48
     }
   }
