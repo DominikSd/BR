@@ -84,8 +84,12 @@
   "frame_source": "dry_run:single_spot_mvp",
   "frame_width": 1280,
   "free_target_count": 3,
+  "ground_truth": {},
+  "in_zone_target_count": 3,
   "merged_hit_count": 3,
+  "out_of_zone_target_count": 0,
   "phase": "approach_revalidation",
+  "pipeline_mode": "metadata_fallback",
   "raw_hits": [
     {
       "confidence": 1.0,
@@ -137,15 +141,18 @@
     "x": 320,
     "y": 140
   },
+  "scene_name": null,
+  "scene_zone_polygon": [],
+  "selectable_target_count": 3,
   "selected_target_id": "live-spawn-2-3",
   "timings": {
-    "action_ready_ts": 190.25009249999857,
-    "detection_finished_ts": 190.25008949999756,
-    "detection_latency_ms": 0.08949999755714089,
+    "action_ready_ts": 190.25009679999494,
+    "detection_finished_ts": 190.25009229999705,
+    "detection_latency_ms": 0.09229999704984948,
     "detection_started_ts": 190.25,
     "frame_captured_ts": 190.25,
-    "selection_latency_ms": 0.0030000010156072676,
-    "target_selected_ts": 190.25009249999857,
-    "total_reaction_latency_ms": 0.09249999857274815
+    "selection_latency_ms": 0.004499997885432094,
+    "target_selected_ts": 190.25009679999494,
+    "total_reaction_latency_ms": 0.09679999493528157
   }
 }

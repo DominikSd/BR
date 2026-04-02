@@ -19,6 +19,11 @@ from botlab.adapters.live.perception import (
     classify_occupied,
     merge_template_hits,
 )
+from botlab.adapters.live.scene import (
+    SceneProfile,
+    SceneProfileLoader,
+    point_in_polygon,
+)
 from botlab.adapters.live.vision import (
     StallDetector,
     filter_occupied_targets,
@@ -38,6 +43,8 @@ __all__ = [
     "LiveVisionPreviewRenderer",
     "PerceptionAnalysisRunner",
     "PerceptionAnalyzer",
+    "SceneProfile",
+    "SceneProfileLoader",
     "StallDetector",
     "TemplatePackLoader",
     "build_live_preview_state",
@@ -45,6 +52,7 @@ __all__ = [
     "classify_occupied",
     "filter_occupied_targets",
     "merge_template_hits",
+    "point_in_polygon",
     "ready_after_rest",
     "select_nearest_target",
     "should_start_rest",

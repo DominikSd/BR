@@ -1,0 +1,16 @@
+{
+  "split": "tuning",
+  "description": "Klatki do codziennego strojenia progow, ROI i template packow.",
+  "frames": [
+    {
+      "frame_name": "live_spot_scene_1",
+      "frame_path": "../raw/live_spot_scene_1.png",
+      "tags": ["real", "multi_target", "occupied", "selected_target"]
+    },
+    {
+      "frame_name": "live_spot_scene_2",
+      "frame_path": "../raw/live_spot_scene_2.png",
+      "tags": ["real", "single_free_target", "selected_target"]
+    }
+  ]
+}

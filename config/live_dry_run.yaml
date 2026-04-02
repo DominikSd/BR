@@ -43,6 +43,8 @@ live:
   occupied_confidence_threshold: 0.75
   merge_distance_px: 28
   sample_frames_directory: "assets/live/sample_frames/raw"
+  benchmark_dataset_directory: "assets/live/sample_frames"
+  scene_profile_path: null
   mobs_template_directory: "assets/live/templates/mobs"
   occupied_template_directory: "assets/live/templates/occupied"
   template_match_stride_px: 4

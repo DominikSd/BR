@@ -1,0 +1,19 @@
+{
+  "scene_name": "single_spot_scene",
+  "reference_frame_path": "../sample_frames/raw/live_spot_scene_1.png",
+  "reference_point_xy": [1380, 700],
+  "notes": "Pierwszy profil konkretnego spota. Poligon obejmuje glowny obszar lapania na snieznych sciezkach i grzbietach, a spatial filtering odrzuca detections spoza sensownej strefy engage.",
+  "spawn_zone_polygon": [
+    [980, 300],
+    [1970, 300],
+    [2050, 540],
+    [2030, 1030],
+    [1180, 1040],
+    [900, 760],
+    [930, 470]
+  ],
+  "sub_rois": {
+    "spawn_focus_roi": [960, 280, 1120, 800]
+  },
+  "exclusion_polygons": []
+}

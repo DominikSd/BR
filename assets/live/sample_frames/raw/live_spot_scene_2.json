@@ -6,6 +6,17 @@
     "spawn_roi": [720, 220, 1280, 720],
     "template_match_stride_px": 12,
     "notes": "Pelny screen z realnej gry z kilkoma grupkami na glownych podejsciach do spota.",
+    "ground_truth": {
+      "candidates": [
+        {
+          "candidate_id": "scene2_free_primary",
+          "screen_xy": [1132, 822],
+          "max_error_px": 48,
+          "occupied": false,
+          "selected": true
+        }
+      ]
+    },
     "expected_perception": {
       "min_target_count": 1,
       "max_target_count": 2,

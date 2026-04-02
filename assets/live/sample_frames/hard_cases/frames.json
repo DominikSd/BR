@@ -1,0 +1,21 @@
+{
+  "split": "hard_cases",
+  "description": "Trudniejsze sceny do smoke testu precision/recall i latency pod wiekszym szumem tla.",
+  "frames": [
+    {
+      "frame_name": "zajete",
+      "frame_path": "../raw/Zajete.png",
+      "tags": ["real", "hard_case", "occupied"]
+    },
+    {
+      "frame_name": "zajete1",
+      "frame_path": "../raw/Zajete1.png",
+      "tags": ["real", "hard_case", "occupied"]
+    },
+    {
+      "frame_name": "zajete2",
+      "frame_path": "../raw/Zajete2.png",
+      "tags": ["real", "hard_case", "occupied"]
+    }
+  ]
+}

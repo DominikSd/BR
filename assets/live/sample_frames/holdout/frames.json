@@ -1,0 +1,16 @@
+{
+  "split": "holdout",
+  "description": "Klatki odlozone do sprawdzania, czy tuning nie przeuczyl heurystyk pod regression set.",
+  "frames": [
+    {
+      "frame_name": "screenshot_2",
+      "frame_path": "../raw/Screenshot_2.png",
+      "tags": ["real", "holdout"]
+    },
+    {
+      "frame_name": "screenshot_3",
+      "frame_path": "../raw/Screenshot_3.png",
+      "tags": ["real", "holdout"]
+    }
+  ]
+}

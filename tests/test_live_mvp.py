@@ -12,17 +12,20 @@ from botlab.adapters.live import (
     LiveRunner,
     LiveVisionPreviewRenderer,
     PerceptionAnalysisRunner,
+    SceneProfileLoader,
     StallDetector,
     build_live_preview_state,
     classify_engage_outcome,
     filter_occupied_targets,
     merge_template_hits,
+    point_in_polygon,
     select_nearest_target,
     should_start_rest,
 )
 from botlab.adapters.live.input import LiveInputDriver
 from botlab.adapters.live.models import LiveEngageOutcome, LiveFrame, LiveStateSnapshot, LiveTargetDetection
 from botlab.adapters.live.perception import (
+    BenchmarkDatasetLoader,
     PerceptionFrameLoader,
     ReactionLatency,
     TemplateHit,
@@ -60,6 +63,24 @@ def _build_live_settings(tmp_path: Path) -> Settings:
         vision=base.vision,
         source_path=base.source_path,
         live=load_config("config/live_dry_run.yaml").live,
+    )
+
+
+def _build_scene_aware_live_settings(tmp_path: Path) -> Settings:
+    base = load_default_config()
+    telemetry = TelemetryConfig(
+        sqlite_path=(tmp_path / "data" / "telemetry" / "live_scene.sqlite3").resolve(),
+        log_path=(tmp_path / "logs" / "live_scene.log").resolve(),
+        log_level="INFO",
+    )
+    return Settings(
+        app=base.app,
+        cycle=base.cycle,
+        combat=base.combat,
+        telemetry=telemetry,
+        vision=base.vision,
+        source_path=base.source_path,
+        live=load_config("config/live_real_mvp.yaml").live,
     )
 
 
@@ -141,6 +162,140 @@ def _build_marker_first_settings(tmp_path: Path) -> Settings:
     return replace(settings, live=live)
 
 
+def _write_benchmark_split_manifest(
+    split_directory: Path,
+    *,
+    split_name: str,
+    frame_names: tuple[str, ...],
+) -> None:
+    split_directory.mkdir(parents=True, exist_ok=True)
+    split_directory.joinpath("frames.json").write_text(
+        json.dumps(
+            {
+                "split": split_name,
+                "frames": [
+                    {
+                        "frame_name": frame_name,
+                        "frame_path": f"../raw/{frame_name}.png",
+                    }
+                    for frame_name in frame_names
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_marker_first_benchmark_dataset(tmp_path: Path) -> Settings:
+    from PIL import Image, ImageDraw
+
+    settings = _build_marker_first_settings(tmp_path)
+    dataset_root = tmp_path / "dataset"
+    raw_directory = dataset_root / "raw"
+    raw_directory.mkdir(parents=True, exist_ok=True)
+
+    mob_a_template = Image.open(settings.live.mobs_template_directory / "mob_a" / "base.png").convert("RGB")
+    mob_b_template = Image.open(settings.live.mobs_template_directory / "mob_b" / "base.png").convert("RGB")
+    swords_template = Image.open(settings.live.occupied_template_directory / "crossed_swords.png").convert("RGB")
+
+    free_frame = Image.new("RGB", (320, 240), color=(40, 40, 40))
+    free_draw = ImageDraw.Draw(free_frame)
+    free_frame.paste(mob_a_template, (146, 104))
+    free_draw.polygon([(155, 92), (159, 86), (163, 92), (159, 98)], fill=(225, 55, 55))
+    free_frame.save(raw_directory / "benchmark_free.png")
+    (raw_directory / "benchmark_free.json").write_text(
+        json.dumps(
+            {
+                "captured_at_ts": 10.0,
+                "source": "benchmark_free",
+                "metadata": {
+                    "spawn_roi": [0, 0, 320, 240],
+                    "reference_point_xy": [160, 210],
+                    "ground_truth": {
+                        "candidates": [
+                            {
+                                "candidate_id": "free_primary",
+                                "screen_xy": [159, 116],
+                                "max_error_px": 32,
+                                "occupied": False,
+                                "selected": True,
+                            }
+                        ]
+                    },
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    occupied_frame = Image.new("RGB", (320, 240), color=(40, 40, 40))
+    occupied_draw = ImageDraw.Draw(occupied_frame)
+    occupied_frame.paste(mob_b_template, (58, 84))
+    occupied_draw.polygon([(67, 72), (71, 66), (75, 72), (71, 78)], fill=(225, 55, 55))
+    occupied_frame.paste(swords_template, (64, 72))
+    occupied_frame.save(raw_directory / "benchmark_occupied.png")
+    (raw_directory / "benchmark_occupied.json").write_text(
+        json.dumps(
+            {
+                "captured_at_ts": 11.0,
+                "source": "benchmark_occupied",
+                "metadata": {
+                    "spawn_roi": [0, 0, 320, 240],
+                    "reference_point_xy": [160, 210],
+                    "ground_truth": {
+                        "candidates": [
+                            {
+                                "candidate_id": "busy_primary",
+                                "screen_xy": [71, 96],
+                                "max_error_px": 32,
+                                "occupied": True,
+                                "selected": False,
+                            }
+                        ]
+                    },
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    _write_benchmark_split_manifest(
+        dataset_root / "regression",
+        split_name="regression",
+        frame_names=("benchmark_free", "benchmark_occupied"),
+    )
+    _write_benchmark_split_manifest(
+        dataset_root / "tuning",
+        split_name="tuning",
+        frame_names=("benchmark_free",),
+    )
+    _write_benchmark_split_manifest(
+        dataset_root / "holdout",
+        split_name="holdout",
+        frame_names=("benchmark_occupied",),
+    )
+    _write_benchmark_split_manifest(
+        dataset_root / "hard_cases",
+        split_name="hard_cases",
+        frame_names=("benchmark_occupied",),
+    )
+
+    return replace(
+        settings,
+        live=replace(
+            settings.live,
+            sample_frames_directory=raw_directory,
+            benchmark_dataset_directory=dataset_root,
+        ),
+    )
+
+
 def _euclidean_distance(
     *,
     left_xy: tuple[float, float],
@@ -189,6 +344,19 @@ def test_select_nearest_target_prefers_smallest_distance() -> None:
 
     assert selected is not None
     assert selected.target_id == "near"
+
+
+def test_point_in_polygon_accepts_points_inside_and_on_edge() -> None:
+    polygon = (
+        (10.0, 10.0),
+        (110.0, 10.0),
+        (110.0, 110.0),
+        (10.0, 110.0),
+    )
+
+    assert point_in_polygon(point_xy=(50.0, 50.0), polygon=polygon) is True
+    assert point_in_polygon(point_xy=(10.0, 50.0), polygon=polygon) is True
+    assert point_in_polygon(point_xy=(150.0, 50.0), polygon=polygon) is False
 
 
 def test_should_start_rest_when_hp_or_condition_is_below_threshold() -> None:
@@ -296,6 +464,117 @@ def test_perception_analysis_computes_reaction_latency_metrics(tmp_path: Path) -
     assert (tmp_path / "perception" / "frame_perception.json").exists() is True
     assert (tmp_path / "perception" / "frame_perception_overlay.svg").exists() is True
     assert (tmp_path / "perception" / "perception_results.jsonl").exists() is True
+
+
+def test_scene_profile_loader_reads_single_spot_profile() -> None:
+    settings = load_config("config/live_real_mvp.yaml")
+    loader = SceneProfileLoader(settings.live.scene_profile_path)
+
+    profile = loader.load()
+
+    assert profile is not None
+    assert profile.scene_name == "single_spot_scene"
+    assert len(profile.spawn_zone_polygon) >= 4
+    assert profile.reference_frame_path is not None
+    assert profile.reference_frame_path.name == "live_spot_scene_1.png"
+
+
+def test_scene_aware_perception_rejects_out_of_zone_targets_and_selects_nearest_in_zone(
+    tmp_path: Path,
+) -> None:
+    settings = _build_live_settings(tmp_path)
+    scene_profile_path = tmp_path / "scene_profile.json"
+    scene_profile_path.write_text(
+        json.dumps(
+            {
+                "scene_name": "test_scene",
+                "reference_frame_path": None,
+                "reference_point_xy": [100, 180],
+                "spawn_zone_polygon": [
+                    [40, 40],
+                    [160, 40],
+                    [160, 160],
+                    [40, 160]
+                ]
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    settings = replace(settings, live=replace(settings.live, scene_profile_path=scene_profile_path))
+    frame_path = tmp_path / "scene_frame.json"
+    frame_path.write_text(
+        json.dumps(
+            {
+                "width": 240,
+                "height": 220,
+                "captured_at_ts": 12.0,
+                "source": "scene-aware-fixture",
+                "metadata": {
+                    "reference_point_xy": [100, 180],
+                    "spawn_roi": [0, 0, 240, 220],
+                    "template_hits": [
+                        {
+                            "label": "mob_a",
+                            "x": 70,
+                            "y": 70,
+                            "width": 40,
+                            "height": 50,
+                            "confidence": 0.94,
+                            "target_id": "inside-free"
+                        },
+                        {
+                            "label": "mob_b",
+                            "x": 178,
+                            "y": 72,
+                            "width": 40,
+                            "height": 50,
+                            "confidence": 0.92,
+                            "target_id": "outside-free"
+                        },
+                        {
+                            "label": "mob_a",
+                            "x": 92,
+                            "y": 132,
+                            "width": 40,
+                            "height": 50,
+                            "confidence": 0.93,
+                            "target_id": "inside-busy"
+                        },
+                        {
+                            "label": "occupied_swords",
+                            "x": 96,
+                            "y": 112,
+                            "width": 24,
+                            "height": 18,
+                            "confidence": 0.96,
+                            "target_id": "inside-busy"
+                        }
+                    ],
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    runner = PerceptionAnalysisRunner(
+        live_config=settings.live,
+        output_directory=tmp_path / "scene-aware-perception",
+    )
+
+    summary = runner.analyze_frame_path(frame_path)
+    result = summary.frame_results[0]
+
+    assert result.scene_name == "test_scene"
+    assert len(result.in_zone_detections) == 2
+    assert len(result.out_of_zone_detections) == 1
+    assert result.out_of_zone_detections[0].target_id == "outside-free"
+    assert result.out_of_zone_detections[0].reachable is False
+    assert result.selected_target_id == "inside-free"
+    assert len(result.selectable_detections) == 1
+    assert summary.out_of_zone_rejections.avg_ms == pytest.approx(1.0)
 
 
 def test_perception_batch_analysis_aggregates_session_metrics_from_fixtures(tmp_path: Path) -> None:
@@ -474,6 +753,203 @@ def test_perception_frame_loader_loads_nested_directory_structure(tmp_path: Path
     assert entries[0][1].source == "nested-frame"
 
 
+def test_benchmark_dataset_loader_reads_split_manifest(tmp_path: Path) -> None:
+    settings = _write_marker_first_benchmark_dataset(tmp_path)
+    loader = BenchmarkDatasetLoader(
+        dataset_root=settings.live.benchmark_dataset_directory,
+        frame_loader=PerceptionFrameLoader(),
+    )
+
+    entries = loader.load_split("regression")
+
+    assert len(entries) == 2
+    assert entries[0][0] == "regression__benchmark_free"
+    assert entries[1][0] == "regression__benchmark_occupied"
+    assert entries[0][1].metadata["dataset_split"] == "regression"
+
+
+def test_ground_truth_is_loaded_from_sidecar_for_benchmark_frames(tmp_path: Path) -> None:
+    settings = _write_marker_first_benchmark_dataset(tmp_path)
+    frame = PerceptionFrameLoader().load_frame(
+        settings.live.sample_frames_directory / "benchmark_free.png"
+    )
+
+    ground_truth = frame.metadata.get("ground_truth")
+
+    assert isinstance(ground_truth, dict)
+    assert len(ground_truth["candidates"]) == 1
+    assert ground_truth["candidates"][0]["candidate_id"] == "free_primary"
+
+
+def test_strict_pixel_based_mode_rejects_json_only_frame_specs(tmp_path: Path) -> None:
+    settings = _build_live_settings(tmp_path)
+    frame_path = tmp_path / "json_only_frame.json"
+    frame_path.write_text(
+        json.dumps(
+            {
+                "width": 320,
+                "height": 240,
+                "captured_at_ts": 1.0,
+                "source": "json-only",
+                "metadata": {
+                    "template_hits": [
+                        {
+                            "label": "mob_a",
+                            "x": 10,
+                            "y": 10,
+                            "width": 20,
+                            "height": 20,
+                            "confidence": 0.9,
+                        }
+                    ]
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    runner = PerceptionAnalysisRunner(
+        live_config=settings.live,
+        output_directory=tmp_path / "strict-json-only",
+        strict_pixel_only=True,
+    )
+
+    with pytest.raises(RuntimeError, match="Strict pixel-based benchmark wymaga prawdziwego obrazu"):
+        runner.analyze_frame_path(frame_path)
+
+
+def test_strict_benchmark_split_reports_selected_target_and_occupied_accuracy(tmp_path: Path) -> None:
+    settings = _write_marker_first_benchmark_dataset(tmp_path)
+    output_directory = tmp_path / "benchmark-output"
+    runner = PerceptionAnalysisRunner(
+        live_config=settings.live,
+        output_directory=output_directory,
+        strict_pixel_only=True,
+    )
+
+    summary = runner.analyze_benchmark_split("regression")
+
+    assert summary.strict_pixel_only is True
+    assert summary.benchmark_summary is not None
+    assert summary.benchmark_summary.evaluated_frame_count == 2
+    assert summary.benchmark_summary.strict_pixel_only is True
+    assert summary.benchmark_summary.fallback_frame_count == 0
+    assert summary.benchmark_summary.selected_target_accuracy == pytest.approx(1.0)
+    assert summary.benchmark_summary.occupied_classification_accuracy == pytest.approx(1.0)
+    assert summary.benchmark_summary.target_recall == pytest.approx(1.0)
+    assert summary.benchmark_summary.target_precision == pytest.approx(1.0)
+    assert (output_directory / "regression__benchmark_free_perception.json").exists() is True
+    assert (output_directory / "regression__benchmark_occupied_perception.json").exists() is True
+    payload = json.loads((output_directory / "perception_session_summary.json").read_text(encoding="utf-8"))
+    assert payload["benchmark_summary"]["strict_pixel_only"] is True
+    assert payload["benchmark_summary"]["target_recall"] == pytest.approx(1.0)
+
+
+def test_benchmark_summary_aggregates_false_positive_and_false_negative_counts(tmp_path: Path) -> None:
+    settings = _write_marker_first_benchmark_dataset(tmp_path)
+    runner = PerceptionAnalysisRunner(
+        live_config=settings.live,
+        output_directory=tmp_path / "benchmark-aggregate-output",
+        strict_pixel_only=True,
+    )
+
+    summary = runner.analyze_benchmark_split("regression")
+
+    assert summary.benchmark_summary is not None
+    assert summary.benchmark_summary.false_positive_count.count == 2
+    assert summary.benchmark_summary.false_negative_count.count == 2
+    assert summary.benchmark_summary.false_positive_count.max_value == pytest.approx(0.0)
+    assert summary.benchmark_summary.false_negative_count.max_value == pytest.approx(0.0)
+
+
+def test_benchmark_summary_tracks_out_of_zone_rejections_for_scene_aware_frames(
+    tmp_path: Path,
+) -> None:
+    settings = _build_live_settings(tmp_path)
+    scene_profile_path = tmp_path / "scene_profile.json"
+    scene_profile_path.write_text(
+        json.dumps(
+            {
+                "scene_name": "benchmark_scene",
+                "reference_frame_path": None,
+                "reference_point_xy": [100, 180],
+                "spawn_zone_polygon": [
+                    [40, 40],
+                    [160, 40],
+                    [160, 160],
+                    [40, 160]
+                ]
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    settings = replace(settings, live=replace(settings.live, scene_profile_path=scene_profile_path))
+    frame_path = tmp_path / "benchmark_scene_frame.json"
+    frame_path.write_text(
+        json.dumps(
+            {
+                "width": 240,
+                "height": 220,
+                "captured_at_ts": 14.0,
+                "source": "benchmark_scene_frame",
+                "metadata": {
+                    "reference_point_xy": [100, 180],
+                    "spawn_roi": [0, 0, 240, 220],
+                    "ground_truth": {
+                        "candidates": [
+                            {
+                                "candidate_id": "inside-free",
+                                "screen_xy": [90, 95],
+                                "max_error_px": 40,
+                                "occupied": False,
+                                "selected": True
+                            }
+                        ]
+                    },
+                    "template_hits": [
+                        {
+                            "label": "mob_a",
+                            "x": 70,
+                            "y": 70,
+                            "width": 40,
+                            "height": 50,
+                            "confidence": 0.94,
+                            "target_id": "inside-free"
+                        },
+                        {
+                            "label": "mob_b",
+                            "x": 180,
+                            "y": 72,
+                            "width": 40,
+                            "height": 50,
+                            "confidence": 0.91,
+                            "target_id": "outside-free"
+                        }
+                    ]
+                }
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    runner = PerceptionAnalysisRunner(
+        live_config=settings.live,
+        output_directory=tmp_path / "scene-aware-benchmark",
+    )
+
+    summary = runner.analyze_frame_path(frame_path)
+
+    assert summary.benchmark_summary is not None
+    assert summary.benchmark_summary.out_of_zone_rejection_count.avg_value == pytest.approx(1.0)
+    assert summary.benchmark_summary.selected_target_in_zone_accuracy == pytest.approx(1.0)
+    assert summary.benchmark_summary.false_positive_reduction_after_zone_filtering.avg_value == pytest.approx(1.0)
+
+
 def test_marker_first_perception_detects_occupied_and_selects_nearest_free_target(
     tmp_path: Path,
 ) -> None:
@@ -597,7 +1073,7 @@ def test_live_preview_state_and_renderer_prepare_debug_overlay(tmp_path: Path) -
     image = renderer.render(frame=frame, result=result, state=state)
 
     assert state.candidate_count == len(result.detections)
-    assert state.free_target_count == len(result.free_detections)
+    assert state.free_target_count == len(result.selectable_detections)
     assert state.selected_target_id == result.selected_target_id
     assert any("reaction=" in line for line in state.headline_lines)
     assert image.size[0] <= 200
@@ -686,7 +1162,7 @@ def test_live_input_driver_real_path_plumbing_can_be_mocked(monkeypatch) -> None
 
 
 def test_marker_first_pipeline_can_smoke_test_real_sample_frame_if_present(tmp_path: Path) -> None:
-    settings = _build_live_settings(tmp_path)
+    settings = _build_scene_aware_live_settings(tmp_path)
     frame_path = settings.live.sample_frames_directory / "live_spot_scene_1.png"
     if not frame_path.exists():
         pytest.skip("Brak lokalnej klatki real sample frame do smoke testu.")
@@ -706,7 +1182,7 @@ def test_marker_first_pipeline_can_smoke_test_real_sample_frame_if_present(tmp_p
 
 
 def test_live_spot_scene_sidecar_is_loaded_for_real_sample_frames() -> None:
-    settings = load_config("config/live_dry_run.yaml")
+    settings = load_config("config/live_real_mvp.yaml")
     loader = PerceptionFrameLoader()
 
     frame = loader.load_frame(settings.live.sample_frames_directory / "live_spot_scene_1.png")
@@ -722,7 +1198,7 @@ def test_live_spot_scene_sidecar_is_loaded_for_real_sample_frames() -> None:
 
 
 def test_live_spot_scenes_match_expected_perception_contracts(tmp_path: Path) -> None:
-    settings = _build_live_settings(tmp_path)
+    settings = _build_scene_aware_live_settings(tmp_path)
     loader = PerceptionFrameLoader()
     runner = PerceptionAnalysisRunner(
         live_config=settings.live,
@@ -745,7 +1221,8 @@ def test_live_spot_scenes_match_expected_perception_contracts(tmp_path: Path) ->
         summary = runner.analyze_frame_path(frame_path)
         result = summary.frame_results[0]
         assert summary.accuracy_summary is not None
-        free_count = len(result.free_detections)
+        assert result.scene_name == "single_spot_scene"
+        free_count = len(result.selectable_detections)
         occupied_count = len(result.occupied_detections)
 
         min_target_count = expected.get("min_target_count")

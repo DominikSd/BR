@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from botlab.adapters.live.models import LiveFrame, LiveTargetDetection
+from botlab.adapters.live.scene import SceneProfile, SceneProfileLoader
 from botlab.adapters.live.vision import (
     extract_named_roi,
     filter_occupied_targets,
@@ -155,6 +156,163 @@ class LatencyAggregate:
 
 
 @dataclass(slots=True, frozen=True)
+class NumericAggregate:
+    name: str
+    count: int
+    min_value: float | None
+    avg_value: float | None
+    p50_value: float | None
+    p95_value: float | None
+    max_value: float | None
+
+    @classmethod
+    def from_values(cls, name: str, values: Iterable[float]) -> "NumericAggregate":
+        sorted_values = sorted(float(value) for value in values)
+        if not sorted_values:
+            return cls(
+                name=name,
+                count=0,
+                min_value=None,
+                avg_value=None,
+                p50_value=None,
+                p95_value=None,
+                max_value=None,
+            )
+        return cls(
+            name=name,
+            count=len(sorted_values),
+            min_value=sorted_values[0],
+            avg_value=sum(sorted_values) / len(sorted_values),
+            p50_value=_percentile(sorted_values, 50),
+            p95_value=_percentile(sorted_values, 95),
+            max_value=sorted_values[-1],
+        )
+
+    def to_dict(self) -> dict[str, float | int | None | str]:
+        return {
+            "name": self.name,
+            "count": self.count,
+            "min_value": self.min_value,
+            "avg_value": self.avg_value,
+            "p50_value": self.p50_value,
+            "p95_value": self.p95_value,
+            "max_value": self.max_value,
+        }
+
+
+@dataclass(slots=True, frozen=True)
+class GroundTruthCandidate:
+    candidate_id: str
+    screen_xy: tuple[float, float]
+    max_error_px: float
+    occupied: bool
+    selected: bool
+    bbox: tuple[int, int, int, int] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "candidate_id": self.candidate_id,
+            "screen_xy": [self.screen_xy[0], self.screen_xy[1]],
+            "max_error_px": self.max_error_px,
+            "occupied": self.occupied,
+            "selected": self.selected,
+            "bbox": None if self.bbox is None else list(self.bbox),
+        }
+
+
+@dataclass(slots=True, frozen=True)
+class BenchmarkFrameReport:
+    frame_source: str
+    pipeline_mode: str
+    ground_truth_target_count: int
+    predicted_target_count: int
+    in_zone_target_count: int
+    out_of_zone_target_count: int
+    true_positive_count: int
+    false_positive_count: int
+    false_negative_count: int
+    target_recall: float
+    target_precision: float
+    occupied_classification_accuracy: float | None
+    selected_target_correct: bool
+    selected_target_in_zone: bool
+    expected_selected_candidate_id: str | None
+    matched_ground_truth_count: int
+    occupied_correct_count: int
+    false_positive_target_ids: tuple[str, ...] = ()
+    false_negative_candidate_ids: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "frame_source": self.frame_source,
+            "pipeline_mode": self.pipeline_mode,
+            "ground_truth_target_count": self.ground_truth_target_count,
+            "predicted_target_count": self.predicted_target_count,
+            "in_zone_target_count": self.in_zone_target_count,
+            "out_of_zone_target_count": self.out_of_zone_target_count,
+            "true_positive_count": self.true_positive_count,
+            "false_positive_count": self.false_positive_count,
+            "false_negative_count": self.false_negative_count,
+            "target_recall": self.target_recall,
+            "target_precision": self.target_precision,
+            "occupied_classification_accuracy": self.occupied_classification_accuracy,
+            "selected_target_correct": self.selected_target_correct,
+            "selected_target_in_zone": self.selected_target_in_zone,
+            "expected_selected_candidate_id": self.expected_selected_candidate_id,
+            "matched_ground_truth_count": self.matched_ground_truth_count,
+            "occupied_correct_count": self.occupied_correct_count,
+            "false_positive_target_ids": list(self.false_positive_target_ids),
+            "false_negative_candidate_ids": list(self.false_negative_candidate_ids),
+        }
+
+
+@dataclass(slots=True, frozen=True)
+class BenchmarkSummary:
+    evaluated_frame_count: int
+    strict_pixel_only: bool
+    pixel_frame_count: int
+    fallback_frame_count: int
+    target_true_positive_count: int
+    target_false_positive_count: int
+    target_false_negative_count: int
+    target_recall: float
+    target_precision: float
+    occupied_classification_accuracy: float | None
+    selected_target_accuracy: float | None
+    selected_target_in_zone_accuracy: float | None
+    out_of_zone_rejection_count: NumericAggregate
+    false_positive_reduction_after_zone_filtering: NumericAggregate
+    candidate_count: NumericAggregate
+    merged_count: NumericAggregate
+    false_positive_count: NumericAggregate
+    false_negative_count: NumericAggregate
+    frame_reports: tuple[BenchmarkFrameReport, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "evaluated_frame_count": self.evaluated_frame_count,
+            "strict_pixel_only": self.strict_pixel_only,
+            "pixel_frame_count": self.pixel_frame_count,
+            "fallback_frame_count": self.fallback_frame_count,
+            "target_true_positive_count": self.target_true_positive_count,
+            "target_false_positive_count": self.target_false_positive_count,
+            "target_false_negative_count": self.target_false_negative_count,
+            "target_recall": self.target_recall,
+            "target_precision": self.target_precision,
+            "occupied_classification_accuracy": self.occupied_classification_accuracy,
+            "selected_target_accuracy": self.selected_target_accuracy,
+            "selected_target_in_zone_accuracy": self.selected_target_in_zone_accuracy,
+            "out_of_zone_rejection_count": self.out_of_zone_rejection_count.to_dict(),
+            "false_positive_reduction_after_zone_filtering": self.false_positive_reduction_after_zone_filtering.to_dict(),
+            "candidate_count": self.candidate_count.to_dict(),
+            "merged_count": self.merged_count.to_dict(),
+            "false_positive_count": self.false_positive_count.to_dict(),
+            "false_negative_count": self.false_negative_count.to_dict(),
+            "frame_reports": [report.to_dict() for report in self.frame_reports],
+        }
+
+
+@dataclass(slots=True, frozen=True)
 class PerceptionFrameResult:
     cycle_id: int
     phase: str
@@ -167,7 +325,11 @@ class PerceptionFrameResult:
     detections: tuple[LiveTargetDetection, ...]
     selected_target_id: str | None
     timings: ReactionLatency
+    scene_name: str | None = None
+    scene_zone_polygon: tuple[tuple[float, float], ...] = ()
+    pipeline_mode: str = "pixel"
     expectations: dict[str, Any] = field(default_factory=dict)
+    ground_truth: dict[str, Any] = field(default_factory=dict)
     artifact_paths: dict[str, Path] = field(default_factory=dict)
 
     @property
@@ -188,6 +350,30 @@ class PerceptionFrameResult:
         return tuple(detection for detection in self.detections if detection.occupied)
 
     @property
+    def in_zone_detections(self) -> tuple[LiveTargetDetection, ...]:
+        return tuple(
+            detection
+            for detection in self.detections
+            if bool(detection.metadata.get("in_scene_zone", True))
+        )
+
+    @property
+    def out_of_zone_detections(self) -> tuple[LiveTargetDetection, ...]:
+        return tuple(
+            detection
+            for detection in self.detections
+            if not bool(detection.metadata.get("in_scene_zone", True))
+        )
+
+    @property
+    def selectable_detections(self) -> tuple[LiveTargetDetection, ...]:
+        return tuple(
+            detection
+            for detection in self.in_zone_detections
+            if not detection.occupied and detection.reachable
+        )
+
+    @property
     def candidate_hit_count(self) -> int:
         return len(self.raw_hits)
 
@@ -204,6 +390,10 @@ class PerceptionFrameResult:
             "frame_height": self.frame_height,
             "reference_point_xy": list(self.reference_point_xy),
             "roi": self.roi,
+            "scene_name": self.scene_name,
+            "scene_zone_polygon": [
+                [point_x, point_y] for point_x, point_y in self.scene_zone_polygon
+            ],
             "raw_hits": [
                 {
                     "label": hit.label,
@@ -239,7 +429,12 @@ class PerceptionFrameResult:
             "candidate_hit_count": self.candidate_hit_count,
             "merged_hit_count": self.merged_hit_count,
             "free_target_count": len(self.free_detections),
+            "in_zone_target_count": len(self.in_zone_detections),
+            "out_of_zone_target_count": len(self.out_of_zone_detections),
+            "selectable_target_count": len(self.selectable_detections),
+            "pipeline_mode": self.pipeline_mode,
             "expectations": self.expectations,
+            "ground_truth": self.ground_truth,
             "timings": self.timings.to_dict(),
             "artifact_paths": {key: str(path) for key, path in self.artifact_paths.items()},
         }
@@ -267,10 +462,13 @@ class PerceptionSessionSummary:
     candidate_hits: LatencyAggregate
     merged_hits: LatencyAggregate
     free_targets: LatencyAggregate
+    out_of_zone_rejections: LatencyAggregate
     detection_latency: LatencyAggregate
     selection_latency: LatencyAggregate
     total_reaction_latency: LatencyAggregate
+    strict_pixel_only: bool = False
     accuracy_summary: AccuracySummary | None = None
+    benchmark_summary: BenchmarkSummary | None = None
 
     def real_scene_regression_entries(self) -> tuple[dict[str, Any], ...]:
         entries: list[dict[str, Any]] = []
@@ -282,9 +480,14 @@ class PerceptionSessionSummary:
                 {
                     "frame_source": result.frame_source,
                     "target_count": len(result.detections),
-                    "free_target_count": len(result.free_detections),
+                    "free_target_count": len(result.selectable_detections),
                     "occupied_target_count": len(result.occupied_detections),
+                    "in_zone_target_count": len(result.in_zone_detections),
+                    "out_of_zone_target_count": len(result.out_of_zone_detections),
                     "selected_target_id": result.selected_target_id,
+                    "selected_target_in_zone": None
+                    if selected_target is None
+                    else bool(selected_target.metadata.get("in_scene_zone", True)),
                     "selected_target_xy": None
                     if selected_target is None
                     else [selected_target.screen_x, selected_target.screen_y],
@@ -304,13 +507,17 @@ class PerceptionSessionSummary:
             "candidate_hits": self.candidate_hits.to_dict(),
             "merged_hits": self.merged_hits.to_dict(),
             "free_targets": self.free_targets.to_dict(),
+            "out_of_zone_rejections": self.out_of_zone_rejections.to_dict(),
             "detection_latency": self.detection_latency.to_dict(),
             "selection_latency": self.selection_latency.to_dict(),
             "total_reaction_latency": self.total_reaction_latency.to_dict(),
+            "strict_pixel_only": self.strict_pixel_only,
             "frames": [result.to_dict() for result in self.frame_results],
         }
         if self.accuracy_summary is not None:
             payload["accuracy_summary"] = self.accuracy_summary.to_dict()
+        if self.benchmark_summary is not None:
+            payload["benchmark_summary"] = self.benchmark_summary.to_dict()
         real_scene_regression = self.real_scene_regression_entries()
         if real_scene_regression:
             payload["real_scene_regression"] = list(real_scene_regression)
@@ -374,12 +581,15 @@ class PerceptionAnalyzer:
         live_config: LiveConfig,
         *,
         clock: Clock | None = None,
+        strict_pixel_only: bool = False,
     ) -> None:
         self._live_config = live_config
         self._clock = clock or time.perf_counter
         self._template_pack_loader = TemplatePackLoader(live_config)
+        self._scene_profile_loader = SceneProfileLoader(live_config.scene_profile_path)
         self._track_states: dict[str, TrackedDetectionState] = {}
         self._track_sequence = 0
+        self._strict_pixel_only = strict_pixel_only
 
     def analyze_frame(
         self,
@@ -389,10 +599,12 @@ class PerceptionAnalyzer:
         phase: str,
     ) -> PerceptionFrameResult:
         roi = extract_named_roi(frame, roi_name="spawn_roi", live_config=self._live_config)
-        reference_point_xy = _resolve_reference_point(frame)
+        scene_profile = self._scene_profile_loader.load()
+        reference_point_xy = _resolve_reference_point(frame, scene_profile=scene_profile)
 
         detection_started_ts = frame.captured_at_ts
         detection_perf_started = self._clock()
+        pipeline_mode = "pixel"
         if frame.image is not None:
             roi_hits, detections = self._run_marker_first_pipeline(
                 frame=frame,
@@ -400,13 +612,22 @@ class PerceptionAnalyzer:
                 reference_point_xy=reference_point_xy,
             )
         else:
+            if self._strict_pixel_only:
+                raise RuntimeError(
+                    f"Strict pixel-based benchmark wymaga prawdziwego obrazu. Frame '{frame.source}' nie ma raster image."
+                )
             raw_hits = self._load_metadata_template_hits(frame)
             roi_hits = self._filter_hits_to_roi(raw_hits=raw_hits, roi=roi)
             detections = self._build_detections_from_template_hits(
                 hits=roi_hits,
                 reference_point_xy=reference_point_xy,
             )
+            pipeline_mode = "metadata_fallback"
         detections = self._smooth_detections(detections)
+        detections = self._apply_scene_zone_filter(
+            detections=detections,
+            scene_profile=scene_profile,
+        )
         detection_finished_ts = detection_started_ts + self._resolve_duration_s(
             frame=frame,
             phase_key="detection_duration_s",
@@ -414,7 +635,13 @@ class PerceptionAnalyzer:
         )
 
         selection_perf_started = self._clock()
-        selected_target = select_nearest_target(filter_occupied_targets(detections))
+        selected_target = select_nearest_target(
+            tuple(
+                detection
+                for detection in filter_occupied_targets(detections)
+                if bool(detection.metadata.get("in_scene_zone", True)) and detection.reachable
+            )
+        )
         selection_finished_ts = detection_finished_ts + self._resolve_duration_s(
             frame=frame,
             phase_key="selection_duration_s",
@@ -444,7 +671,13 @@ class PerceptionAnalyzer:
                 target_selected_ts=selection_finished_ts,
                 action_ready_ts=action_ready_ts,
             ),
+            scene_name=None if scene_profile is None else scene_profile.scene_name,
+            scene_zone_polygon=()
+            if scene_profile is None
+            else scene_profile.spawn_zone_polygon,
+            pipeline_mode=pipeline_mode,
             expectations=dict(frame.metadata.get("expected_perception", {})),
+            ground_truth=dict(frame.metadata.get("ground_truth", {})),
         )
 
     def summarize_session(
@@ -466,6 +699,10 @@ class PerceptionAnalyzer:
                 "free_targets",
                 (len(result.free_detections) for result in results),
             ),
+            out_of_zone_rejections=LatencyAggregate.from_values(
+                "out_of_zone_rejections",
+                (len(result.out_of_zone_detections) for result in results),
+            ),
             detection_latency=LatencyAggregate.from_values(
                 "detection_latency_ms",
                 (result.timings.detection_latency_ms for result in results),
@@ -478,7 +715,12 @@ class PerceptionAnalyzer:
                 "total_reaction_latency_ms",
                 (result.timings.total_reaction_latency_ms for result in results),
             ),
+            strict_pixel_only=self._strict_pixel_only,
             accuracy_summary=_build_accuracy_summary(results),
+            benchmark_summary=_build_benchmark_summary(
+                results,
+                strict_pixel_only=self._strict_pixel_only,
+            ),
         )
 
     def _load_metadata_template_hits(self, frame: LiveFrame) -> tuple[TemplateHit, ...]:
@@ -504,6 +746,32 @@ class PerceptionAnalyzer:
                 )
             return tuple(parsed_hits)
         return _synthesize_hits_from_targets(frame)
+
+    def _apply_scene_zone_filter(
+        self,
+        *,
+        detections: tuple[LiveTargetDetection, ...],
+        scene_profile: SceneProfile | None,
+    ) -> tuple[LiveTargetDetection, ...]:
+        if scene_profile is None:
+            return detections
+        filtered_detections: list[LiveTargetDetection] = []
+        for detection in detections:
+            point_xy = (float(detection.screen_x), float(detection.screen_y))
+            in_scene_zone = scene_profile.contains_point(point_xy)
+            filtered_detections.append(
+                replace(
+                    detection,
+                    reachable=detection.reachable and in_scene_zone,
+                    metadata={
+                        **detection.metadata,
+                        "scene_name": scene_profile.scene_name,
+                        "in_scene_zone": in_scene_zone,
+                        "zone_rejection_reason": None if in_scene_zone else "outside_scene_zone",
+                    },
+                )
+            )
+        return tuple(filtered_detections)
 
     def _run_marker_first_pipeline(
         self,
@@ -943,6 +1211,16 @@ class PerceptionArtifactWriter:
         lines.append(
             f'<line x1="{reference_x}" y1="{reference_y - 10}" x2="{reference_x}" y2="{reference_y + 10}" stroke="#fde047" stroke-width="2" />'
         )
+        if result.scene_zone_polygon:
+            polygon_points = " ".join(
+                f"{point_x},{point_y}" for point_x, point_y in result.scene_zone_polygon
+            )
+            lines.append(
+                f'<polygon points="{polygon_points}" fill="#22c55e" fill-opacity="0.08" stroke="#22c55e" stroke-width="3" />'
+            )
+            lines.append(
+                f'<text x="{int(result.scene_zone_polygon[0][0])}" y="{max(18, int(result.scene_zone_polygon[0][1]) - 8)}" fill="#86efac" font-size="14">{result.scene_name or "scene_zone"}</text>'
+            )
         for hit in result.raw_hits:
             hit_color = "#9ca3af"
             if hit.label == "red_marker":
@@ -965,9 +1243,14 @@ class PerceptionArtifactWriter:
                 48,
             )
             selected = detection.target_id == selected_target_id
+            in_scene_zone = bool(detection.metadata.get("in_scene_zone", True))
             color = "#ef4444" if detection.occupied else "#22c55e"
+            if not in_scene_zone:
+                color = "#9ca3af"
             stroke_width = 4 if selected else 2
             label = "occupied" if detection.occupied else "free"
+            if not in_scene_zone:
+                label = f"{label}/out_of_zone"
             marker_bbox = detection.metadata.get("marker_bbox")
             occupied_roi = detection.metadata.get("occupied_roi")
             confirmation_roi = detection.metadata.get("confirmation_roi")
@@ -1025,6 +1308,8 @@ class PerceptionFrameLoader:
                 )
                 if any(candidate.exists() for candidate in sibling_images):
                     continue
+            if path.name == "frames.json":
+                continue
             if path.name.endswith("_perception.json"):
                 continue
             if path.name == "perception_session_summary.json":
@@ -1074,6 +1359,57 @@ class PerceptionFrameLoader:
         )
 
 
+class BenchmarkDatasetLoader:
+    def __init__(self, *, dataset_root: Path, frame_loader: PerceptionFrameLoader) -> None:
+        self._dataset_root = dataset_root
+        self._frame_loader = frame_loader
+
+    def load_split(self, split_name: str) -> tuple[tuple[str, LiveFrame], ...]:
+        split_directory = (self._dataset_root / split_name).resolve()
+        manifest_path = split_directory / "frames.json"
+        if not manifest_path.exists():
+            raise FileNotFoundError(
+                f"Brak manifestu benchmark split '{split_name}': {manifest_path}"
+            )
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        raw_frames = payload.get("frames", [])
+        if not isinstance(raw_frames, list):
+            raise ValueError(f"Pole 'frames' w {manifest_path} musi byc lista.")
+        loaded_frames: list[tuple[str, LiveFrame]] = []
+        for index, raw_entry in enumerate(raw_frames, start=1):
+            if not isinstance(raw_entry, dict):
+                raise ValueError(
+                    f"Nieprawidlowy wpis frames[{index - 1}] w {manifest_path}: oczekiwano mapy."
+                )
+            raw_frame_path = raw_entry.get("frame_path")
+            if not isinstance(raw_frame_path, str) or not raw_frame_path.strip():
+                raise ValueError(
+                    f"Pole 'frame_path' w frames[{index - 1}] w {manifest_path} musi byc niepustym napisem."
+                )
+            frame_path = (split_directory / raw_frame_path).resolve()
+            frame = self._frame_loader.load_frame(frame_path)
+            metadata_overlay = raw_entry.get("metadata_overlay", {})
+            if metadata_overlay and not isinstance(metadata_overlay, dict):
+                raise ValueError(
+                    f"Pole 'metadata_overlay' w frames[{index - 1}] w {manifest_path} musi byc mapa."
+                )
+            merged_metadata = {
+                **frame.metadata,
+                **dict(metadata_overlay),
+                "dataset_split": split_name,
+            }
+            entry_name = raw_entry.get("frame_name")
+            if not isinstance(entry_name, str) or not entry_name.strip():
+                entry_name = Path(raw_frame_path).stem
+            loaded_frames.append(
+                (
+                    f"{split_name}__{entry_name}",
+                    replace(frame, metadata=merged_metadata),
+                )
+            )
+        return tuple(loaded_frames)
+
+
 class PerceptionAnalysisRunner:
     def __init__(
         self,
@@ -1081,28 +1417,37 @@ class PerceptionAnalysisRunner:
         live_config: LiveConfig,
         output_directory: Path,
         clock: Clock | None = None,
+        strict_pixel_only: bool = False,
     ) -> None:
-        self._analyzer = PerceptionAnalyzer(live_config, clock=clock)
+        self._analyzer = PerceptionAnalyzer(
+            live_config,
+            clock=clock,
+            strict_pixel_only=strict_pixel_only,
+        )
         self._loader = PerceptionFrameLoader()
         self._artifact_writer = PerceptionArtifactWriter(output_directory)
+        self._dataset_loader = BenchmarkDatasetLoader(
+            dataset_root=live_config.benchmark_dataset_directory,
+            frame_loader=self._loader,
+        )
 
     def analyze_frame_path(self, frame_path: str | Path) -> PerceptionSessionSummary:
         frame = self._loader.load_frame(frame_path)
         frame_name = Path(frame_path).stem
-        result = self._analyzer.analyze_frame(frame, cycle_id=1, phase=frame_name)
-        artifact_paths = self._artifact_writer.write_batch_result(
-            frame_name=frame_name,
-            frame=frame,
-            result=result,
-        )
-        persisted_result = replace(result, artifact_paths=artifact_paths)
-        self._artifact_writer.append_jsonl(record_name=frame_name, result=persisted_result)
-        summary = self._analyzer.summarize_session((persisted_result,))
-        self._artifact_writer.write_session_summary(summary)
-        return summary
+        return self._analyze_entries(((frame_name, frame),))
 
     def analyze_directory(self, directory: str | Path) -> PerceptionSessionSummary:
         frame_entries = self._loader.load_directory(directory)
+        return self._analyze_entries(frame_entries)
+
+    def analyze_benchmark_split(self, split_name: str) -> PerceptionSessionSummary:
+        frame_entries = self._dataset_loader.load_split(split_name)
+        return self._analyze_entries(frame_entries)
+
+    def _analyze_entries(
+        self,
+        frame_entries: Iterable[tuple[str, LiveFrame]],
+    ) -> PerceptionSessionSummary:
         persisted_results: list[PerceptionFrameResult] = []
         for index, (frame_name, frame) in enumerate(frame_entries, start=1):
             result = self._analyzer.analyze_frame(frame, cycle_id=index, phase=frame_name)
@@ -1201,7 +1546,7 @@ def build_world_snapshot_from_perception(
                 **detection.metadata,
             },
         )
-        for detection in perception_result.detections
+        for detection in perception_result.in_zone_detections
     )
     return WorldSnapshot(
         observed_at_ts=frame.captured_at_ts,
@@ -1214,8 +1559,10 @@ def build_world_snapshot_from_perception(
             "cycle_id": cycle_id,
             "phase": phase,
             "target_count": len(groups),
-            "free_target_count": len(perception_result.free_detections),
+            "free_target_count": len(perception_result.selectable_detections),
             "occupied_target_count": len(perception_result.occupied_detections),
+            "in_zone_target_count": len(perception_result.in_zone_detections),
+            "out_of_zone_target_count": len(perception_result.out_of_zone_detections),
             "selected_target_id": perception_result.selected_target_id,
             "detection_latency_ms": perception_result.timings.detection_latency_ms,
             "selection_latency_ms": perception_result.timings.selection_latency_ms,
@@ -1748,6 +2095,227 @@ def _build_accuracy_summary(
     )
 
 
+def _build_benchmark_summary(
+    results: tuple[PerceptionFrameResult, ...],
+    *,
+    strict_pixel_only: bool,
+) -> BenchmarkSummary | None:
+    evaluated_results = tuple(
+        result
+        for result in results
+        if isinstance(result.ground_truth, dict) and bool(result.ground_truth.get("candidates"))
+    )
+    if not evaluated_results:
+        return None
+
+    frame_reports = tuple(_build_benchmark_frame_report(result) for result in evaluated_results)
+    total_ground_truth_targets = sum(report.ground_truth_target_count for report in frame_reports)
+    total_predicted_targets = sum(report.predicted_target_count for report in frame_reports)
+    total_true_positive = sum(report.true_positive_count for report in frame_reports)
+    total_false_positive = sum(report.false_positive_count for report in frame_reports)
+    total_false_negative = sum(report.false_negative_count for report in frame_reports)
+    total_matched_ground_truth = sum(report.matched_ground_truth_count for report in frame_reports)
+    total_occupied_correct = sum(report.occupied_correct_count for report in frame_reports)
+    selected_accuracy_values = [1.0 if report.selected_target_correct else 0.0 for report in frame_reports]
+    selected_in_zone_accuracy_values = [
+        1.0 if report.selected_target_in_zone else 0.0 for report in frame_reports
+    ]
+    occupied_accuracy = None
+    if total_matched_ground_truth > 0:
+        occupied_accuracy = total_occupied_correct / float(total_matched_ground_truth)
+
+    pixel_frame_count = sum(1 for result in evaluated_results if result.pipeline_mode == "pixel")
+    fallback_frame_count = sum(1 for result in evaluated_results if result.pipeline_mode != "pixel")
+
+    return BenchmarkSummary(
+        evaluated_frame_count=len(frame_reports),
+        strict_pixel_only=strict_pixel_only,
+        pixel_frame_count=pixel_frame_count,
+        fallback_frame_count=fallback_frame_count,
+        target_true_positive_count=total_true_positive,
+        target_false_positive_count=total_false_positive,
+        target_false_negative_count=total_false_negative,
+        target_recall=0.0
+        if total_ground_truth_targets == 0
+        else total_true_positive / float(total_ground_truth_targets),
+        target_precision=0.0
+        if total_predicted_targets == 0
+        else total_true_positive / float(total_predicted_targets),
+        occupied_classification_accuracy=occupied_accuracy,
+        selected_target_accuracy=None
+        if not selected_accuracy_values
+        else sum(selected_accuracy_values) / float(len(selected_accuracy_values)),
+        selected_target_in_zone_accuracy=None
+        if not selected_in_zone_accuracy_values
+        else sum(selected_in_zone_accuracy_values) / float(len(selected_in_zone_accuracy_values)),
+        out_of_zone_rejection_count=NumericAggregate.from_values(
+            "out_of_zone_rejection_count",
+            (float(report.out_of_zone_target_count) for report in frame_reports),
+        ),
+        false_positive_reduction_after_zone_filtering=NumericAggregate.from_values(
+            "false_positive_reduction_after_zone_filtering",
+            (
+                float(
+                    len(
+                        [
+                            detection
+                            for detection in result.out_of_zone_detections
+                            if not detection.occupied
+                        ]
+                    )
+                )
+                for result in evaluated_results
+            ),
+        ),
+        candidate_count=NumericAggregate.from_values(
+            "candidate_count",
+            (float(result.candidate_hit_count) for result in evaluated_results),
+        ),
+        merged_count=NumericAggregate.from_values(
+            "merged_count",
+            (float(result.merged_hit_count) for result in evaluated_results),
+        ),
+        false_positive_count=NumericAggregate.from_values(
+            "false_positive_count",
+            (float(report.false_positive_count) for report in frame_reports),
+        ),
+        false_negative_count=NumericAggregate.from_values(
+            "false_negative_count",
+            (float(report.false_negative_count) for report in frame_reports),
+        ),
+        frame_reports=frame_reports,
+    )
+
+
+def _build_benchmark_frame_report(result: PerceptionFrameResult) -> BenchmarkFrameReport:
+    ground_truth_candidates = _parse_ground_truth_candidates(result.ground_truth)
+    unmatched_detection_indices = set(range(len(result.detections)))
+    false_negative_candidate_ids: list[str] = []
+    matched_ground_truth_count = 0
+    occupied_correct_count = 0
+    expected_selected_candidate_id: str | None = None
+    selected_target_correct = True
+
+    matched_detection_by_candidate_id: dict[str, LiveTargetDetection] = {}
+    for candidate in ground_truth_candidates:
+        if candidate.selected:
+            expected_selected_candidate_id = candidate.candidate_id
+            break
+
+    for candidate in ground_truth_candidates:
+        best_index: int | None = None
+        best_distance = float("inf")
+        for detection_index, detection in enumerate(result.detections):
+            if detection_index not in unmatched_detection_indices:
+                continue
+            distance = math.dist(
+                (float(detection.screen_x), float(detection.screen_y)),
+                candidate.screen_xy,
+            )
+            if distance <= candidate.max_error_px and distance < best_distance:
+                best_index = detection_index
+                best_distance = distance
+        if best_index is None:
+            false_negative_candidate_ids.append(candidate.candidate_id)
+            if candidate.selected:
+                selected_target_correct = result.selected_target is None
+            continue
+
+        matched_ground_truth_count += 1
+        unmatched_detection_indices.remove(best_index)
+        matched_detection = result.detections[best_index]
+        matched_detection_by_candidate_id[candidate.candidate_id] = matched_detection
+        if matched_detection.occupied is candidate.occupied:
+            occupied_correct_count += 1
+        if candidate.selected:
+            selected_target_correct = result.selected_target_id == matched_detection.target_id
+
+    if expected_selected_candidate_id is None and result.selected_target_id is not None:
+        selected_target_correct = False
+
+    false_positive_target_ids = tuple(
+        result.detections[index].target_id
+        for index in sorted(unmatched_detection_indices)
+    )
+    false_positive_count = len(false_positive_target_ids)
+    false_negative_count = len(false_negative_candidate_ids)
+    predicted_target_count = len(result.detections)
+    ground_truth_target_count = len(ground_truth_candidates)
+    selected_target = result.selected_target
+    selected_target_in_zone = True
+    if selected_target is not None:
+        selected_target_in_zone = bool(selected_target.metadata.get("in_scene_zone", True))
+
+    return BenchmarkFrameReport(
+        frame_source=result.frame_source,
+        pipeline_mode=result.pipeline_mode,
+        ground_truth_target_count=ground_truth_target_count,
+        predicted_target_count=predicted_target_count,
+        in_zone_target_count=len(result.in_zone_detections),
+        out_of_zone_target_count=len(result.out_of_zone_detections),
+        true_positive_count=matched_ground_truth_count,
+        false_positive_count=false_positive_count,
+        false_negative_count=false_negative_count,
+        target_recall=0.0
+        if ground_truth_target_count == 0
+        else matched_ground_truth_count / float(ground_truth_target_count),
+        target_precision=0.0
+        if predicted_target_count == 0
+        else matched_ground_truth_count / float(predicted_target_count),
+        occupied_classification_accuracy=None
+        if matched_ground_truth_count == 0
+        else occupied_correct_count / float(matched_ground_truth_count),
+        selected_target_correct=selected_target_correct,
+        selected_target_in_zone=selected_target_in_zone,
+        expected_selected_candidate_id=expected_selected_candidate_id,
+        matched_ground_truth_count=matched_ground_truth_count,
+        occupied_correct_count=occupied_correct_count,
+        false_positive_target_ids=false_positive_target_ids,
+        false_negative_candidate_ids=tuple(false_negative_candidate_ids),
+    )
+
+
+def _parse_ground_truth_candidates(ground_truth: dict[str, Any]) -> tuple[GroundTruthCandidate, ...]:
+    raw_candidates = ground_truth.get("candidates", [])
+    if not isinstance(raw_candidates, list):
+        return ()
+    candidates: list[GroundTruthCandidate] = []
+    for index, raw_candidate in enumerate(raw_candidates, start=1):
+        if not isinstance(raw_candidate, dict):
+            continue
+        raw_screen_xy = raw_candidate.get("screen_xy")
+        if (
+            not isinstance(raw_screen_xy, (list, tuple))
+            or len(raw_screen_xy) != 2
+            or not all(isinstance(item, (int, float)) for item in raw_screen_xy)
+        ):
+            continue
+        raw_bbox = raw_candidate.get("bbox")
+        bbox: tuple[int, int, int, int] | None = None
+        if (
+            isinstance(raw_bbox, (list, tuple))
+            and len(raw_bbox) == 4
+            and all(isinstance(item, (int, float)) for item in raw_bbox)
+        ):
+            bbox = (
+                int(raw_bbox[0]),
+                int(raw_bbox[1]),
+                int(raw_bbox[2]),
+                int(raw_bbox[3]),
+            )
+        candidates.append(
+            GroundTruthCandidate(
+                candidate_id=str(raw_candidate.get("candidate_id", f"candidate_{index:03d}")),
+                screen_xy=(float(raw_screen_xy[0]), float(raw_screen_xy[1])),
+                max_error_px=float(raw_candidate.get("max_error_px", 48.0)),
+                occupied=bool(raw_candidate.get("occupied", False)),
+                selected=bool(raw_candidate.get("selected", False)),
+                bbox=bbox,
+            )
+        )
+    return tuple(candidates)
+
+
 def _optional_str(value: object) -> str | None:
     if isinstance(value, str) and value.strip():
         return value.strip()
@@ -1955,7 +2523,11 @@ def _occupied_template_match_confidence(
     return min(scores)
 
 
-def _resolve_reference_point(frame: LiveFrame) -> tuple[float, float]:
+def _resolve_reference_point(
+    frame: LiveFrame,
+    *,
+    scene_profile: SceneProfile | None = None,
+) -> tuple[float, float]:
     raw_reference = frame.metadata.get("reference_point_xy")
     if (
         isinstance(raw_reference, (list, tuple))
@@ -1963,6 +2535,8 @@ def _resolve_reference_point(frame: LiveFrame) -> tuple[float, float]:
         and all(isinstance(item, (int, float)) for item in raw_reference)
     ):
         return (float(raw_reference[0]), float(raw_reference[1]))
+    if scene_profile is not None and scene_profile.reference_point_xy is not None:
+        return scene_profile.reference_point_xy
     return (frame.width / 2.0, frame.height / 2.0)
 
 

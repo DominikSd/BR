@@ -36,6 +36,8 @@ class LiveEngageSessionSummary:
     approach_stalled_count: int
     approach_timeout_count: int
     no_target_available_count: int
+    occupied_rejection_count: int
+    out_of_zone_rejection_count: int
     detection_latency: LatencyAggregate
     selection_latency: LatencyAggregate
     total_reaction_latency: LatencyAggregate
@@ -59,6 +61,14 @@ class LiveEngageSessionSummary:
             ),
             no_target_available_count=sum(
                 1 for result in parsed_results if result.outcome is LiveEngageOutcome.NO_TARGET_AVAILABLE
+            ),
+            occupied_rejection_count=sum(
+                int(result.metadata.get("occupied_rejection_count", 0))
+                for result in parsed_results
+            ),
+            out_of_zone_rejection_count=sum(
+                int(result.metadata.get("out_of_zone_rejection_count", 0))
+                for result in parsed_results
             ),
             detection_latency=LatencyAggregate.from_values(
                 "engage_detection_latency_ms",
@@ -103,6 +113,8 @@ class LiveEngageSessionSummary:
             "approach_stalled_count": self.approach_stalled_count,
             "approach_timeout_count": self.approach_timeout_count,
             "no_target_available_count": self.no_target_available_count,
+            "occupied_rejection_count": self.occupied_rejection_count,
+            "out_of_zone_rejection_count": self.out_of_zone_rejection_count,
             "engage_success_rate": 0.0
             if self.total_attempts == 0
             else self.engaged_count / float(self.total_attempts),
@@ -204,15 +216,25 @@ class LiveEngageArtifactWriter:
             lines.append(
                 f'<rect x="{roi["x"]}" y="{roi["y"]}" width="{roi["width"]}" height="{roi["height"]}" fill="none" stroke="#60a5fa" stroke-width="2" />'
             )
+            if observation_result.scene_zone_polygon:
+                polygon_points = " ".join(
+                    f"{point_x},{point_y}" for point_x, point_y in observation_result.scene_zone_polygon
+                )
+                lines.append(
+                    f'<polygon points="{polygon_points}" fill="#22c55e" fill-opacity="0.08" stroke="#22c55e" stroke-width="3" />'
+                )
             for detection in observation_result.detections:
                 bbox = detection.bbox or (detection.screen_x - 18, detection.screen_y - 24, 36, 48)
+                in_scene_zone = bool(detection.metadata.get("in_scene_zone", True))
                 color = "#ef4444" if detection.occupied else "#22c55e"
+                if not in_scene_zone:
+                    color = "#9ca3af"
                 stroke_width = 4 if detection.target_id == result.selected_target_id else 2
                 lines.append(
                     f'<rect x="{bbox[0]}" y="{bbox[1]}" width="{bbox[2]}" height="{bbox[3]}" fill="none" stroke="{color}" stroke-width="{stroke_width}" />'
                 )
                 lines.append(
-                    f'<text x="{bbox[0]}" y="{max(14, bbox[1] - 4)}" fill="#f9fafb" font-size="14">{detection.target_id} {"occupied" if detection.occupied else "free"}</text>'
+                    f'<text x="{bbox[0]}" y="{max(14, bbox[1] - 4)}" fill="#f9fafb" font-size="14">{detection.target_id} {"occupied" if detection.occupied else "free"}{" / out_of_zone" if not in_scene_zone else ""}</text>'
                 )
         if result.click_screen_xy is not None:
             click_x, click_y = result.click_screen_xy
@@ -269,6 +291,7 @@ class LiveEngageService:
         self._runtime.set_interaction_result(engagement.interaction_result)
 
         observation_result = self._runtime.perception_result(cycle_id=cycle_id, phase="observation")
+        observation_metrics_metadata = _build_observation_metrics_metadata(observation_result)
         new_events = self._input_driver.events[initial_event_count:]
         click_point_xy = _resolve_click_point(
             input_events=new_events,
@@ -300,6 +323,7 @@ class LiveEngageService:
                 metadata={
                     "approach_reason": engagement.approach_result.reason,
                     "interaction_reason": engagement.interaction_result.reason,
+                    **observation_metrics_metadata,
                 },
             )
             return self._persist_result(
@@ -326,6 +350,7 @@ class LiveEngageService:
                 metadata={
                     "approach_reason": engagement.approach_result.reason,
                     "interaction_reason": engagement.interaction_result.reason,
+                    **observation_metrics_metadata,
                 },
             )
             return self._persist_result(
@@ -379,6 +404,7 @@ class LiveEngageService:
                 "interaction_reason": engagement.interaction_result.reason,
                 "verify_frame_source": verify_frame.source,
                 "verify_selected_target_id": verify_perception.selected_target_id,
+                **observation_metrics_metadata,
                 **classification_metadata,
             },
         )
@@ -571,3 +597,22 @@ def _find_nearest_detection(
             nearest = detection
             nearest_distance = distance
     return nearest
+
+
+def _build_observation_metrics_metadata(
+    observation_result: PerceptionFrameResult | None,
+) -> dict[str, Any]:
+    if observation_result is None:
+        return {
+            "occupied_rejection_count": 0,
+            "out_of_zone_rejection_count": 0,
+            "selected_target_in_zone": None,
+        }
+    selected_target = observation_result.selected_target
+    return {
+        "occupied_rejection_count": len(observation_result.occupied_detections),
+        "out_of_zone_rejection_count": len(observation_result.out_of_zone_detections),
+        "selected_target_in_zone": None
+        if selected_target is None
+        else bool(selected_target.metadata.get("in_scene_zone", True)),
+    }

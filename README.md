@@ -250,6 +250,78 @@ Batch wypisuje:
 - accuracy summary dla klatek z `expected_perception`,
 - `real_scene_regression` dla klatek `live_spot_scene_*`.
 
+### Spot-aware scene profile
+
+Scene-aware perception dla konkretnego spota jest konfigurowane przez:
+
+- `live.scene_profile_path`
+
+Aktualny profil referencyjny:
+
+- `assets/live/scenes/single_spot_scene.json`
+
+Profil sceny moze zdefiniowac:
+
+- `scene_name`
+- `reference_frame_path`
+- `spawn_zone_polygon`
+- opcjonalne `reference_point_xy`
+- opcjonalne `sub_rois`
+- opcjonalne `exclusion_polygons`
+
+W MVP detections sa oznaczane jako `in_scene_zone`, a target selection bierze tylko wolne targety wewnatrz `spawn_zone_polygon`.
+
+Scene-aware benchmark / perception:
+
+```bash
+python -m botlab.main --config config/live_real_mvp.yaml --benchmark-split regression --strict-pixel-benchmark --perception-output-dir data/perception_scene_regression
+```
+
+albo analiza pojedynczej klatki dla spota:
+
+```bash
+python -m botlab.main --config config/live_real_mvp.yaml --analyze-frame assets/live/sample_frames/raw/live_spot_scene_1.png --perception-output-dir data/perception_scene_single
+```
+
+### Strict pixel-based benchmark
+
+Benchmark dataset jest podzielony na splity:
+
+- `tuning`
+- `regression`
+- `holdout`
+- `hard_cases`
+
+Kazdy split ma manifest `frames.json`, ktory wskazuje na screenshoty z `assets/live/sample_frames/raw`.
+
+Strict benchmark:
+
+```bash
+python -m botlab.main --config config/live_dry_run.yaml --benchmark-split regression --strict-pixel-benchmark --perception-output-dir data/perception_regression
+```
+
+Ten tryb:
+
+- wymaga prawdziwego obrazu rasterowego,
+- blokuje metadata-only fallback,
+- liczy benchmark quality i latency,
+- zapisuje per-frame JSON/overlay oraz zbiorczy `perception_session_summary.json`.
+
+W summary pojawia sie dodatkowo:
+
+- `perception_benchmark_summary`
+- `target_recall`
+- `target_precision`
+- `occupied_classification_accuracy`
+- `selected_target_accuracy`
+- `selected_target_in_zone_accuracy`
+- `out_of_zone_rejection_count`
+- `false_positive_reduction_after_zone_filtering`
+- `false_positive`
+- `false_negative`
+
+To jest preferowany tryb do porownywania kolejnych zmian w heurystykach vision.
+
 ### Live Preview
 
 ```bash
@@ -260,8 +332,10 @@ Preview pokazuje:
 
 - aktualna klatke,
 - spawn ROI,
+- scene polygon / strefe spota, jesli aktywny jest `scene_profile_path`,
 - kandydatow,
 - occupied/free,
+- detections out-of-zone,
 - selected target,
 - podstawowe latency vision.
 
@@ -371,6 +445,18 @@ W `assets/live/sample_frames` mozna juz rozdzielac material na:
 - `holdout`
 
 Batch loader czyta te katalogi rekurencyjnie, wiec nie trzeba splaszczac wszystkiego do jednego poziomu.
+
+Dodatkowo profile konkretnych spotow leza w:
+
+- `assets/live/scenes`
+
+Minimalny workflow dla nowego spota:
+
+1. dodaj referencyjny screenshot do `assets/live/sample_frames/raw`
+2. dodaj sidecar `.json` z `reference_point_xy`, `spawn_roi` i opcjonalnym `ground_truth`
+3. dodaj profil sceny w `assets/live/scenes/*.json`
+4. ustaw `live.scene_profile_path` w configu live
+5. uruchom `--analyze-frame` albo `--benchmark-split regression --strict-pixel-benchmark`
 
 Domyslna konfiguracja zapisuje telemetry do:
 

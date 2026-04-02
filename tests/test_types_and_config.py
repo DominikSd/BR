@@ -50,6 +50,10 @@ def test_load_default_config_returns_settings() -> None:
     assert settings.live.sample_frames_directory == (
         PROJECT_ROOT / "assets/live/sample_frames/raw"
     ).resolve()
+    assert settings.live.benchmark_dataset_directory == (
+        PROJECT_ROOT / "assets/live/sample_frames"
+    ).resolve()
+    assert settings.live.scene_profile_path is None
     assert settings.live.mobs_template_directory == (
         PROJECT_ROOT / "assets/live/templates/mobs"
     ).resolve()
@@ -92,6 +96,8 @@ def test_live_config_profile_can_be_loaded_from_yaml() -> None:
     assert settings.live.dry_run_profile == "single_spot_mvp"
     assert settings.live.perception_confidence_threshold == 0.75
     assert settings.live.sample_frames_directory.name == "raw"
+    assert settings.live.benchmark_dataset_directory.name == "sample_frames"
+    assert settings.live.scene_profile_path is None
     assert settings.live.marker_red_green_delta == 35
     assert settings.live.combat_indicator_red_green_delta == 35
     assert settings.live.swords_green_red_delta == 20
@@ -113,6 +119,9 @@ def test_live_real_mvp_config_can_be_loaded_from_yaml() -> None:
     assert settings.app.mode == "live"
     assert settings.live.dry_run is False
     assert settings.live.debug_directory.name == "live_real_debug"
+    assert settings.live.benchmark_dataset_directory.name == "sample_frames"
+    assert settings.live.scene_profile_path is not None
+    assert settings.live.scene_profile_path.name == "single_spot_scene.json"
     assert settings.live.combat_indicator_min_ratio == 0.01
     assert settings.live.engage_verify_delay_s == 0.20
 

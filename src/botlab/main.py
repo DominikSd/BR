@@ -120,10 +120,21 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Analizuje katalog klatek/plikow JSON i zapisuje artefakty perception oraz agregaty latencji.",
     )
     parser.add_argument(
+        "--benchmark-split",
+        type=str,
+        default=None,
+        help="Uruchamia benchmark vision dla zdefiniowanego splitu datasetu, np. regression albo holdout.",
+    )
+    parser.add_argument(
         "--perception-output-dir",
         type=str,
         default=None,
         help="Opcjonalny katalog wyjsciowy dla artefaktow perception. Domyslnie: live.debug_directory/perception.",
+    )
+    parser.add_argument(
+        "--strict-pixel-benchmark",
+        action="store_true",
+        help="Wylacza fallback metadata-only i wymaga prawdziwego obrazu rasterowego dla perception benchmarku.",
     )
     parser.add_argument(
         "--live-preview",
@@ -167,6 +178,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     _validate_perception_args(
         analyze_frame=args.analyze_frame,
         analyze_batch_dir=args.analyze_batch_dir,
+        benchmark_split=args.benchmark_split,
         scenario_preset=args.scenario_preset,
         scenario_file=args.scenario_file,
     )
@@ -217,12 +229,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         _print_live_engage_report(report)
         return 0
-    if args.analyze_frame is not None or args.analyze_batch_dir is not None:
+    if (
+        args.analyze_frame is not None
+        or args.analyze_batch_dir is not None
+        or args.benchmark_split is not None
+    ):
         summary, output_directory = _run_perception_analysis(
             settings=settings,
             analyze_frame=args.analyze_frame,
             analyze_batch_dir=args.analyze_batch_dir,
+            benchmark_split=args.benchmark_split,
             output_directory=args.perception_output_dir,
+            strict_pixel_only=args.strict_pixel_benchmark,
         )
         _print_perception_report(summary=summary, output_directory=output_directory)
         return 0
@@ -334,17 +352,22 @@ def _run_perception_analysis(
     settings: Settings,
     analyze_frame: str | None,
     analyze_batch_dir: str | None,
+    benchmark_split: str | None,
     output_directory: str | None,
+    strict_pixel_only: bool,
 ):
-    if analyze_frame is None and analyze_batch_dir is None:
+    if analyze_frame is None and analyze_batch_dir is None and benchmark_split is None:
         raise ValueError("Brak zrodla dla trybu perception-only.")
     resolved_output_directory = _resolve_perception_output_directory(settings, output_directory)
     runner = PerceptionAnalysisRunner(
         live_config=settings.live,
         output_directory=resolved_output_directory,
+        strict_pixel_only=strict_pixel_only,
     )
     if analyze_frame is not None:
         return runner.analyze_frame_path(analyze_frame), resolved_output_directory
+    if benchmark_split is not None:
+        return runner.analyze_benchmark_split(benchmark_split), resolved_output_directory
     return runner.analyze_directory(analyze_batch_dir), resolved_output_directory
 
 
@@ -392,15 +415,20 @@ def _validate_perception_args(
     *,
     analyze_frame: str | None,
     analyze_batch_dir: str | None,
+    benchmark_split: str | None,
     scenario_preset: str | None,
     scenario_file: str | None,
 ) -> None:
     if analyze_frame is not None and analyze_batch_dir is not None:
         raise ValueError("--analyze-frame i --analyze-batch-dir nie moga byc uzyte razem.")
+    if benchmark_split is not None and (analyze_frame is not None or analyze_batch_dir is not None):
+        raise ValueError("--benchmark-split nie moze byc laczony z --analyze-frame ani --analyze-batch-dir.")
     if (analyze_frame is not None or analyze_batch_dir is not None) and (
         scenario_preset is not None or scenario_file is not None
     ):
         raise ValueError("Tryb perception-only nie obsluguje scenario replay.")
+    if benchmark_split is not None and (scenario_preset is not None or scenario_file is not None):
+        raise ValueError("Tryb benchmark perception nie obsluguje scenario replay.")
 
 
 def _validate_live_preview_args(
@@ -685,6 +713,38 @@ def _print_perception_report(*, summary, output_directory: Path) -> None:
             f"selected_match={summary.accuracy_summary.selected_target_match_count} "
             f"occupied_match={summary.accuracy_summary.occupied_contract_match_count}"
         )
+    if summary.benchmark_summary is not None:
+        occupied_accuracy_repr = (
+            "None"
+            if summary.benchmark_summary.occupied_classification_accuracy is None
+            else f"{summary.benchmark_summary.occupied_classification_accuracy:.3f}"
+        )
+        selected_accuracy_repr = (
+            "None"
+            if summary.benchmark_summary.selected_target_accuracy is None
+            else f"{summary.benchmark_summary.selected_target_accuracy:.3f}"
+        )
+        selected_in_zone_accuracy_repr = (
+            "None"
+            if summary.benchmark_summary.selected_target_in_zone_accuracy is None
+            else f"{summary.benchmark_summary.selected_target_in_zone_accuracy:.3f}"
+        )
+        print(
+            "perception_benchmark_summary="
+            f"evaluated_frames={summary.benchmark_summary.evaluated_frame_count} "
+            f"strict_pixel_only={summary.benchmark_summary.strict_pixel_only} "
+            f"pixel_frames={summary.benchmark_summary.pixel_frame_count} "
+            f"fallback_frames={summary.benchmark_summary.fallback_frame_count} "
+            f"target_recall={summary.benchmark_summary.target_recall:.3f} "
+            f"target_precision={summary.benchmark_summary.target_precision:.3f} "
+            f"occupied_accuracy={occupied_accuracy_repr} "
+            f"selected_target_accuracy={selected_accuracy_repr} "
+            f"selected_target_in_zone_accuracy={selected_in_zone_accuracy_repr} "
+            f"out_of_zone_rejections_avg={summary.benchmark_summary.out_of_zone_rejection_count.avg_value} "
+            f"fp_reduction_after_zone_avg={summary.benchmark_summary.false_positive_reduction_after_zone_filtering.avg_value} "
+            f"false_positive={summary.benchmark_summary.target_false_positive_count} "
+            f"false_negative={summary.benchmark_summary.target_false_negative_count}"
+        )
     for entry in summary.real_scene_regression_entries():
         print(
             "real_scene_regression="
@@ -692,7 +752,9 @@ def _print_perception_report(*, summary, output_directory: Path) -> None:
             f"targets={entry['target_count']} "
             f"free_targets={entry['free_target_count']} "
             f"occupied_targets={entry['occupied_target_count']} "
+            f"out_of_zone_targets={entry['out_of_zone_target_count']} "
             f"selected_target={entry['selected_target_id']} "
+            f"selected_in_zone={entry['selected_target_in_zone']} "
             f"selected_xy={entry['selected_target_xy']} "
             f"occupied_xy={entry['occupied_target_xy']} "
             f"detection_latency_ms={entry['detection_latency_ms']:.3f} "

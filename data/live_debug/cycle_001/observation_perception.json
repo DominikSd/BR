@@ -59,8 +59,12 @@
   "frame_source": "dry_run:engage_timeout",
   "frame_width": 1280,
   "free_target_count": 2,
+  "ground_truth": {},
+  "in_zone_target_count": 2,
   "merged_hit_count": 2,
+  "out_of_zone_target_count": 0,
   "phase": "observation",
+  "pipeline_mode": "metadata_fallback",
   "raw_hits": [
     {
       "confidence": 1.0,
@@ -100,6 +104,9 @@
     "x": 320,
     "y": 140
   },
+  "scene_name": null,
+  "scene_zone_polygon": [],
+  "selectable_target_count": 2,
   "selected_target_id": "front-free",
   "timings": {
     "action_ready_ts": 145.016,

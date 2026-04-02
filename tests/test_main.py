@@ -249,6 +249,118 @@ def test_main_can_run_perception_batch_analysis(tmp_path: Path, capsys) -> None:
     assert "real_scene_regression=" not in captured.out
 
 
+def test_main_can_run_perception_benchmark_split(monkeypatch, capsys) -> None:
+    from botlab.adapters.live.perception import (
+        AccuracySummary,
+        BenchmarkSummary,
+        BenchmarkFrameReport,
+        LatencyAggregate,
+        NumericAggregate,
+        PerceptionSessionSummary,
+    )
+
+    def aggregate(name: str, value: float) -> LatencyAggregate:
+        return LatencyAggregate.from_values(name, (value,))
+
+    def numeric(name: str, value: float) -> NumericAggregate:
+        return NumericAggregate.from_values(name, (value,))
+
+    def stub_run_perception_analysis(
+        *,
+        settings,
+        analyze_frame,
+        analyze_batch_dir,
+        benchmark_split,
+        output_directory,
+        strict_pixel_only,
+    ):
+        assert settings.app.mode == "live"
+        assert benchmark_split == "regression"
+        assert strict_pixel_only is True
+        return (
+            PerceptionSessionSummary(
+                frame_results=(),
+                candidate_hits=aggregate("candidate_hits", 4.0),
+                merged_hits=aggregate("merged_hits", 2.0),
+                free_targets=aggregate("free_targets", 1.0),
+                out_of_zone_rejections=aggregate("out_of_zone_rejections", 0.0),
+                detection_latency=aggregate("detection_latency_ms", 11.0),
+                selection_latency=aggregate("selection_latency_ms", 3.0),
+                total_reaction_latency=aggregate("total_reaction_latency_ms", 16.0),
+                strict_pixel_only=True,
+                accuracy_summary=AccuracySummary(
+                    evaluated_frame_count=1,
+                    behavior_match_count=1,
+                    selected_target_match_count=1,
+                    occupied_contract_match_count=1,
+                ),
+                benchmark_summary=BenchmarkSummary(
+                    evaluated_frame_count=1,
+                    strict_pixel_only=True,
+                    pixel_frame_count=1,
+                    fallback_frame_count=0,
+                    target_true_positive_count=1,
+                    target_false_positive_count=0,
+                    target_false_negative_count=0,
+                    target_recall=1.0,
+                    target_precision=1.0,
+                    occupied_classification_accuracy=1.0,
+                    selected_target_accuracy=1.0,
+                    selected_target_in_zone_accuracy=1.0,
+                    out_of_zone_rejection_count=numeric("out_of_zone_rejection_count", 0.0),
+                    false_positive_reduction_after_zone_filtering=numeric(
+                        "false_positive_reduction_after_zone_filtering",
+                        0.0,
+                    ),
+                    candidate_count=numeric("candidate_count", 4.0),
+                    merged_count=numeric("merged_count", 2.0),
+                    false_positive_count=numeric("false_positive_count", 0.0),
+                    false_negative_count=numeric("false_negative_count", 0.0),
+                    frame_reports=(
+                        BenchmarkFrameReport(
+                            frame_source="regression__frame",
+                            pipeline_mode="pixel",
+                            ground_truth_target_count=1,
+                            predicted_target_count=1,
+                            in_zone_target_count=1,
+                            out_of_zone_target_count=0,
+                            true_positive_count=1,
+                            false_positive_count=0,
+                            false_negative_count=0,
+                            target_recall=1.0,
+                            target_precision=1.0,
+                            occupied_classification_accuracy=1.0,
+                            selected_target_correct=True,
+                            selected_target_in_zone=True,
+                            expected_selected_candidate_id="target-a",
+                            matched_ground_truth_count=1,
+                            occupied_correct_count=1,
+                        ),
+                    ),
+                ),
+            ),
+            Path("data/perception_benchmark"),
+        )
+
+    monkeypatch.setattr("botlab.main._run_perception_analysis", stub_run_perception_analysis)
+
+    exit_code = main(
+        [
+            "--config",
+            "config/live_dry_run.yaml",
+            "--benchmark-split",
+            "regression",
+            "--strict-pixel-benchmark",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "perception_mode=analysis" in captured.out
+    assert "perception_benchmark_summary=evaluated_frames=1 strict_pixel_only=True" in captured.out
+
+
 def test_main_can_route_to_live_preview(monkeypatch, capsys) -> None:
     calls = {"count": 0}
 
@@ -345,6 +457,8 @@ def test_main_can_run_live_engage_mvp(monkeypatch, capsys) -> None:
                 approach_stalled_count=0,
                 approach_timeout_count=0,
                 no_target_available_count=0,
+                occupied_rejection_count=0,
+                out_of_zone_rejection_count=0,
                 detection_latency=build_aggregate("engage_detection_latency_ms", 10.0),
                 selection_latency=build_aggregate("engage_selection_latency_ms", 3.0),
                 total_reaction_latency=build_aggregate("engage_total_reaction_latency_ms", 18.0),

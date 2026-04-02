@@ -78,6 +78,10 @@ class LiveConfig:
     sample_frames_directory: Path = field(
         default_factory=lambda: PROJECT_ROOT / "assets" / "live" / "sample_frames" / "raw"
     )
+    benchmark_dataset_directory: Path = field(
+        default_factory=lambda: PROJECT_ROOT / "assets" / "live" / "sample_frames"
+    )
+    scene_profile_path: Path | None = None
     mobs_template_directory: Path = field(
         default_factory=lambda: PROJECT_ROOT / "assets" / "live" / "templates" / "mobs"
     )
@@ -230,6 +234,14 @@ def load_config(config_path: str | Path) -> Settings:
         merge_distance_px=_optional_positive_int(live_section, "merge_distance_px", 28),
         sample_frames_directory=_resolve_project_relative_path(
             _optional_str(live_section, "sample_frames_directory", "assets/live/sample_frames/raw")
+        ),
+        benchmark_dataset_directory=_resolve_project_relative_path(
+            _optional_str(live_section, "benchmark_dataset_directory", "assets/live/sample_frames")
+        ),
+        scene_profile_path=_optional_nullable_path(
+            live_section,
+            "scene_profile_path",
+            None,
         ),
         mobs_template_directory=_resolve_project_relative_path(
             _optional_str(live_section, "mobs_template_directory", "assets/live/templates/mobs")
@@ -593,6 +605,19 @@ def _optional_nullable_str(
     if not isinstance(value, str) or not value.strip():
         raise ConfigError(f"Pole '{key}' musi byc niepustym napisem albo null.")
     return value.strip()
+
+
+def _optional_nullable_path(
+    data: Mapping[str, Any],
+    key: str,
+    default: str | None,
+) -> Path | None:
+    value = data.get(key, default)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigError(f"Pole '{key}' musi byc niepustym napisem albo null.")
+    return _resolve_project_relative_path(value.strip())
 
 
 def _require_bool(data: Mapping[str, Any], key: str) -> bool:

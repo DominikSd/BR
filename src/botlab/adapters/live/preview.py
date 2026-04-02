@@ -33,6 +33,7 @@ class LiveVisionPreviewState:
     candidate_count: int
     free_target_count: int
     occupied_target_count: int
+    out_of_zone_target_count: int
     detection_latency_ms: float
     selection_latency_ms: float
     total_reaction_latency_ms: float
@@ -48,7 +49,8 @@ def build_live_preview_state(
     selected_target = result.selected_target
     headline_lines = [
         f"source={frame.source}",
-        f"targets={len(result.detections)} free={len(result.free_detections)} occupied={len(result.occupied_detections)}",
+        f"scene={result.scene_name or 'none'}",
+        f"targets={len(result.detections)} free={len(result.selectable_detections)} occupied={len(result.occupied_detections)} out_of_zone={len(result.out_of_zone_detections)}",
         f"selected={result.selected_target_id or 'None'}",
         f"detection={result.timings.detection_latency_ms:.1f}ms selection={result.timings.selection_latency_ms:.1f}ms reaction={result.timings.total_reaction_latency_ms:.1f}ms",
         f"candidate_hits={result.candidate_hit_count} merged={result.merged_hit_count}",
@@ -72,8 +74,9 @@ def build_live_preview_state(
         frame_height=frame.height,
         selected_target_id=result.selected_target_id,
         candidate_count=len(result.detections),
-        free_target_count=len(result.free_detections),
+        free_target_count=len(result.selectable_detections),
         occupied_target_count=len(result.occupied_detections),
+        out_of_zone_target_count=len(result.out_of_zone_detections),
         detection_latency_ms=result.timings.detection_latency_ms,
         selection_latency_ms=result.timings.selection_latency_ms,
         total_reaction_latency_ms=result.timings.total_reaction_latency_ms,
@@ -121,6 +124,14 @@ class LiveVisionPreviewRenderer:
             width=3,
         )
         draw.text((int(roi["x"]) + 4, int(roi["y"]) + 4), "spawn_roi", fill=(147, 197, 253), font=font)
+        if result.scene_zone_polygon:
+            draw.polygon(result.scene_zone_polygon, outline=(34, 197, 94), width=3)
+            draw.text(
+                (int(result.scene_zone_polygon[0][0]), max(4, int(result.scene_zone_polygon[0][1]) - 18)),
+                result.scene_name or "scene_zone",
+                fill=(134, 239, 172),
+                font=font,
+            )
 
         reference_x, reference_y = result.reference_point_xy
         draw.line((reference_x - 10, reference_y, reference_x + 10, reference_y), fill=(253, 224, 71), width=2)
@@ -147,7 +158,10 @@ class LiveVisionPreviewRenderer:
                 48,
             )
             selected = detection.target_id == result.selected_target_id
+            in_scene_zone = bool(detection.metadata.get("in_scene_zone", True))
             color = (239, 68, 68) if detection.occupied else (34, 197, 94)
+            if not in_scene_zone:
+                color = (156, 163, 175)
             width = 4 if selected else 2
             draw.rectangle(
                 (bbox[0], bbox[1], bbox[0] + bbox[2], bbox[1] + bbox[3]),
@@ -195,6 +209,8 @@ class LiveVisionPreviewRenderer:
                     width=1,
                 )
             label = "occupied" if detection.occupied else "free"
+            if not in_scene_zone:
+                label = f"{label}/out_of_zone"
             text_y = max(4, bbox[1] - 14)
             draw.text(
                 (bbox[0], text_y),
@@ -434,6 +450,7 @@ class LiveEngageObserve:
                 candidate_count=state.candidate_count,
                 free_target_count=state.free_target_count,
                 occupied_target_count=state.occupied_target_count,
+                out_of_zone_target_count=state.out_of_zone_target_count,
                 detection_latency_ms=state.detection_latency_ms,
                 selection_latency_ms=state.selection_latency_ms,
                 total_reaction_latency_ms=state.total_reaction_latency_ms,

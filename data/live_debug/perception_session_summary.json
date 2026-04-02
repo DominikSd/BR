@@ -9,10 +9,10 @@
     "p95_ms": 2.0
   },
   "detection_latency": {
-    "avg_ms": 7.009474999385645,
+    "avg_ms": 7.0114499998723545,
     "count": 4,
     "max_ms": 10.99999999999568,
-    "min_ms": 0.03789999755099416,
+    "min_ms": 0.04579999949783087,
     "name": "detection_latency_ms",
     "p50_ms": 8.000000000009777,
     "p95_ms": 10.99999999999568
@@ -83,8 +83,12 @@
       "frame_source": "dry_run:engage_timeout",
       "frame_width": 1280,
       "free_target_count": 2,
+      "ground_truth": {},
+      "in_zone_target_count": 2,
       "merged_hit_count": 2,
+      "out_of_zone_target_count": 0,
       "phase": "approach_revalidation",
+      "pipeline_mode": "metadata_fallback",
       "raw_hits": [
         {
           "confidence": 1.0,
@@ -124,6 +128,9 @@
         "x": 320,
         "y": 140
       },
+      "scene_name": null,
+      "scene_zone_polygon": [],
+      "selectable_target_count": 2,
       "selected_target_id": "front-free",
       "timings": {
         "action_ready_ts": 145.26299999999998,
@@ -149,8 +156,12 @@
       "frame_source": "dry_run:engage_timeout",
       "frame_width": 1280,
       "free_target_count": 0,
+      "ground_truth": {},
+      "in_zone_target_count": 0,
       "merged_hit_count": 0,
+      "out_of_zone_target_count": 0,
       "phase": "engage_verify",
+      "pipeline_mode": "metadata_fallback",
       "raw_hits": [],
       "reference_point_xy": [
         640.0,
@@ -165,6 +176,9 @@
         "x": 320,
         "y": 140
       },
+      "scene_name": null,
+      "scene_zone_polygon": [],
+      "selectable_target_count": 0,
       "selected_target_id": null,
       "timings": {
         "action_ready_ts": 160.8973883008419,
@@ -216,8 +230,12 @@
       "frame_source": "dry_run:engage_timeout",
       "frame_width": 1280,
       "free_target_count": 1,
+      "ground_truth": {},
+      "in_zone_target_count": 1,
       "merged_hit_count": 1,
+      "out_of_zone_target_count": 0,
       "phase": "interaction",
+      "pipeline_mode": "metadata_fallback",
       "raw_hits": [
         {
           "confidence": 1.0,
@@ -245,16 +263,19 @@
         "x": 320,
         "y": 140
       },
+      "scene_name": null,
+      "scene_zone_polygon": [],
+      "selectable_target_count": 1,
       "selected_target_id": "front-free",
       "timings": {
-        "action_ready_ts": 160.68642830084087,
-        "detection_finished_ts": 160.68642620083943,
-        "detection_latency_ms": 0.03789999755099416,
+        "action_ready_ts": 160.6864376008462,
+        "detection_finished_ts": 160.68643410084138,
+        "detection_latency_ms": 0.04579999949783087,
         "detection_started_ts": 160.68638830084188,
         "frame_captured_ts": 160.68638830084188,
-        "selection_latency_ms": 0.0021000014385208488,
-        "target_selected_ts": 160.68642830084087,
-        "total_reaction_latency_ms": 0.03999999898951501
+        "selection_latency_ms": 0.0035000048228539526,
+        "target_selected_ts": 160.6864376008462,
+        "total_reaction_latency_ms": 0.04930000432068482
       }
     },
     {
@@ -321,8 +342,12 @@
       "frame_source": "dry_run:engage_timeout",
       "frame_width": 1280,
       "free_target_count": 2,
+      "ground_truth": {},
+      "in_zone_target_count": 2,
       "merged_hit_count": 2,
+      "out_of_zone_target_count": 0,
       "phase": "observation",
+      "pipeline_mode": "metadata_fallback",
       "raw_hits": [
         {
           "confidence": 1.0,
@@ -362,6 +387,9 @@
         "x": 320,
         "y": 140
       },
+      "scene_name": null,
+      "scene_zone_polygon": [],
+      "selectable_target_count": 2,
       "selected_target_id": "front-free",
       "timings": {
         "action_ready_ts": 145.016,
@@ -393,20 +421,30 @@
     "p50_ms": 1.0,
     "p95_ms": 2.0
   },
+  "out_of_zone_rejections": {
+    "avg_ms": 0.0,
+    "count": 4,
+    "max_ms": 0.0,
+    "min_ms": 0.0,
+    "name": "out_of_zone_rejections",
+    "p50_ms": 0.0,
+    "p95_ms": 0.0
+  },
   "selection_latency": {
-    "avg_ms": 2.000525000354969,
+    "avg_ms": 2.0008750012010523,
     "count": 4,
     "max_ms": 2.999999999985903,
-    "min_ms": 0.0021000014385208488,
+    "min_ms": 0.0035000048228539526,
     "name": "selection_latency_ms",
     "p50_ms": 2.0000000000095497,
     "p95_ms": 2.999999999985903
   },
+  "strict_pixel_only": false,
   "total_reaction_latency": {
-    "avg_ms": 10.00999999974539,
+    "avg_ms": 10.012325001078182,
     "count": 4,
     "max_ms": 15.999999999991132,
-    "min_ms": 0.03999999898951501,
+    "min_ms": 0.04930000432068482,
     "name": "total_reaction_latency_ms",
     "p50_ms": 11.000000000024102,
     "p95_ms": 15.999999999991132
