@@ -929,6 +929,7 @@ class LiveRunner:
         input_driver = LiveInputDriver(
             logger=logger,
             dry_run=settings.live.dry_run,
+            enable_real_input=settings.live.enable_real_input,
             enable_real_clicks=settings.live.enable_real_clicks,
             enable_real_keys=settings.live.enable_real_keys,
             screen_offset_xy=(
@@ -976,7 +977,10 @@ class LiveRunner:
             target_engagement_service=target_engagement_service,
             state_detector=state_detector,
             input_driver=input_driver,
-            artifact_writer=LiveEngageArtifactWriter(settings.live.debug_directory),
+            artifact_writer=LiveEngageArtifactWriter(
+                settings.live.debug_directory,
+                live_config=settings.live,
+            ),
             verify_delay_s=settings.live.engage_verify_delay_s,
             click_offset_y_px=settings.live.engage_click_offset_y_px,
             target_match_max_distance_px=settings.live.engage_target_match_max_distance_px,
@@ -1057,7 +1061,10 @@ class LiveRunner:
         self._next_live_cycle_id += total_attempts
         self._runtime.write_perception_session_summary()
         summary = LiveEngageSessionSummary.from_results(results)
-        LiveEngageArtifactWriter(self._runtime.settings.live.debug_directory).write_session_summary(summary)
+        LiveEngageArtifactWriter(
+            self._runtime.settings.live.debug_directory,
+            live_config=self._runtime.settings.live,
+        ).write_session_summary(summary)
         return LiveEngageRunReport(
             results=tuple(results),
             summary=summary,

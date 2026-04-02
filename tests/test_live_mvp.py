@@ -1336,6 +1336,7 @@ def test_live_input_driver_real_path_plumbing_can_be_mocked(monkeypatch) -> None
     driver = LiveInputDriver(
         logger=logger,
         dry_run=False,
+        enable_real_input=True,
         enable_real_clicks=True,
         screen_offset_xy=(100, 200),
     )
@@ -1368,6 +1369,7 @@ def test_live_input_driver_real_key_path_can_be_mocked(monkeypatch) -> None:
     driver = LiveInputDriver(
         logger=logger,
         dry_run=False,
+        enable_real_input=True,
         enable_real_keys=True,
     )
     pressed_keys: list[str] = []
@@ -1398,7 +1400,39 @@ def test_live_input_driver_does_not_send_real_keys_when_disabled() -> None:
 
     driver.press_key("r")
 
-    assert driver.events[-1].payload["execution_status"] == "real_keys_disabled"
+    assert driver.events[-1].payload["execution_status"] == "real_input_disabled"
+
+
+def test_live_input_driver_blocks_real_actions_when_master_flag_is_disabled() -> None:
+    import logging
+
+    logger = logging.getLogger("botlab.live.test.real_input_gate")
+    driver = LiveInputDriver(
+        logger=logger,
+        dry_run=False,
+        enable_real_input=False,
+        enable_real_clicks=True,
+        enable_real_keys=True,
+        screen_offset_xy=(50, 60),
+    )
+
+    driver.right_click_target(
+        LiveTargetDetection(
+            target_id="front-free",
+            screen_x=100,
+            screen_y=120,
+            distance=1.5,
+        )
+    )
+    driver.press_key("r")
+    driver.press_sequence(("1", "space"))
+
+    assert driver.events[0].payload["execution_status"] == "real_input_disabled"
+    assert driver.events[1].payload["execution_status"] == "real_input_disabled"
+    assert driver.events[2].payload["execution_statuses"] == [
+        "real_input_disabled",
+        "real_input_disabled",
+    ]
 
 
 def test_marker_first_pipeline_can_smoke_test_real_sample_frame_if_present(tmp_path: Path) -> None:
@@ -1738,6 +1772,15 @@ def test_live_runner_dry_run_engage_attempts_produce_artifacts_and_records(tmp_p
     assert (settings.live.debug_directory / "engage" / "engage_results.jsonl").exists() is True
     assert (settings.live.debug_directory / "engage" / "engage_session_summary.json").exists() is True
     assert runner.storage.count_rows("attempts") == 1
+
+    summary_payload = json.loads(
+        (settings.live.debug_directory / "engage" / "engage_session_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert summary_payload["right_click_action_count"] >= 1
+    assert summary_payload["key_sequence_action_count"] == 0
+    assert summary_payload["calibration_warning_count"] == 0
 
 
 def test_live_runner_engage_quality_gate_rejects_unstable_target_before_click(

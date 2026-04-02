@@ -60,6 +60,7 @@ class VisionConfig:
 class LiveConfig:
     dry_run: bool = False
     foreground_only: bool = True
+    enable_real_input: bool = False
     enable_real_clicks: bool = False
     enable_real_keys: bool = False
     window_title: str = "Game Window"
@@ -220,6 +221,7 @@ def load_config(config_path: str | Path) -> Settings:
     live_config = LiveConfig(
         dry_run=_optional_bool(live_section, "dry_run", False),
         foreground_only=_optional_bool(live_section, "foreground_only", True),
+        enable_real_input=_optional_bool(live_section, "enable_real_input", False),
         enable_real_clicks=_optional_bool(live_section, "enable_real_clicks", False),
         enable_real_keys=_optional_bool(live_section, "enable_real_keys", False),
         window_title=_optional_str(live_section, "window_title", "Game Window"),

@@ -11,6 +11,7 @@ from botlab.adapters.live.models import LiveEngageOutcome, LiveEngageResult, Liv
 from botlab.adapters.live.perception import LatencyAggregate, PerceptionFrameResult
 from botlab.adapters.live.vision import SimpleStateDetector
 from botlab.application import TargetEngagementResult, TargetEngagementService
+from botlab.config import LiveConfig
 from botlab.types import BotState, Observation, TelemetryRecord
 
 if TYPE_CHECKING:
@@ -42,6 +43,11 @@ class LiveEngageSessionSummary:
     selection_latency: LatencyAggregate
     total_reaction_latency: LatencyAggregate
     verification_latency: LatencyAggregate
+    calibration_warning_count: int = 0
+    right_click_action_count: int = 0
+    key_press_action_count: int = 0
+    key_sequence_action_count: int = 0
+    real_input_action_count: int = 0
 
     @classmethod
     def from_results(cls, results: Iterable[LiveEngageResult]) -> "LiveEngageSessionSummary":
@@ -68,6 +74,27 @@ class LiveEngageSessionSummary:
             ),
             out_of_zone_rejection_count=sum(
                 int(result.metadata.get("out_of_zone_rejection_count", 0))
+                for result in parsed_results
+            ),
+            calibration_warning_count=sum(
+                1
+                for result in parsed_results
+                if bool(result.metadata.get("scene_calibration_warning"))
+            ),
+            right_click_action_count=sum(
+                int(result.metadata.get("right_click_action_count", 0))
+                for result in parsed_results
+            ),
+            key_press_action_count=sum(
+                int(result.metadata.get("key_press_action_count", 0))
+                for result in parsed_results
+            ),
+            key_sequence_action_count=sum(
+                int(result.metadata.get("key_sequence_action_count", 0))
+                for result in parsed_results
+            ),
+            real_input_action_count=sum(
+                int(result.metadata.get("real_input_action_count", 0))
                 for result in parsed_results
             ),
             detection_latency=LatencyAggregate.from_values(
@@ -115,6 +142,11 @@ class LiveEngageSessionSummary:
             "no_target_available_count": self.no_target_available_count,
             "occupied_rejection_count": self.occupied_rejection_count,
             "out_of_zone_rejection_count": self.out_of_zone_rejection_count,
+            "calibration_warning_count": self.calibration_warning_count,
+            "right_click_action_count": self.right_click_action_count,
+            "key_press_action_count": self.key_press_action_count,
+            "key_sequence_action_count": self.key_sequence_action_count,
+            "real_input_action_count": self.real_input_action_count,
             "engage_success_rate": 0.0
             if self.total_attempts == 0
             else self.engaged_count / float(self.total_attempts),
@@ -126,8 +158,9 @@ class LiveEngageSessionSummary:
 
 
 class LiveEngageArtifactWriter:
-    def __init__(self, output_directory: Path) -> None:
+    def __init__(self, output_directory: Path, *, live_config: LiveConfig) -> None:
         self._output_directory = output_directory / "engage"
+        self._live_config = live_config
 
     def write_result(
         self,
@@ -223,6 +256,10 @@ class LiveEngageArtifactWriter:
                 lines.append(
                     f'<polygon points="{polygon_points}" fill="#22c55e" fill-opacity="0.08" stroke="#22c55e" stroke-width="3" />'
                 )
+            if observation_result.scene_calibration.get("warning"):
+                lines.append(
+                    f'<text x="16" y="48" fill="#f59e0b" font-size="16">scene_calibration_warning={observation_result.scene_calibration["warning"]}</text>'
+                )
             for detection in observation_result.detections:
                 bbox = detection.bbox or (detection.screen_x - 18, detection.screen_y - 24, 36, 48)
                 in_scene_zone = bool(detection.metadata.get("in_scene_zone", True))
@@ -254,8 +291,28 @@ class LiveEngageArtifactWriter:
                 lines.append(
                     f'<rect x="{bbox[0]}" y="{bbox[1]}" width="{bbox[2]}" height="{bbox[3]}" fill="none" stroke="{color}" stroke-dasharray="4 4" stroke-width="2" />'
                 )
+        for roi_name, roi_value, color in (
+            ("hp_bar_roi", self._live_config.hp_bar_roi, "#f87171"),
+            ("condition_bar_roi", self._live_config.condition_bar_roi, "#4ade80"),
+            ("combat_indicator_roi", self._live_config.combat_indicator_roi, "#fb7185"),
+            ("reward_roi", self._live_config.reward_roi, "#facc15"),
+        ):
+            lines.append(
+                f'<rect x="{roi_value[0]}" y="{roi_value[1]}" width="{roi_value[2]}" height="{roi_value[3]}" fill="none" stroke="{color}" stroke-width="2" />'
+            )
+            lines.append(
+                f'<text x="{roi_value[0] + 4}" y="{max(16, roi_value[1] - 4)}" fill="{color}" font-size="12">{roi_name}</text>'
+            )
         lines.append(
             f'<text x="16" y="24" fill="#f9fafb" font-size="18">engage outcome={result.outcome.value} reason={result.reason}</text>'
+        )
+        verify_state_detection = result.metadata.get("verify_state_detection")
+        if isinstance(verify_state_detection, dict):
+            lines.append(
+                f'<text x="16" y="{height - 44}" fill="#e5e7eb" font-size="14">verify_state_source={verify_state_detection.get("source")}</text>'
+            )
+        lines.append(
+            f'<text x="16" y="{height - 24}" fill="#e5e7eb" font-size="14">input_counts=rc:{result.metadata.get("right_click_action_count", 0)} key:{result.metadata.get("key_press_action_count", 0)} seq:{result.metadata.get("key_sequence_action_count", 0)} real:{result.metadata.get("real_input_action_count", 0)}</text>'
         )
         lines.append("</svg>")
         return "\n".join(lines)
@@ -293,6 +350,7 @@ class LiveEngageService:
         observation_result = self._runtime.perception_result(cycle_id=cycle_id, phase="observation")
         observation_metrics_metadata = _build_observation_metrics_metadata(observation_result)
         new_events = self._input_driver.events[initial_event_count:]
+        input_metrics_metadata = _build_input_event_metrics(new_events)
         click_point_xy = _resolve_click_point(
             input_events=new_events,
             target_resolution=engagement,
@@ -324,6 +382,7 @@ class LiveEngageService:
                     "approach_reason": engagement.approach_result.reason,
                     "interaction_reason": engagement.interaction_result.reason,
                     **observation_metrics_metadata,
+                    **input_metrics_metadata,
                 },
             )
             return self._persist_result(
@@ -353,6 +412,7 @@ class LiveEngageService:
                     "engage_quality_gate_rejected": True,
                     **engagement.approach_result.metadata,
                     **observation_metrics_metadata,
+                    **input_metrics_metadata,
                 },
             )
             return self._persist_result(
@@ -380,6 +440,7 @@ class LiveEngageService:
                     "approach_reason": engagement.approach_result.reason,
                     "interaction_reason": engagement.interaction_result.reason,
                     **observation_metrics_metadata,
+                    **input_metrics_metadata,
                 },
             )
             return self._persist_result(
@@ -435,6 +496,7 @@ class LiveEngageService:
                 "verify_state_detection": verify_state.metadata,
                 "verify_selected_target_id": verify_perception.selected_target_id,
                 **observation_metrics_metadata,
+                **input_metrics_metadata,
                 **classification_metadata,
             },
         )
@@ -637,6 +699,7 @@ def _build_observation_metrics_metadata(
             "occupied_rejection_count": 0,
             "out_of_zone_rejection_count": 0,
             "selected_target_in_zone": None,
+            "scene_calibration_warning": None,
         }
     selected_target = observation_result.selected_target
     return {
@@ -645,4 +708,32 @@ def _build_observation_metrics_metadata(
         "selected_target_in_zone": None
         if selected_target is None
         else bool(selected_target.metadata.get("in_scene_zone", True)),
+        "scene_calibration_warning": observation_result.scene_calibration.get("warning"),
+    }
+
+
+def _build_input_event_metrics(input_events: tuple["LiveInputEvent", ...]) -> dict[str, Any]:
+    right_click_action_count = 0
+    key_press_action_count = 0
+    key_sequence_action_count = 0
+    real_input_action_count = 0
+    for event in input_events:
+        if event.action == "right_click_target":
+            right_click_action_count += 1
+            if event.payload.get("execution_status") == "real_click_sent":
+                real_input_action_count += 1
+        elif event.action == "press_key":
+            key_press_action_count += 1
+            if event.payload.get("execution_status") == "real_key_sent":
+                real_input_action_count += 1
+        elif event.action == "press_sequence":
+            key_sequence_action_count += 1
+            execution_statuses = event.payload.get("execution_statuses", [])
+            if isinstance(execution_statuses, list):
+                real_input_action_count += sum(1 for status in execution_statuses if status == "real_key_sent")
+    return {
+        "right_click_action_count": right_click_action_count,
+        "key_press_action_count": key_press_action_count,
+        "key_sequence_action_count": key_sequence_action_count,
+        "real_input_action_count": real_input_action_count,
     }

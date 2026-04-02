@@ -27,6 +27,7 @@ vision:
 live:
   dry_run: true
   foreground_only: true
+  enable_real_input: false
   enable_real_clicks: false
   enable_real_keys: false
   window_title: "Game Window"

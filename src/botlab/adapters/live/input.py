@@ -27,12 +27,14 @@ class LiveInputDriver:
         *,
         logger: logging.Logger,
         dry_run: bool,
+        enable_real_input: bool = False,
         enable_real_clicks: bool = False,
         enable_real_keys: bool = False,
         screen_offset_xy: tuple[int, int] = (0, 0),
     ) -> None:
         self._logger = logger
         self._dry_run = dry_run
+        self._enable_real_input = enable_real_input
         self._enable_real_clicks = enable_real_clicks
         self._enable_real_keys = enable_real_keys
         self._screen_offset_xy = screen_offset_xy
@@ -52,11 +54,13 @@ class LiveInputDriver:
         absolute_x = self._screen_offset_xy[0] + click_x
         absolute_y = self._screen_offset_xy[1] + click_y
         execution_status = "dry_run"
-        if not self._dry_run and self._enable_real_clicks:
+        if not self._dry_run and self._enable_real_input and self._enable_real_clicks:
             execution_status = self._perform_right_click(
                 absolute_x=absolute_x,
                 absolute_y=absolute_y,
             )
+        elif not self._dry_run and not self._enable_real_input:
+            execution_status = "real_input_disabled"
         elif not self._dry_run:
             execution_status = "real_clicks_disabled"
         self._record(
@@ -68,6 +72,7 @@ class LiveInputDriver:
                 "absolute_x": absolute_x,
                 "absolute_y": absolute_y,
                 "dry_run": self._dry_run,
+                "enable_real_input": self._enable_real_input,
                 "enable_real_clicks": self._enable_real_clicks,
                 "execution_status": execution_status,
             },
@@ -75,8 +80,10 @@ class LiveInputDriver:
 
     def press_key(self, key: str) -> None:
         execution_status = "dry_run"
-        if not self._dry_run and self._enable_real_keys:
+        if not self._dry_run and self._enable_real_input and self._enable_real_keys:
             execution_status = self._perform_key_press(key=key)
+        elif not self._dry_run and not self._enable_real_input:
+            execution_status = "real_input_disabled"
         elif not self._dry_run:
             execution_status = "real_keys_disabled"
         self._record(
@@ -84,6 +91,7 @@ class LiveInputDriver:
             payload={
                 "key": key,
                 "dry_run": self._dry_run,
+                "enable_real_input": self._enable_real_input,
                 "enable_real_keys": self._enable_real_keys,
                 "execution_status": execution_status,
             },
@@ -91,10 +99,12 @@ class LiveInputDriver:
 
     def press_sequence(self, keys: tuple[str, ...]) -> None:
         execution_statuses: list[str] = []
-        if not self._dry_run and self._enable_real_keys:
+        if not self._dry_run and self._enable_real_input and self._enable_real_keys:
             for key in keys:
                 execution_statuses.append(self._perform_key_press(key=key))
                 time.sleep(0.03)
+        elif not self._dry_run and not self._enable_real_input:
+            execution_statuses = ["real_input_disabled" for _ in keys]
         elif not self._dry_run:
             execution_statuses = ["real_keys_disabled" for _ in keys]
         else:
@@ -104,6 +114,7 @@ class LiveInputDriver:
             payload={
                 "keys": list(keys),
                 "dry_run": self._dry_run,
+                "enable_real_input": self._enable_real_input,
                 "enable_real_keys": self._enable_real_keys,
                 "execution_statuses": execution_statuses,
             },

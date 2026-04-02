@@ -73,13 +73,13 @@
   "selectable_target_count": 1,
   "selected_target_id": "live-spawn-2-1",
   "timings": {
-    "action_ready_ts": 205.68643840084206,
-    "detection_finished_ts": 205.68643480084194,
-    "detection_latency_ms": 0.04650000005312904,
+    "action_ready_ts": 205.6864416008421,
+    "detection_finished_ts": 205.68643790084212,
+    "detection_latency_ms": 0.04960000023856992,
     "detection_started_ts": 205.68638830084188,
     "frame_captured_ts": 205.68638830084188,
-    "selection_latency_ms": 0.003600000127335079,
-    "target_selected_ts": 205.68643840084206,
-    "total_reaction_latency_ms": 0.05010000018046412
+    "selection_latency_ms": 0.0036999999792897142,
+    "target_selected_ts": 205.6864416008421,
+    "total_reaction_latency_ms": 0.05330000021785963
   }
 }

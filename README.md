@@ -447,16 +447,23 @@ Na tym etapie realna sciezka kliku jest przygotowana tylko dla PPM na Windows i 
 
 Realny input jest rozdzielony na dwa bezpieczniki konfiguracyjne:
 
+- `live.enable_real_input`
 - `live.enable_real_clicks`
 - `live.enable_real_keys`
 
-Domyslnie oba sa ustawione na `false`, nawet w `config/live_real_mvp.yaml`.
+Domyslnie wszystkie sa ustawione na `false`, nawet w `config/live_real_mvp.yaml`.
 
 To daje 3 praktyczne tryby:
 
 - preview / observe bez realnych wejsc,
 - realny capture z logowaniem inputu, ale bez wysylania klawiszy,
 - ostrozny realny MVP po jawnej zmianie configu.
+
+W praktyce:
+
+- `enable_real_input=false` blokuje wszystkie realne wejscia niezaleznie od pozostalych flag,
+- `enable_real_clicks=true` pozwala na realny PPM,
+- `enable_real_keys=true` pozwala na realne `press_key` i `press_sequence`.
 
 W logach i artefaktach input dostajesz tez status wykonania, np.:
 
@@ -481,6 +488,8 @@ Target moze zostac odrzucony jeszcze przed PPM, jesli:
 - albo staje sie nieosiagalny.
 
 W takim przypadku wynik engage trafia do `no_target_available`, ale z czytelnym `reason`, np. `engage_quality_gate_not_stable`.
+
+To jest szczegolnie przydatne na jednej maszynie i jednym spocie, gdzie chcemy najpierw ograniczyc klikniecia w chwilowe albo podejrzane detekcje.
 
 Artefakty engage trafiaja do:
 

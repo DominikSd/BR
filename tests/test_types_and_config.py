@@ -43,6 +43,7 @@ def test_load_default_config_returns_settings() -> None:
 
     assert settings.vision.enabled is False
     assert settings.live.dry_run is False
+    assert settings.live.enable_real_input is False
     assert settings.live.enable_real_clicks is False
     assert settings.live.enable_real_keys is False
     assert settings.live.stall_timeout_s == 1.0
@@ -102,6 +103,7 @@ def test_live_config_profile_can_be_loaded_from_yaml() -> None:
 
     assert settings.app.mode == "live"
     assert settings.live.dry_run is True
+    assert settings.live.enable_real_input is False
     assert settings.live.enable_real_clicks is False
     assert settings.live.enable_real_keys is False
     assert settings.live.capture_region == (0, 0, 1280, 720)
@@ -137,6 +139,7 @@ def test_live_real_mvp_config_can_be_loaded_from_yaml() -> None:
 
     assert settings.app.mode == "live"
     assert settings.live.dry_run is False
+    assert settings.live.enable_real_input is False
     assert settings.live.enable_real_clicks is False
     assert settings.live.enable_real_keys is False
     assert settings.live.debug_directory.name == "live_real_debug"
