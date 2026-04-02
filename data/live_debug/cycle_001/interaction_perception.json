@@ -124,13 +124,13 @@
   "selectable_target_count": 1,
   "selected_target_id": "front-free",
   "timings": {
-    "action_ready_ts": 160.68644540084375,
-    "detection_finished_ts": 160.68644110084375,
-    "detection_latency_ms": 0.05280000186758116,
+    "action_ready_ts": 160.68644810084248,
+    "detection_finished_ts": 160.6864446008413,
+    "detection_latency_ms": 0.0562999994144775,
     "detection_started_ts": 160.68638830084188,
     "frame_captured_ts": 160.68638830084188,
-    "selection_latency_ms": 0.004300000000512227,
-    "target_selected_ts": 160.68644540084375,
-    "total_reaction_latency_ms": 0.057100001868093386
+    "selection_latency_ms": 0.0035000011848751456,
+    "target_selected_ts": 160.68644810084248,
+    "total_reaction_latency_ms": 0.05980000059935264
   }
 }

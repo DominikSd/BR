@@ -9,10 +9,10 @@
     "p95_ms": 2.0
   },
   "detection_latency": {
-    "avg_ms": 7.013200000464792,
+    "avg_ms": 7.014074999851516,
     "count": 4,
     "max_ms": 10.99999999999568,
-    "min_ms": 0.05280000186758116,
+    "min_ms": 0.0562999994144775,
     "name": "detection_latency_ms",
     "p50_ms": 8.000000000009777,
     "p95_ms": 10.99999999999568
@@ -422,14 +422,14 @@
       "selectable_target_count": 1,
       "selected_target_id": "front-free",
       "timings": {
-        "action_ready_ts": 160.68644540084375,
-        "detection_finished_ts": 160.68644110084375,
-        "detection_latency_ms": 0.05280000186758116,
+        "action_ready_ts": 160.68644810084248,
+        "detection_finished_ts": 160.6864446008413,
+        "detection_latency_ms": 0.0562999994144775,
         "detection_started_ts": 160.68638830084188,
         "frame_captured_ts": 160.68638830084188,
-        "selection_latency_ms": 0.004300000000512227,
-        "target_selected_ts": 160.68644540084375,
-        "total_reaction_latency_ms": 0.057100001868093386
+        "selection_latency_ms": 0.0035000011848751456,
+        "target_selected_ts": 160.68644810084248,
+        "total_reaction_latency_ms": 0.05980000059935264
       }
     },
     {
@@ -653,20 +653,20 @@
     "p95_ms": 0.0
   },
   "selection_latency": {
-    "avg_ms": 2.001074999995467,
+    "avg_ms": 2.0008750002915576,
     "count": 4,
     "max_ms": 2.999999999985903,
-    "min_ms": 0.004300000000512227,
+    "min_ms": 0.0035000011848751456,
     "name": "selection_latency_ms",
     "p50_ms": 2.0000000000095497,
     "p95_ms": 2.999999999985903
   },
   "strict_pixel_only": false,
   "total_reaction_latency": {
-    "avg_ms": 10.014275000465034,
+    "avg_ms": 10.014950000147849,
     "count": 4,
     "max_ms": 15.999999999991132,
-    "min_ms": 0.057100001868093386,
+    "min_ms": 0.05980000059935264,
     "name": "total_reaction_latency_ms",
     "p50_ms": 11.000000000024102,
     "p95_ms": 15.999999999991132
@@ -747,7 +747,7 @@
       "total_reaction_latency_ms": 11.000000000024102
     },
     {
-      "detection_latency_ms": 0.05280000186758116,
+      "detection_latency_ms": 0.0562999994144775,
       "false_negative_count": 0,
       "false_positive_count": 0,
       "frame_source": "dry_run:engage_timeout",
@@ -759,11 +759,11 @@
         "out_of_zone": 0,
         "unstable": 0
       },
-      "score": 0.00022840000747237355,
+      "score": 0.00023920000239741057,
       "selected_target_correct": null,
       "selected_target_id": "front-free",
-      "selection_latency_ms": 0.004300000000512227,
-      "total_reaction_latency_ms": 0.057100001868093386
+      "selection_latency_ms": 0.0035000011848751456,
+      "total_reaction_latency_ms": 0.05980000059935264
     }
   ]
 }
