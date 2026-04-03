@@ -1,0 +1,206 @@
+{
+  "artifact_paths": {},
+  "click_screen_xy": null,
+  "completed_at_ts": 7885.0,
+  "cycle_id": 173,
+  "detection_latency_ms": 11.000000000422006,
+  "final_target_id": null,
+  "input_events": [],
+  "metadata": {
+    "approach_reason": "no_target_selected",
+    "interaction_reason": "interaction_ready",
+    "key_press_action_count": 0,
+    "key_sequence_action_count": 0,
+    "occupied_rejection_count": 0,
+    "out_of_zone_rejection_count": 0,
+    "real_input_action_count": 0,
+    "right_click_action_count": 0,
+    "scene_calibration_warning": null,
+    "selected_target_in_zone": null
+  },
+  "observation_perception": {
+    "artifact_paths": {
+      "perception_json": "C:\\Users\\d-sad\\Desktop\\Fun\\boty\\SOPLARZ\\data\\live_real_debug\\cycle_173\\observation_perception.json",
+      "perception_overlay_svg": "C:\\Users\\d-sad\\Desktop\\Fun\\boty\\SOPLARZ\\data\\live_real_debug\\cycle_173\\observation_perception_overlay.svg"
+    },
+    "candidate_hit_count": 0,
+    "cycle_id": 173,
+    "detections": [],
+    "diagnostics": {
+      "candidate_tracks": [],
+      "duplicate_merges": [],
+      "final_candidates": [],
+      "low_confidence_hits": [],
+      "mob_signature_rejections": [],
+      "occupied_rejections": [],
+      "out_of_zone_rejections": [],
+      "player_veto_rejections": [],
+      "raw_hit_summary": {},
+      "seed_diagnostics": {},
+      "selection_reason": null,
+      "summary_lines": [
+        "thresholds=mob>=0.60 occupied>=0.75 merge_px=28 stride=6",
+        "seed=mode=unknown marker=0 marker_template=0 upper_rescue=0",
+        "raw=0 low_conf=0 merged=0 candidates=0 veto=0 not_icy=0",
+        "rejects=occupied=0 out_of_zone=0 selected=None"
+      ],
+      "tuning_parameters": {
+        "candidate_confirmation_frames": 1,
+        "candidate_loss_frames": 2,
+        "confirmation_confidence_threshold": 0.6,
+        "ice_mob_blue_red_tolerance": 16,
+        "ice_mob_focus_height_ratio": 0.68,
+        "ice_mob_focus_width_ratio": 0.62,
+        "ice_mob_max_brown_ratio": 0.18,
+        "ice_mob_max_dark_ratio": 0.34,
+        "ice_mob_min_blue": 135,
+        "ice_mob_min_brightness": 118,
+        "ice_mob_min_green": 105,
+        "ice_mob_min_pixels": 42,
+        "ice_mob_min_ratio": 0.1,
+        "ice_mob_signature_enabled": true,
+        "merge_distance_px": 28,
+        "occupied_confidence_threshold": 0.75,
+        "occupied_confirmation_frames": 1,
+        "perception_confidence_threshold": 0.75,
+        "player_veto_enabled": true,
+        "player_veto_roi_height_px": 70,
+        "player_veto_roi_offset_y_px": -28,
+        "player_veto_roi_width_px": 190,
+        "rescue_pseudo_marker_offset_y_px": 10,
+        "rescue_pseudo_marker_size_px": 8,
+        "rescue_upper_scan_confidence_threshold": 0.74,
+        "rescue_upper_scan_stride_px": 8,
+        "scene_profile_path": "C:\\Users\\d-sad\\Desktop\\Fun\\boty\\SOPLARZ\\assets\\live\\scenes\\single_spot_scene.json",
+        "scene_zone_overlay_visible": false,
+        "template_match_stride_px": 6,
+        "template_rotations_deg": [
+          0,
+          90,
+          180,
+          270
+        ]
+      },
+      "unstable_rejections": []
+    },
+    "expectations": {},
+    "frame_height": 0,
+    "frame_source": "dry_run:single_spot_mvp",
+    "frame_width": 0,
+    "free_target_count": 0,
+    "ground_truth": {},
+    "in_zone_target_count": 0,
+    "merged_hit_count": 0,
+    "out_of_zone_target_count": 0,
+    "phase": "observation",
+    "pipeline_mode": "metadata_fallback",
+    "raw_hits": [],
+    "reference_point_xy": [
+      0.0,
+      0.0
+    ],
+    "roi": {
+      "frame_height": 0,
+      "frame_width": 0,
+      "height": 1,
+      "name": "spawn_focus_roi",
+      "source": "scene_profile",
+      "width": 1,
+      "x": 0,
+      "y": 0
+    },
+    "scene_calibration": {
+      "anchor_adjustment_xy": [
+        0.0,
+        0.0
+      ],
+      "anchor_mode": "frame_center",
+      "anchor_target_xy": null,
+      "frame_size": [
+        0,
+        0
+      ],
+      "offset_xy": [
+        0.0,
+        0.0
+      ],
+      "reference_frame_path": "C:\\Users\\d-sad\\Desktop\\Fun\\boty\\SOPLARZ\\assets\\live\\sample_frames\\raw\\live_spot_scene_1.png",
+      "reference_frame_size": [
+        2559,
+        1439
+      ],
+      "reference_point_xy": [
+        0.0,
+        0.0
+      ],
+      "scale_x": 0.0,
+      "scale_y": 0.0,
+      "scene_name": "single_spot_scene",
+      "spawn_zone_polygon": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0
+        ]
+      ],
+      "sub_rois": {
+        "spawn_focus_roi": [
+          0,
+          0,
+          1,
+          1
+        ]
+      },
+      "warning": null
+    },
+    "scene_name": "single_spot_scene",
+    "scene_zone_polygon": [],
+    "selectable_target_count": 0,
+    "selected_target_id": null,
+    "timings": {
+      "action_ready_ts": 7885.0160000000005,
+      "detection_finished_ts": 7885.011,
+      "detection_latency_ms": 11.000000000422006,
+      "detection_started_ts": 7885.0,
+      "frame_captured_ts": 7885.0,
+      "selection_latency_ms": 2.9999999997016857,
+      "target_selected_ts": 7885.014,
+      "total_reaction_latency_ms": 16.000000000531145
+    }
+  },
+  "outcome": "no_target_available",
+  "reason": "no_selectable_target",
+  "selected_target_id": null,
+  "selection_latency_ms": 2.9999999997016857,
+  "started_at_ts": 7885.0,
+  "total_reaction_latency_ms": 16.000000000531145,
+  "verification_latency_ms": 0.0,
+  "verification_perception": null
+}

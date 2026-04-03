@@ -652,6 +652,7 @@ class PerceptionAnalyzer:
         self._track_states: dict[str, TrackedDetectionState] = {}
         self._track_sequence = 0
         self._strict_pixel_only = strict_pixel_only
+        self._zero_seed_streak = 0
 
     def analyze_frame(
         self,
@@ -691,6 +692,7 @@ class PerceptionAnalyzer:
                 frame=frame,
                 roi=roi,
                 reference_point_xy=reference_point_xy,
+                phase=phase,
             )
         else:
             if self._strict_pixel_only:
@@ -911,6 +913,7 @@ class PerceptionAnalyzer:
         frame: LiveFrame,
         roi: dict[str, Any],
         reference_point_xy: tuple[float, float],
+        phase: str,
     ) -> tuple[
         tuple[TemplateHit, ...],
         tuple[LiveTargetDetection, ...],
@@ -959,7 +962,13 @@ class PerceptionAnalyzer:
                 )
             )
         rescue_seed_hits: tuple[TemplateHit, ...] = ()
-        if not marker_hits and not filtered_template_marker_hits:
+        should_run_upper_rescue = self._should_run_upper_rescue(
+            frame_source=frame.source,
+            phase=phase,
+            marker_hits=marker_hits,
+            template_marker_hits=filtered_template_marker_hits,
+        )
+        if should_run_upper_rescue:
             rescue_seed_hits = _seed_from_upper_rescue_scan(
                 image=image,
                 roi_box=roi_box,
@@ -988,6 +997,8 @@ class PerceptionAnalyzer:
             "rescue_seed_hit_count": len(rescue_seed_hits),
             "merged_seed_hit_count": len(merged_marker_hits),
             "seed_mode": seed_mode,
+            "zero_seed_streak": self._zero_seed_streak,
+            "upper_rescue_attempted": should_run_upper_rescue,
         }
         detections: list[LiveTargetDetection] = []
         player_veto_rejections: list[dict[str, Any]] = []
@@ -1220,6 +1231,25 @@ class PerceptionAnalyzer:
             tuple(mob_signature_rejections),
             seed_diagnostics,
         )
+
+    def _should_run_upper_rescue(
+        self,
+        *,
+        frame_source: str,
+        phase: str,
+        marker_hits: tuple[TemplateHit, ...],
+        template_marker_hits: tuple[TemplateHit, ...],
+    ) -> bool:
+        if marker_hits or template_marker_hits:
+            self._zero_seed_streak = 0
+            return False
+        if not str(frame_source).startswith("foreground_window_capture"):
+            self._zero_seed_streak = 0
+            return False
+        self._zero_seed_streak += 1
+        if phase == "preview":
+            return self._zero_seed_streak >= 2 and (self._zero_seed_streak % 3 == 0)
+        return True
 
     def _resolve_match_stride_px(self, frame: LiveFrame) -> int:
         override = frame.metadata.get("template_match_stride_px")

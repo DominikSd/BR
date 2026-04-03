@@ -4,27 +4,52 @@
   "cycle_id": 116,
   "detections": [],
   "diagnostics": {
+    "candidate_tracks": [],
     "duplicate_merges": [],
     "final_candidates": [],
     "low_confidence_hits": [],
+    "mob_signature_rejections": [],
     "occupied_rejections": [],
     "out_of_zone_rejections": [],
+    "player_veto_rejections": [],
     "raw_hit_summary": {},
+    "seed_diagnostics": {},
     "selection_reason": null,
     "summary_lines": [
       "thresholds=mob>=0.60 occupied>=0.75 merge_px=28 stride=6",
-      "raw=0 low_conf=0 merged=0 dup=0 unstable=0",
+      "seed=mode=unknown marker=0 marker_template=0 upper_rescue=0",
+      "raw=0 low_conf=0 merged=0 candidates=0 veto=0 not_icy=0",
       "rejects=occupied=0 out_of_zone=0 selected=None"
     ],
     "tuning_parameters": {
       "candidate_confirmation_frames": 1,
       "candidate_loss_frames": 2,
       "confirmation_confidence_threshold": 0.6,
+      "ice_mob_blue_red_tolerance": 16,
+      "ice_mob_focus_height_ratio": 0.68,
+      "ice_mob_focus_width_ratio": 0.62,
+      "ice_mob_max_brown_ratio": 0.18,
+      "ice_mob_max_dark_ratio": 0.34,
+      "ice_mob_min_blue": 135,
+      "ice_mob_min_brightness": 118,
+      "ice_mob_min_green": 105,
+      "ice_mob_min_pixels": 42,
+      "ice_mob_min_ratio": 0.1,
+      "ice_mob_signature_enabled": true,
       "merge_distance_px": 28,
       "occupied_confidence_threshold": 0.75,
       "occupied_confirmation_frames": 1,
       "perception_confidence_threshold": 0.75,
+      "player_veto_enabled": true,
+      "player_veto_roi_height_px": 70,
+      "player_veto_roi_offset_y_px": -28,
+      "player_veto_roi_width_px": 190,
+      "rescue_pseudo_marker_offset_y_px": 10,
+      "rescue_pseudo_marker_size_px": 8,
+      "rescue_upper_scan_confidence_threshold": 0.74,
+      "rescue_upper_scan_stride_px": 8,
       "scene_profile_path": "C:\\Users\\d-sad\\Desktop\\Fun\\boty\\SOPLARZ\\assets\\live\\scenes\\single_spot_scene.json",
+      "scene_zone_overlay_visible": false,
       "template_match_stride_px": 6,
       "template_rotations_deg": [
         0,
@@ -120,66 +145,6 @@
       [
         0.0,
         0.0
-      ],
-      [
-        0.0,
-        0.0
-      ],
-      [
-        0.0,
-        0.0
-      ],
-      [
-        0.0,
-        0.0
-      ],
-      [
-        0.0,
-        0.0
-      ],
-      [
-        0.0,
-        0.0
-      ],
-      [
-        0.0,
-        0.0
-      ],
-      [
-        0.0,
-        0.0
-      ],
-      [
-        0.0,
-        0.0
-      ],
-      [
-        0.0,
-        0.0
-      ],
-      [
-        0.0,
-        0.0
-      ],
-      [
-        0.0,
-        0.0
-      ],
-      [
-        0.0,
-        0.0
-      ],
-      [
-        0.0,
-        0.0
-      ],
-      [
-        0.0,
-        0.0
-      ],
-      [
-        0.0,
-        0.0
       ]
     ],
     "sub_rois": {
@@ -193,100 +158,7 @@
     "warning": null
   },
   "scene_name": "single_spot_scene",
-  "scene_zone_polygon": [
-    [
-      0.0,
-      0.0
-    ],
-    [
-      0.0,
-      0.0
-    ],
-    [
-      0.0,
-      0.0
-    ],
-    [
-      0.0,
-      0.0
-    ],
-    [
-      0.0,
-      0.0
-    ],
-    [
-      0.0,
-      0.0
-    ],
-    [
-      0.0,
-      0.0
-    ],
-    [
-      0.0,
-      0.0
-    ],
-    [
-      0.0,
-      0.0
-    ],
-    [
-      0.0,
-      0.0
-    ],
-    [
-      0.0,
-      0.0
-    ],
-    [
-      0.0,
-      0.0
-    ],
-    [
-      0.0,
-      0.0
-    ],
-    [
-      0.0,
-      0.0
-    ],
-    [
-      0.0,
-      0.0
-    ],
-    [
-      0.0,
-      0.0
-    ],
-    [
-      0.0,
-      0.0
-    ],
-    [
-      0.0,
-      0.0
-    ],
-    [
-      0.0,
-      0.0
-    ],
-    [
-      0.0,
-      0.0
-    ],
-    [
-      0.0,
-      0.0
-    ],
-    [
-      0.0,
-      0.0
-    ],
-    [
-      0.0,
-      0.0
-    ]
-  ],
+  "scene_zone_polygon": [],
   "selectable_target_count": 0,
   "selected_target_id": null,
   "timings": {

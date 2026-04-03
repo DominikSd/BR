@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import queue
+import threading
 import time
 from dataclasses import dataclass, replace
 from typing import Any, Callable
@@ -363,6 +365,8 @@ class LiveVisionPreview:
         status_label.pack(fill="x", padx=8, pady=8)
 
         running = {"value": True}
+        result_queue: queue.Queue[tuple[LiveVisionPreviewState, Any] | Exception] = queue.Queue(maxsize=1)
+        worker_state = {"started": False}
 
         def stop_preview(event=None):
             running["value"] = False
@@ -372,17 +376,54 @@ class LiveVisionPreview:
         root.bind("q", stop_preview)
         root.bind("Q", stop_preview)
 
-        def tick():
+        def worker() -> None:
+            interval_s = max(0.01, self._settings.live.preview_refresh_interval_ms / 1000.0)
+            while running["value"]:
+                started_at = time.perf_counter()
+                try:
+                    payload: tuple[LiveVisionPreviewState, Any] | Exception = self.render_next_frame()
+                except Exception as exc:  # pragma: no cover - runtime specific
+                    payload = exc
+                try:
+                    while True:
+                        result_queue.get_nowait()
+                except queue.Empty:
+                    pass
+                try:
+                    result_queue.put_nowait(payload)
+                except queue.Full:
+                    pass
+                elapsed_s = time.perf_counter() - started_at
+                remaining_s = interval_s - elapsed_s
+                if remaining_s > 0:
+                    time.sleep(remaining_s)
+
+        def poll_results():
             if not running["value"]:
                 return
-            state, image = self.render_next_frame()
-            photo = ImageTk.PhotoImage(image)
-            image_label.configure(image=photo)
-            image_label.image = photo
-            status_label.configure(text="\n".join(state.headline_lines))
-            root.after(self._settings.live.preview_refresh_interval_ms, tick)
+            try:
+                while True:
+                    payload = result_queue.get_nowait()
+                    if isinstance(payload, Exception):
+                        running["value"] = False
+                        raise payload
+                    state, image = payload
+                    photo = ImageTk.PhotoImage(image)
+                    image_label.configure(image=photo)
+                    image_label.image = photo
+                    status_label.configure(text="\n".join(state.headline_lines))
+            except queue.Empty:
+                pass
+            except Exception as exc:  # pragma: no cover - GUI environment specific
+                running["value"] = False
+                root.destroy()
+                raise RuntimeError("Live preview zatrzymal sie podczas analizy klatki.") from exc
+            root.after(30, poll_results)
 
-        tick()
+        if not worker_state["started"]:
+            threading.Thread(target=worker, name="botlab-live-preview", daemon=True).start()
+            worker_state["started"] = True
+        poll_results()
         root.mainloop()
         return 0
 
@@ -501,6 +542,8 @@ class LiveEngageObserve:
         status_label.pack(fill="x", padx=8, pady=8)
 
         running = {"value": True}
+        result_queue: queue.Queue[tuple[LiveVisionPreviewState, Any] | Exception] = queue.Queue(maxsize=1)
+        worker_state = {"started": False}
 
         def stop_preview(event=None):
             running["value"] = False
@@ -510,16 +553,53 @@ class LiveEngageObserve:
         root.bind("q", stop_preview)
         root.bind("Q", stop_preview)
 
-        def tick():
+        def worker() -> None:
+            interval_s = max(0.01, self._settings.live.preview_refresh_interval_ms / 1000.0)
+            while running["value"]:
+                started_at = time.perf_counter()
+                try:
+                    payload: tuple[LiveVisionPreviewState, Any] | Exception = self.render_next_attempt()
+                except Exception as exc:  # pragma: no cover - runtime specific
+                    payload = exc
+                try:
+                    while True:
+                        result_queue.get_nowait()
+                except queue.Empty:
+                    pass
+                try:
+                    result_queue.put_nowait(payload)
+                except queue.Full:
+                    pass
+                elapsed_s = time.perf_counter() - started_at
+                remaining_s = interval_s - elapsed_s
+                if remaining_s > 0:
+                    time.sleep(remaining_s)
+
+        def poll_results():
             if not running["value"]:
                 return
-            state, image = self.render_next_attempt()
-            photo = ImageTk.PhotoImage(image)
-            image_label.configure(image=photo)
-            image_label.image = photo
-            status_label.configure(text="\n".join(state.headline_lines))
-            root.after(self._settings.live.preview_refresh_interval_ms, tick)
+            try:
+                while True:
+                    payload = result_queue.get_nowait()
+                    if isinstance(payload, Exception):
+                        running["value"] = False
+                        raise payload
+                    state, image = payload
+                    photo = ImageTk.PhotoImage(image)
+                    image_label.configure(image=photo)
+                    image_label.image = photo
+                    status_label.configure(text="\n".join(state.headline_lines))
+            except queue.Empty:
+                pass
+            except Exception as exc:  # pragma: no cover - GUI environment specific
+                running["value"] = False
+                root.destroy()
+                raise RuntimeError("Live engage observe zatrzymal sie podczas analizy proby.") from exc
+            root.after(30, poll_results)
 
-        tick()
+        if not worker_state["started"]:
+            threading.Thread(target=worker, name="botlab-live-engage-observe", daemon=True).start()
+            worker_state["started"] = True
+        poll_results()
         root.mainloop()
         return 0
