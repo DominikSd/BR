@@ -121,6 +121,10 @@ live:
   ice_mob_blue_red_tolerance: 16
   ice_mob_min_pixels: 42
   ice_mob_min_ratio: 0.10
+  ice_mob_focus_width_ratio: 0.62
+  ice_mob_focus_height_ratio: 0.68
+  ice_mob_max_dark_ratio: 0.34
+  ice_mob_max_brown_ratio: 0.18
   candidate_confirmation_frames: 1
   candidate_loss_frames: 2
   occupied_confirmation_frames: 1

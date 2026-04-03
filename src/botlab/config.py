@@ -174,6 +174,10 @@ class LiveConfig:
     ice_mob_blue_red_tolerance: int = 16
     ice_mob_min_pixels: int = 24
     ice_mob_min_ratio: float = 0.08
+    ice_mob_focus_width_ratio: float = 0.65
+    ice_mob_focus_height_ratio: float = 0.70
+    ice_mob_max_dark_ratio: float = 0.45
+    ice_mob_max_brown_ratio: float = 0.28
     candidate_confirmation_frames: int = 1
     candidate_loss_frames: int = 2
     occupied_confirmation_frames: int = 1
@@ -750,6 +754,26 @@ def load_config(config_path: str | Path) -> Settings:
             live_section,
             "ice_mob_min_ratio",
             0.08,
+        ),
+        ice_mob_focus_width_ratio=_optional_ratio_float(
+            live_section,
+            "ice_mob_focus_width_ratio",
+            0.65,
+        ),
+        ice_mob_focus_height_ratio=_optional_ratio_float(
+            live_section,
+            "ice_mob_focus_height_ratio",
+            0.70,
+        ),
+        ice_mob_max_dark_ratio=_optional_ratio_float(
+            live_section,
+            "ice_mob_max_dark_ratio",
+            0.45,
+        ),
+        ice_mob_max_brown_ratio=_optional_ratio_float(
+            live_section,
+            "ice_mob_max_brown_ratio",
+            0.28,
         ),
         candidate_confirmation_frames=_optional_positive_int(
             live_section,

@@ -3,9 +3,12 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import time
 from typing import Sequence
 
 from botlab.adapters.live import LiveEngageObserve, LiveRunner, LiveVisionPreview, PerceptionAnalysisRunner
+from botlab.adapters.live.capture import create_capture
+from botlab.adapters.live.models import LiveSessionState
 from botlab.adapters.live.perception import compare_perception_summary_payloads
 from botlab.adapters.simulation.combat_profiles import SimulatedCombatProfileCatalog
 from botlab.adapters.simulation.combat_plans import SimulatedCombatPlanCatalog
@@ -158,6 +161,29 @@ def build_argument_parser() -> argparse.ArgumentParser:
         metavar=("BASELINE_JSON", "CANDIDATE_JSON"),
         help="Porownuje dwa perception_session_summary.json i wypisuje roznice accuracy/latency.",
     )
+    parser.add_argument(
+        "--capture-live-screens",
+        action="store_true",
+        help="Zapisuje kolejne pelne klatki z okna gry do dalszego recznego wycinania template'ow i hard negatives.",
+    )
+    parser.add_argument(
+        "--capture-interval-s",
+        type=float,
+        default=45.0,
+        help="Odstep czasowy miedzy kolejnymi zapisami klatek live. Domyslnie: 45 sekund.",
+    )
+    parser.add_argument(
+        "--capture-count",
+        type=int,
+        default=10,
+        help="Liczba klatek do zapisania w trybie --capture-live-screens. Domyslnie: 10.",
+    )
+    parser.add_argument(
+        "--capture-output-dir",
+        type=str,
+        default=None,
+        help="Opcjonalny katalog wyjsciowy dla surowych klatek live. Domyslnie: live.debug_directory/captured_frames.",
+    )
 
     return parser
 
@@ -199,6 +225,36 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
 
     settings = _load_settings(args.config)
+    if args.capture_live_screens:
+        _validate_live_capture_args(
+            settings=settings,
+            scenario_preset=args.scenario_preset,
+            scenario_file=args.scenario_file,
+            analyze_frame=args.analyze_frame,
+            analyze_batch_dir=args.analyze_batch_dir,
+            benchmark_split=args.benchmark_split,
+            live_preview=args.live_preview,
+            live_engage_observe=args.live_engage_observe,
+            live_engage_mvp=args.live_engage_mvp,
+            capture_count=args.capture_count,
+            capture_interval_s=args.capture_interval_s,
+        )
+        output_directory = _resolve_live_capture_output_directory(
+            settings=settings,
+            output_directory=args.capture_output_dir,
+        )
+        capture_directory, capture_manifest_path = _capture_live_screenshot_series(
+            settings=settings,
+            output_directory=output_directory,
+            interval_s=args.capture_interval_s,
+            capture_count=args.capture_count,
+        )
+        print("live_capture_mode=series")
+        print(f"capture_output_dir={capture_directory}")
+        print(f"capture_manifest={capture_manifest_path}")
+        print(f"capture_count={args.capture_count}")
+        print(f"capture_interval_s={args.capture_interval_s:.3f}")
+        return 0
     if args.live_preview:
         _validate_live_preview_args(
             settings=settings,
@@ -386,6 +442,76 @@ def _run_perception_analysis(
     return runner.analyze_directory(analyze_batch_dir), resolved_output_directory
 
 
+def _capture_live_screenshot_series(
+    *,
+    settings: Settings,
+    output_directory: Path,
+    interval_s: float,
+    capture_count: int,
+) -> tuple[Path, Path]:
+    output_directory.mkdir(parents=True, exist_ok=True)
+    capture = create_capture(settings.live)
+    session_state = LiveSessionState()
+    captured_entries: list[dict[str, object]] = []
+
+    for index in range(1, capture_count + 1):
+        captured_at_ts = time.time()
+        phase = f"sample_capture_{index:03d}"
+        frame = capture.capture_frame(
+            cycle_id=index,
+            phase=phase,
+            default_ts=captured_at_ts,
+            session_state=session_state,
+        )
+        stem = f"{index:03d}_{int(captured_at_ts)}"
+        image_path = output_directory / f"{stem}.png"
+        metadata_path = output_directory / f"{stem}.json"
+        if frame.image is not None:
+            frame.image.save(image_path)
+        metadata_payload = {
+            "capture_index": index,
+            "captured_at_ts": frame.captured_at_ts,
+            "source": frame.source,
+            "width": frame.width,
+            "height": frame.height,
+            "image_path": str(image_path),
+            "metadata": frame.metadata,
+        }
+        metadata_path.write_text(
+            json.dumps(metadata_payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        captured_entries.append(
+            {
+                "capture_index": index,
+                "captured_at_ts": frame.captured_at_ts,
+                "image_path": str(image_path),
+                "metadata_path": str(metadata_path),
+                "capture_reliability": frame.metadata.get("capture_reliability"),
+                "window_guard": frame.metadata.get("window_guard"),
+            }
+        )
+        if index < capture_count:
+            time.sleep(interval_s)
+
+    manifest_path = output_directory / "capture_manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "capture_count": capture_count,
+                "interval_s": interval_s,
+                "window_title": settings.live.window_title,
+                "foreground_only": settings.live.foreground_only,
+                "entries": captured_entries,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return output_directory, manifest_path
+
+
 def _load_settings(config_path: str | None) -> Settings:
     if config_path is None:
         return load_default_config()
@@ -444,6 +570,34 @@ def _validate_perception_args(
         raise ValueError("Tryb perception-only nie obsluguje scenario replay.")
     if benchmark_split is not None and (scenario_preset is not None or scenario_file is not None):
         raise ValueError("Tryb benchmark perception nie obsluguje scenario replay.")
+
+
+def _validate_live_capture_args(
+    *,
+    settings: Settings,
+    scenario_preset: str | None,
+    scenario_file: str | None,
+    analyze_frame: str | None,
+    analyze_batch_dir: str | None,
+    benchmark_split: str | None,
+    live_preview: bool,
+    live_engage_observe: bool,
+    live_engage_mvp: bool,
+    capture_count: int,
+    capture_interval_s: float,
+) -> None:
+    if settings.app.mode != "live":
+        raise ValueError("--capture-live-screens wymaga konfiguracji z app.mode=live.")
+    if scenario_preset is not None or scenario_file is not None:
+        raise ValueError("--capture-live-screens nie obsluguje scenario replay.")
+    if analyze_frame is not None or analyze_batch_dir is not None or benchmark_split is not None:
+        raise ValueError("--capture-live-screens nie moze byc laczony z trybem perception-only.")
+    if live_preview or live_engage_observe or live_engage_mvp:
+        raise ValueError("--capture-live-screens nie moze byc laczony z innym live trybem uruchomienia.")
+    if capture_count <= 0:
+        raise ValueError("--capture-count musi byc wieksze od 0.")
+    if capture_interval_s <= 0.0:
+        raise ValueError("--capture-interval-s musi byc wieksze od 0.")
 
 
 def _validate_live_preview_args(
@@ -585,6 +739,13 @@ def _resolve_perception_output_directory(settings: Settings, output_directory: s
     if output_directory is not None:
         return Path(output_directory).expanduser().resolve()
     return (settings.live.debug_directory / "perception").resolve()
+
+
+def _resolve_live_capture_output_directory(*, settings: Settings, output_directory: str | None) -> Path:
+    if output_directory is not None:
+        return Path(output_directory).expanduser().resolve()
+    timestamp_label = time.strftime("%Y%m%d_%H%M%S")
+    return (settings.live.debug_directory / "captured_frames" / timestamp_label).resolve()
 
 
 def _print_report(

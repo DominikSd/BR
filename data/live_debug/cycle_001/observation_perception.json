@@ -13,12 +13,24 @@
       "confidence": 1.0,
       "distance": 63.245553203367585,
       "metadata": {
+        "actionable": true,
+        "detection_pipeline": "metadata_fallback",
+        "detection_state": "actionable",
+        "fallback_template_score": 0.0,
+        "ice_score": 0.0,
+        "marker_score": 1.0,
+        "occupied_candidate": false,
         "occupied_confidence": 0.0,
+        "occupied_score": 0.0,
         "occupied_seen_frames": 0,
+        "player_veto_score": 0.0,
         "raw_hit_count": 1,
+        "rejection_reason": null,
         "seen_frames": 1,
         "stable_candidate": true,
-        "track_id": "track-0001"
+        "track_id": "track-0001",
+        "track_seen_frames": 1,
+        "upper_template_score": 1.0
       },
       "mob_variant": "mob_b",
       "occupied": false,
@@ -38,12 +50,24 @@
       "confidence": 1.0,
       "distance": 127.13772060250254,
       "metadata": {
+        "actionable": true,
+        "detection_pipeline": "metadata_fallback",
+        "detection_state": "actionable",
+        "fallback_template_score": 0.0,
+        "ice_score": 0.0,
+        "marker_score": 1.0,
+        "occupied_candidate": false,
         "occupied_confidence": 0.0,
+        "occupied_score": 0.0,
         "occupied_seen_frames": 0,
+        "player_veto_score": 0.0,
         "raw_hit_count": 1,
+        "rejection_reason": null,
         "seen_frames": 1,
         "stable_candidate": true,
-        "track_id": "track-0002"
+        "track_id": "track-0002",
+        "track_seen_frames": 1,
+        "upper_template_score": 1.0
       },
       "mob_variant": "mob_a",
       "occupied": false,
@@ -55,13 +79,20 @@
     }
   ],
   "diagnostics": {
+    "candidate_tracks": [],
     "duplicate_merges": [],
     "final_candidates": [
       {
         "confidence": 1.0,
+        "detection_state": "actionable",
         "distance": 63.245553203367585,
+        "fallback_template_score": 0.0,
+        "ice_score": 0.0,
         "in_scene_zone": true,
+        "marker_score": 1.0,
         "occupied": false,
+        "occupied_score": 0.0,
+        "player_veto_score": 0.0,
         "reachable": true,
         "reasons": [
           "selected_nearest_free_in_zone"
@@ -70,13 +101,21 @@
           620,
           300
         ],
-        "target_id": "front-free"
+        "target_id": "front-free",
+        "track_seen_frames": 1,
+        "upper_template_score": 1.0
       },
       {
         "confidence": 1.0,
+        "detection_state": "actionable",
         "distance": 127.13772060250254,
+        "fallback_template_score": 0.0,
+        "ice_score": 0.0,
         "in_scene_zone": true,
+        "marker_score": 1.0,
         "occupied": false,
+        "occupied_score": 0.0,
+        "player_veto_score": 0.0,
         "reachable": true,
         "reasons": [
           "candidate_not_selected_farther_than_best"
@@ -85,7 +124,9 @@
           760,
           318
         ],
-        "target_id": "safe-far"
+        "target_id": "safe-far",
+        "track_seen_frames": 1,
+        "upper_template_score": 1.0
       }
     ],
     "low_confidence_hits": [],
@@ -100,7 +141,7 @@
     "selection_reason": "nearest_free_in_zone_reachable_target",
     "summary_lines": [
       "thresholds=mob>=0.60 occupied>=0.75 merge_px=28 stride=4",
-      "raw=2 low_conf=0 merged=2 dup=0 unstable=0 veto=0 not_icy=0",
+      "raw=2 low_conf=0 merged=2 candidates=0 veto=0 not_icy=0",
       "rejects=occupied=0 out_of_zone=0 selected=front-free"
     ],
     "tuning_parameters": {
@@ -108,6 +149,10 @@
       "candidate_loss_frames": 2,
       "confirmation_confidence_threshold": 0.6,
       "ice_mob_blue_red_tolerance": 16,
+      "ice_mob_focus_height_ratio": 0.7,
+      "ice_mob_focus_width_ratio": 0.65,
+      "ice_mob_max_brown_ratio": 0.28,
+      "ice_mob_max_dark_ratio": 0.45,
       "ice_mob_min_blue": 120,
       "ice_mob_min_brightness": 120,
       "ice_mob_min_green": 110,

@@ -374,6 +374,9 @@ def test_main_can_run_perception_benchmark_split(monkeypatch, capsys) -> None:
                     merged_count=numeric("merged_count", 2.0),
                     false_positive_count=numeric("false_positive_count", 0.0),
                     false_negative_count=numeric("false_negative_count", 0.0),
+                    player_false_positive_count=numeric("player_false_positive_count", 0.0),
+                    wrong_mob_false_positive_count=numeric("wrong_mob_false_positive_count", 0.0),
+                    ui_or_environment_false_positive_count=numeric("ui_or_environment_false_positive_count", 0.0),
                     frame_reports=(
                         BenchmarkFrameReport(
                             frame_source="regression__frame",
@@ -385,6 +388,9 @@ def test_main_can_run_perception_benchmark_split(monkeypatch, capsys) -> None:
                             true_positive_count=1,
                             false_positive_count=0,
                             false_negative_count=0,
+                            player_false_positive_count=0,
+                            wrong_mob_false_positive_count=0,
+                            ui_or_environment_false_positive_count=0,
                             target_recall=1.0,
                             target_precision=1.0,
                             occupied_classification_accuracy=1.0,
@@ -477,6 +483,39 @@ def test_main_can_route_to_live_engage_observe(monkeypatch, capsys) -> None:
     assert exit_code == 0
     assert calls["count"] == 1
     assert "engage_observe_mode=live" in captured.out
+
+
+def test_main_can_route_to_live_capture_series(monkeypatch, capsys) -> None:
+    calls = {"count": 0}
+    expected_output_dir = Path("data/live_capture_samples")
+    expected_manifest = expected_output_dir / "capture_manifest.json"
+
+    def stub_capture_live_screenshot_series(*, settings, output_directory, interval_s, capture_count):
+        assert settings.app.mode == "live"
+        assert interval_s == 45.0
+        assert capture_count == 3
+        calls["count"] += 1
+        return expected_output_dir, expected_manifest
+
+    monkeypatch.setattr("botlab.main._capture_live_screenshot_series", stub_capture_live_screenshot_series)
+
+    exit_code = main(
+        [
+            "--config",
+            "config/live_dry_run.yaml",
+            "--capture-live-screens",
+            "--capture-count",
+            "3",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert calls["count"] == 1
+    assert "live_capture_mode=series" in captured.out
+    assert f"capture_output_dir={expected_output_dir}" in captured.out
+    assert f"capture_manifest={expected_manifest}" in captured.out
 
 
 def test_main_can_run_live_engage_mvp(monkeypatch, capsys) -> None:

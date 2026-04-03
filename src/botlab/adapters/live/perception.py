@@ -71,8 +71,13 @@ class TemplateVariant:
 
 @dataclass(slots=True, frozen=True)
 class TemplatePack:
-    mob_variants: tuple[TemplateVariant, ...]
+    mob_upper_variants: tuple[TemplateVariant, ...]
+    mob_fallback_variants: tuple[TemplateVariant, ...]
     occupied_variants: tuple[TemplateVariant, ...]
+
+    @property
+    def mob_variants(self) -> tuple[TemplateVariant, ...]:
+        return tuple((*self.mob_upper_variants, *self.mob_fallback_variants))
 
 
 @dataclass(slots=True)
@@ -231,6 +236,9 @@ class BenchmarkFrameReport:
     true_positive_count: int
     false_positive_count: int
     false_negative_count: int
+    player_false_positive_count: int
+    wrong_mob_false_positive_count: int
+    ui_or_environment_false_positive_count: int
     target_recall: float
     target_precision: float
     occupied_classification_accuracy: float | None
@@ -253,6 +261,9 @@ class BenchmarkFrameReport:
             "true_positive_count": self.true_positive_count,
             "false_positive_count": self.false_positive_count,
             "false_negative_count": self.false_negative_count,
+            "player_false_positive_count": self.player_false_positive_count,
+            "wrong_mob_false_positive_count": self.wrong_mob_false_positive_count,
+            "ui_or_environment_false_positive_count": self.ui_or_environment_false_positive_count,
             "target_recall": self.target_recall,
             "target_precision": self.target_precision,
             "occupied_classification_accuracy": self.occupied_classification_accuracy,
@@ -286,6 +297,9 @@ class BenchmarkSummary:
     merged_count: NumericAggregate
     false_positive_count: NumericAggregate
     false_negative_count: NumericAggregate
+    player_false_positive_count: NumericAggregate
+    wrong_mob_false_positive_count: NumericAggregate
+    ui_or_environment_false_positive_count: NumericAggregate
     frame_reports: tuple[BenchmarkFrameReport, ...]
 
     def to_dict(self) -> dict[str, Any]:
@@ -308,6 +322,9 @@ class BenchmarkSummary:
             "merged_count": self.merged_count.to_dict(),
             "false_positive_count": self.false_positive_count.to_dict(),
             "false_negative_count": self.false_negative_count.to_dict(),
+            "player_false_positive_count": self.player_false_positive_count.to_dict(),
+            "wrong_mob_false_positive_count": self.wrong_mob_false_positive_count.to_dict(),
+            "ui_or_environment_false_positive_count": self.ui_or_environment_false_positive_count.to_dict(),
             "frame_reports": [report.to_dict() for report in self.frame_reports],
         }
 
@@ -542,20 +559,36 @@ class TemplatePackLoader:
             return self._cached_pack
         if Image is None or ImageOps is None:
             raise RuntimeError("Pixel-based perception wymaga Pillow.")
-        mob_variants: list[TemplateVariant] = []
+        upper_variants: list[TemplateVariant] = []
+        fallback_variants: list[TemplateVariant] = []
         mobs_root = self._live_config.mobs_template_directory
         if mobs_root.exists():
             for label_directory in sorted(path for path in mobs_root.iterdir() if path.is_dir()):
                 label = label_directory.name
-                template_paths = sorted(label_directory.glob("*.png"))
-                preferred_paths = [
+                template_paths = sorted(
+                    path
+                    for path in label_directory.glob("*.png")
+                    if _is_active_mob_template_path(path)
+                )
+                upper_paths = [
                     path for path in template_paths if "upper" in path.stem.lower()
                 ]
-                if preferred_paths:
-                    template_paths = preferred_paths
-                for template_path in template_paths:
+                body_paths = [
+                    path for path in template_paths if path not in upper_paths
+                ]
+                for template_path in upper_paths:
                     base_image = Image.open(template_path).convert("RGB")
-                    mob_variants.extend(
+                    upper_variants.extend(
+                        _build_template_variants(
+                            label=label,
+                            template_path=template_path,
+                            image=base_image,
+                            rotations_deg=self._live_config.template_rotations_deg,
+                        )
+                    )
+                for template_path in body_paths:
+                    base_image = Image.open(template_path).convert("RGB")
+                    fallback_variants.extend(
                         _build_template_variants(
                             label=label,
                             template_path=template_path,
@@ -577,7 +610,8 @@ class TemplatePackLoader:
                     )
                 )
         self._cached_pack = TemplatePack(
-            mob_variants=tuple(mob_variants),
+            mob_upper_variants=tuple(upper_variants),
+            mob_fallback_variants=tuple(fallback_variants),
             occupied_variants=tuple(occupied_variants),
         )
         return self._cached_pack
@@ -643,9 +677,13 @@ class PerceptionAnalyzer:
                 reference_point_xy=reference_point_xy,
             )
             pipeline_mode = "metadata_fallback"
-        detections, unstable_rejections = self._smooth_detections(detections)
+        detections, candidate_tracks = self._smooth_detections(detections)
         detections = self._apply_scene_zone_filter(
             detections=detections,
+            scene_profile=calibrated_scene_profile,
+        )
+        candidate_tracks = self._apply_scene_zone_filter(
+            detections=candidate_tracks,
             scene_profile=calibrated_scene_profile,
         )
         detection_finished_ts = detection_started_ts + self._resolve_duration_s(
@@ -675,7 +713,7 @@ class PerceptionAnalyzer:
         diagnostics = self._build_detection_diagnostics(
             raw_hits=roi_hits,
             detections=detections,
-            unstable_rejections=unstable_rejections,
+            candidate_tracks=candidate_tracks,
             player_veto_rejections=player_veto_rejections,
             mob_signature_rejections=mob_signature_rejections,
             selected_target=selected_target,
@@ -880,40 +918,6 @@ class PerceptionAnalyzer:
         mob_signature_rejections: list[dict[str, Any]] = []
         local_stride_px = max(1, min(4, stride_px))
         for index, marker_hit in enumerate(merged_marker_hits, start=1):
-            occupied_roi_box = _build_local_roi_box(
-                anchor_x=marker_hit.x + (marker_hit.width / 2.0),
-                anchor_y=marker_hit.y + (marker_hit.height / 2.0),
-                width=self._live_config.occupied_local_roi_width_px,
-                height=self._live_config.occupied_local_roi_height_px,
-                offset_y=self._live_config.occupied_local_roi_offset_y_px,
-                frame_width=frame.width,
-                frame_height=frame.height,
-            )
-            occupied_color_hits = _detect_green_swords_hits(
-                image=image,
-                box=occupied_roi_box,
-                live_config=self._live_config,
-            )
-            occupied_green_ratio = _estimate_green_pixel_ratio(
-                image=image,
-                box=occupied_roi_box,
-                live_config=self._live_config,
-            )
-            should_run_occupied_template_match = bool(occupied_color_hits) or (
-                occupied_green_ratio >= self._live_config.occupied_template_match_min_green_ratio
-            )
-            occupied_hits = ()
-            if should_run_occupied_template_match:
-                occupied_hits = _match_local_variants(
-                    image=image,
-                    box=occupied_roi_box,
-                    variants=template_pack.occupied_variants,
-                    confidence_threshold=self._live_config.occupied_confidence_threshold,
-                    stride_px=local_stride_px,
-                )
-            all_occupied_hits = tuple((*occupied_hits, *occupied_color_hits))
-            raw_hits.extend(all_occupied_hits)
-
             confirmation_roi_box = _build_local_roi_box(
                 anchor_x=marker_hit.x + (marker_hit.width / 2.0),
                 anchor_y=marker_hit.y + marker_hit.height,
@@ -923,23 +927,44 @@ class PerceptionAnalyzer:
                 frame_width=frame.width,
                 frame_height=frame.height,
             )
-            confirmation_hits = _match_local_variants(
+            upper_confirmation_hits = _match_local_variants(
                 image=image,
                 box=confirmation_roi_box,
-                variants=template_pack.mob_variants,
+                variants=template_pack.mob_upper_variants,
                 confidence_threshold=self._live_config.confirmation_confidence_threshold,
                 stride_px=local_stride_px,
             )
-            raw_hits.extend(confirmation_hits)
-
-            best_confirmation = _select_best_confirmation_hit(
+            raw_hits.extend(upper_confirmation_hits)
+            best_upper_confirmation = _select_best_confirmation_hit(
                 marker_hit=marker_hit,
-                confirmation_hits=confirmation_hits,
+                confirmation_hits=upper_confirmation_hits,
                 image=image,
                 live_config=self._live_config,
             )
+            fallback_confirmation_hits: tuple[TemplateHit, ...] = ()
+            best_fallback_confirmation: TemplateHit | None = None
+            if best_upper_confirmation is None and template_pack.mob_fallback_variants:
+                fallback_confirmation_hits = _match_local_variants(
+                    image=image,
+                    box=confirmation_roi_box,
+                    variants=template_pack.mob_fallback_variants,
+                    confidence_threshold=self._live_config.confirmation_confidence_threshold,
+                    stride_px=local_stride_px,
+                )
+                raw_hits.extend(fallback_confirmation_hits)
+                best_fallback_confirmation = _select_best_confirmation_hit(
+                    marker_hit=marker_hit,
+                    confirmation_hits=fallback_confirmation_hits,
+                    image=image,
+                    live_config=self._live_config,
+                )
+
+            best_confirmation = best_upper_confirmation or best_fallback_confirmation
             if best_confirmation is None:
                 continue
+            confirmation_stage = "upper" if best_upper_confirmation is not None else "fallback"
+            upper_score = 0.0 if best_upper_confirmation is None else float(best_upper_confirmation.confidence)
+            fallback_score = 0.0 if best_fallback_confirmation is None else float(best_fallback_confirmation.confidence)
 
             ice_signature = _detect_ice_mob_signature(
                 image=image,
@@ -957,6 +982,13 @@ class PerceptionAnalyzer:
                         "rejection_reason": "mob_signature_not_icy",
                         "ice_pixel_count": int(ice_signature.get("ice_pixel_count", 0)),
                         "ice_pixel_ratio": float(ice_signature.get("ice_pixel_ratio", 0.0)),
+                        "dark_ratio": float(ice_signature.get("dark_ratio", 0.0)),
+                        "brown_ratio": float(ice_signature.get("brown_ratio", 0.0)),
+                        "marker_score": marker_hit.confidence,
+                        "upper_template_score": upper_score,
+                        "fallback_template_score": fallback_score,
+                        "ice_score": float(ice_signature.get("score", 0.0)),
+                        "confirmation_stage": confirmation_stage,
                     }
                 )
                 continue
@@ -988,13 +1020,56 @@ class PerceptionAnalyzer:
                         "green_pixel_count": int(player_veto.get("green_pixel_count", 0)),
                         "green_pixel_ratio": float(player_veto.get("green_pixel_ratio", 0.0)),
                         "green_bbox": player_veto.get("green_bbox"),
+                        "marker_score": marker_hit.confidence,
+                        "upper_template_score": upper_score,
+                        "fallback_template_score": fallback_score,
+                        "ice_score": float(ice_signature.get("score", 0.0)),
+                        "player_veto_score": float(player_veto.get("score", 0.0)),
+                        "confirmation_stage": confirmation_stage,
                     }
                 )
                 continue
 
-            occupied, occupied_confidence = classify_occupied(
+            occupied_roi_box = _build_local_roi_box(
+                anchor_x=best_confirmation.center_xy[0],
+                anchor_y=best_confirmation.bbox[1],
+                width=self._live_config.occupied_local_roi_width_px,
+                height=self._live_config.occupied_local_roi_height_px,
+                offset_y=self._live_config.occupied_local_roi_offset_y_px,
+                frame_width=frame.width,
+                frame_height=frame.height,
+            )
+            occupied_color_hits = _detect_green_swords_hits(
+                image=image,
+                box=occupied_roi_box,
+                live_config=self._live_config,
+            )
+            occupied_green_ratio = _estimate_green_pixel_ratio(
+                image=image,
+                box=occupied_roi_box,
+                live_config=self._live_config,
+            )
+            should_run_occupied_template_match = bool(occupied_color_hits) or (
+                occupied_green_ratio >= self._live_config.occupied_template_match_min_green_ratio
+            )
+            occupied_hits = ()
+            if should_run_occupied_template_match:
+                occupied_hits = _match_local_variants(
+                    image=image,
+                    box=occupied_roi_box,
+                    variants=template_pack.occupied_variants,
+                    confidence_threshold=self._live_config.occupied_confidence_threshold,
+                    stride_px=local_stride_px,
+                )
+            all_occupied_hits = tuple((*occupied_hits, *occupied_color_hits))
+            raw_hits.extend(all_occupied_hits)
+            occupied_candidate, occupied_confidence = classify_occupied(
                 mob_hit=best_confirmation,
                 occupied_hits=all_occupied_hits,
+                minimum_confidence=max(
+                    0.35,
+                    self._live_config.occupied_confidence_threshold * 0.75,
+                ),
             )
             center_x, center_y = best_confirmation.center_xy
             distance = math.dist(reference_point_xy, (center_x, center_y))
@@ -1008,7 +1083,7 @@ class PerceptionAnalyzer:
                     screen_x=int(round(center_x)),
                     screen_y=int(round(center_y)),
                     distance=distance,
-                    occupied=occupied,
+                    occupied=False,
                     mob_variant=best_confirmation.label,
                     reachable=True,
                     confidence=max(marker_hit.confidence, detection_confidence),
@@ -1016,10 +1091,18 @@ class PerceptionAnalyzer:
                     orientation_deg=best_confirmation.rotation_deg,
                     metadata={
                         "detection_pipeline": "marker_first",
+                        "detection_state": "watcher",
                         "marker_bbox": list(marker_hit.bbox),
                         "marker_confidence": marker_hit.confidence,
                         "marker_pixel_count": int(marker_hit.metadata.get("pixel_count", 0)),
+                        "marker_score": marker_hit.confidence,
+                        "upper_template_score": upper_score,
+                        "fallback_template_score": fallback_score,
+                        "confirmation_stage": confirmation_stage,
+                        "confirmation_selected_score": best_confirmation.confidence,
                         "occupied_confidence": occupied_confidence,
+                        "occupied_candidate": occupied_candidate,
+                        "occupied_score": occupied_confidence,
                         "occupied_green_ratio": occupied_green_ratio,
                         "occupied_template_match_enabled": should_run_occupied_template_match,
                         "occupied_roi": list(occupied_roi_box),
@@ -1039,11 +1122,15 @@ class PerceptionAnalyzer:
                         ),
                         "player_veto_roi": list(player_veto_roi_box),
                         "player_veto_triggered": False,
+                        "player_veto_score": float(player_veto.get("score", 0.0)),
                         "confirmation_template": best_confirmation.metadata.get("template_path"),
                         "variant_name": best_confirmation.metadata.get("variant_name"),
                         "raw_hit_count": int(best_confirmation.metadata.get("raw_hit_count", 1)),
                         "ice_signature_pixel_count": int(ice_signature.get("ice_pixel_count", 0)),
                         "ice_signature_ratio": float(ice_signature.get("ice_pixel_ratio", 0.0)),
+                        "ice_signature_dark_ratio": float(ice_signature.get("dark_ratio", 0.0)),
+                        "ice_signature_brown_ratio": float(ice_signature.get("brown_ratio", 0.0)),
+                        "ice_score": float(ice_signature.get("score", 0.0)),
                         "ice_signature_passed": bool(ice_signature.get("accepted", False)),
                     },
                 )
@@ -1108,6 +1195,10 @@ class PerceptionAnalyzer:
             occupied, occupied_confidence = classify_occupied(
                 mob_hit=merged_hit,
                 occupied_hits=occupied_hits,
+                minimum_confidence=max(
+                    0.35,
+                    self._live_config.occupied_confidence_threshold * 0.75,
+                ),
             )
             distance = math.dist(reference_point_xy, (center_x, center_y))
             target_id = merged_hit.target_id or f"{merged_hit.label}-{index:03d}"
@@ -1124,7 +1215,16 @@ class PerceptionAnalyzer:
                     bbox=merged_hit.bbox,
                     orientation_deg=merged_hit.rotation_deg,
                     metadata={
+                        "detection_pipeline": "metadata_fallback",
+                        "detection_state": "watcher",
+                        "marker_score": float(merged_hit.confidence),
+                        "upper_template_score": float(merged_hit.confidence),
+                        "fallback_template_score": 0.0,
+                        "ice_score": float(merged_hit.metadata.get("ice_score", 0.0)),
+                        "player_veto_score": float(merged_hit.metadata.get("player_veto_score", 0.0)),
+                        "occupied_candidate": occupied,
                         "occupied_confidence": occupied_confidence,
+                        "occupied_score": occupied_confidence,
                         "raw_hit_count": int(merged_hit.metadata.get("raw_hit_count", 1)),
                         **merged_hit.metadata,
                     },
@@ -1139,20 +1239,28 @@ class PerceptionAnalyzer:
         if not detections and not self._track_states:
             return (), ()
         matched_track_ids: set[str] = set()
-        smoothed: list[LiveTargetDetection] = []
-        unstable: list[LiveTargetDetection] = []
+        actionable: list[LiveTargetDetection] = []
+        candidates: list[LiveTargetDetection] = []
         for detection in detections:
             track_id = self._match_track_id(detection, matched_track_ids)
             if track_id is None:
                 self._track_sequence += 1
                 track_id = f"track-{self._track_sequence:04d}"
-                seen_frames = 1
-                occupied_seen_frames = 1 if detection.occupied else 0
+                seen_frames = max(1, int(detection.metadata.get("seed_seen_frames", 1)))
+                if bool(detection.metadata.get("occupied_candidate", False)):
+                    occupied_seen_frames = max(
+                        1,
+                        int(detection.metadata.get("seed_occupied_seen_frames", 1)),
+                    )
+                else:
+                    occupied_seen_frames = 0
             else:
                 previous = self._track_states[track_id]
                 seen_frames = previous.seen_frames + 1
                 occupied_seen_frames = (
-                    previous.occupied_seen_frames + 1 if detection.occupied else 0
+                    previous.occupied_seen_frames + 1
+                    if bool(detection.metadata.get("occupied_candidate", False))
+                    else 0
                 )
             self._track_states[track_id] = TrackedDetectionState(
                 track_id=track_id,
@@ -1163,38 +1271,28 @@ class PerceptionAnalyzer:
                 missed_frames=0,
             )
             matched_track_ids.add(track_id)
-            stable = seen_frames >= self._live_config.candidate_confirmation_frames
-            if not stable:
-                unstable.append(
-                    replace(
-                        detection,
-                        metadata={
-                            **detection.metadata,
-                            "track_id": track_id,
-                            "seen_frames": seen_frames,
-                            "occupied_seen_frames": occupied_seen_frames,
-                            "stable_candidate": False,
-                            "rejection_reason": "unstable_candidate",
-                        },
-                    )
-                )
-                continue
-            smoothed_occupied = detection.occupied and (
+            actionable_now = seen_frames >= self._live_config.candidate_confirmation_frames
+            smoothed_occupied = bool(detection.metadata.get("occupied_candidate", False)) and (
                 occupied_seen_frames >= self._live_config.occupied_confirmation_frames
             )
-            smoothed.append(
-                replace(
-                    detection,
-                    occupied=smoothed_occupied,
-                    metadata={
-                        **detection.metadata,
-                        "track_id": track_id,
-                        "seen_frames": seen_frames,
-                        "occupied_seen_frames": occupied_seen_frames,
-                        "stable_candidate": stable,
-                    },
-                )
+            tracked_detection = replace(
+                detection,
+                occupied=smoothed_occupied if actionable_now else False,
+                metadata={
+                    **detection.metadata,
+                    "track_id": track_id,
+                    "track_seen_frames": seen_frames,
+                    "seen_frames": seen_frames,
+                    "occupied_seen_frames": occupied_seen_frames,
+                    "stable_candidate": actionable_now,
+                    "actionable": actionable_now,
+                    "detection_state": "actionable" if actionable_now else "candidate",
+                    "rejection_reason": None if actionable_now else "candidate_not_actionable_yet",
+                },
             )
+            candidates.append(tracked_detection)
+            if actionable_now:
+                actionable.append(tracked_detection)
 
         stale_track_ids: list[str] = []
         for track_id, state in self._track_states.items():
@@ -1206,8 +1304,8 @@ class PerceptionAnalyzer:
         for track_id in stale_track_ids:
             del self._track_states[track_id]
         return (
-            tuple(sorted(smoothed, key=lambda item: (item.distance, item.target_id))),
-            tuple(sorted(unstable, key=lambda item: (item.distance, item.target_id))),
+            tuple(sorted(actionable, key=lambda item: (item.distance, item.target_id))),
+            tuple(sorted(candidates, key=lambda item: (item.distance, item.target_id))),
         )
 
     def _match_track_id(
@@ -1278,7 +1376,7 @@ class PerceptionAnalyzer:
         *,
         raw_hits: tuple[TemplateHit, ...],
         detections: tuple[LiveTargetDetection, ...],
-        unstable_rejections: tuple[LiveTargetDetection, ...],
+        candidate_tracks: tuple[LiveTargetDetection, ...],
         player_veto_rejections: tuple[dict[str, Any], ...],
         mob_signature_rejections: tuple[dict[str, Any], ...],
         selected_target: LiveTargetDetection | None,
@@ -1315,11 +1413,29 @@ class PerceptionAnalyzer:
             for detection in detections
             if not bool(detection.metadata.get("in_scene_zone", True))
         ]
-        unstable_entries = [
-            _detection_to_diagnostic_entry(detection, rejection_reason="unstable")
-            for detection in unstable_rejections
+        candidate_entries = [
+            {
+                "target_id": detection.target_id,
+                "screen_xy": [detection.screen_x, detection.screen_y],
+                "bbox": None if detection.bbox is None else list(detection.bbox),
+                "confidence": detection.confidence,
+                "distance": detection.distance,
+                "mob_variant": detection.mob_variant,
+                "seen_frames": int(detection.metadata.get("seen_frames", 0)),
+                "track_seen_frames": int(detection.metadata.get("track_seen_frames", 0)),
+                "detection_state": detection.metadata.get("detection_state", "candidate"),
+                "marker_score": float(detection.metadata.get("marker_score", 0.0)),
+                "upper_template_score": float(detection.metadata.get("upper_template_score", 0.0)),
+                "fallback_template_score": float(detection.metadata.get("fallback_template_score", 0.0)),
+                "ice_score": float(detection.metadata.get("ice_score", 0.0)),
+                "player_veto_score": float(detection.metadata.get("player_veto_score", 0.0)),
+                "occupied_score": float(detection.metadata.get("occupied_score", 0.0)),
+                "rejection_reason": "candidate_not_actionable_yet",
+            }
+            for detection in candidate_tracks
+            if not bool(detection.metadata.get("actionable", False))
         ]
-        candidate_entries: list[dict[str, Any]] = []
+        actionable_entries: list[dict[str, Any]] = []
         for detection in detections:
             reasons: list[str] = []
             if detection.occupied:
@@ -1332,7 +1448,7 @@ class PerceptionAnalyzer:
                 reasons.append("selected_nearest_free_in_zone")
             elif not reasons:
                 reasons.append("candidate_not_selected_farther_than_best")
-            candidate_entries.append(
+            actionable_entries.append(
                 {
                     "target_id": detection.target_id,
                     "screen_xy": [detection.screen_x, detection.screen_y],
@@ -1341,6 +1457,14 @@ class PerceptionAnalyzer:
                     "occupied": detection.occupied,
                     "in_scene_zone": bool(detection.metadata.get("in_scene_zone", True)),
                     "reachable": detection.reachable,
+                    "detection_state": detection.metadata.get("detection_state", "actionable"),
+                    "marker_score": float(detection.metadata.get("marker_score", 0.0)),
+                    "upper_template_score": float(detection.metadata.get("upper_template_score", 0.0)),
+                    "fallback_template_score": float(detection.metadata.get("fallback_template_score", 0.0)),
+                    "ice_score": float(detection.metadata.get("ice_score", 0.0)),
+                    "player_veto_score": float(detection.metadata.get("player_veto_score", 0.0)),
+                    "occupied_score": float(detection.metadata.get("occupied_score", 0.0)),
+                    "track_seen_frames": int(detection.metadata.get("track_seen_frames", 0)),
                     "reasons": reasons,
                 }
             )
@@ -1352,7 +1476,7 @@ class PerceptionAnalyzer:
             f"merge_px={self._live_config.merge_distance_px} stride={self._live_config.template_match_stride_px}",
             "raw="
             f"{len(raw_hits)} low_conf={len(low_confidence_hits)} "
-            f"merged={len(detections)} dup={len(duplicate_hits)} unstable={len(unstable_entries)} "
+            f"merged={len(detections)} candidates={len(candidate_entries)} "
             f"veto={len(player_veto_rejections)} not_icy={len(mob_signature_rejections)}",
             "rejects="
             f"occupied={len(occupied_rejections)} out_of_zone={len(out_of_zone_rejections)} "
@@ -1365,10 +1489,11 @@ class PerceptionAnalyzer:
             "duplicate_merges": duplicate_hits,
             "occupied_rejections": occupied_rejections,
             "out_of_zone_rejections": out_of_zone_rejections,
-            "unstable_rejections": unstable_entries,
+            "unstable_rejections": candidate_entries,
+            "candidate_tracks": candidate_entries,
             "player_veto_rejections": list(player_veto_rejections),
             "mob_signature_rejections": list(mob_signature_rejections),
-            "final_candidates": candidate_entries,
+            "final_candidates": actionable_entries,
             "selection_reason": None
             if selected_target is None
             else "nearest_free_in_zone_reachable_target",
@@ -1464,7 +1589,56 @@ class PerceptionArtifactWriter:
             encoding="utf-8",
         )
         artifact_paths["perception_overlay_svg"] = overlay_svg_path
+        crop_directory = self._write_local_crops(directory=directory, stem=stem, frame=frame, result=result)
+        if crop_directory is not None:
+            artifact_paths["local_crop_directory"] = crop_directory
         return artifact_paths
+
+    def _write_local_crops(
+        self,
+        *,
+        directory: Path,
+        stem: str,
+        frame: LiveFrame,
+        result: PerceptionFrameResult,
+    ) -> Path | None:
+        if frame.image is None or Image is None:
+            return None
+        crop_directory = directory / f"{stem}_crops"
+        crop_directory.mkdir(parents=True, exist_ok=True)
+
+        def _save_crop(box: Any, crop_stem: str) -> None:
+            if not isinstance(box, (list, tuple)) or len(box) != 4:
+                return
+            left, top, width, height = (int(box[0]), int(box[1]), int(box[2]), int(box[3]))
+            if width <= 0 or height <= 0:
+                return
+            crop = frame.image.crop((left, top, left + width, top + height))
+            crop.save(crop_directory / f"{crop_stem}.png")
+
+        for detection in result.detections:
+            detection_key = detection.target_id.replace("/", "_")
+            _save_crop(detection.metadata.get("marker_bbox"), f"{detection_key}_marker")
+            _save_crop(detection.metadata.get("confirmation_roi"), f"{detection_key}_confirmation_roi")
+            _save_crop(detection.metadata.get("player_veto_roi"), f"{detection_key}_player_veto_roi")
+            _save_crop(detection.metadata.get("occupied_roi"), f"{detection_key}_occupied_roi")
+
+        for entry in result.diagnostics.get("candidate_tracks", []):
+            target_id = str(entry.get("target_id", "candidate")).replace("/", "_")
+            _save_crop(entry.get("bbox"), f"{target_id}_candidate_bbox")
+
+        for entry in result.diagnostics.get("player_veto_rejections", []):
+            target_id = str(entry.get("target_id", "player_veto")).replace("/", "_")
+            _save_crop(entry.get("marker_bbox"), f"{target_id}_marker")
+            _save_crop(entry.get("confirmation_bbox"), f"{target_id}_confirmation_bbox")
+            _save_crop(entry.get("player_veto_roi"), f"{target_id}_player_veto_roi")
+
+        for entry in result.diagnostics.get("mob_signature_rejections", []):
+            target_id = str(entry.get("target_id", "mob_signature")).replace("/", "_")
+            _save_crop(entry.get("marker_bbox"), f"{target_id}_marker")
+            _save_crop(entry.get("confirmation_bbox"), f"{target_id}_confirmation_bbox")
+
+        return crop_directory
 
     def _build_overlay_svg(
         self,
@@ -1538,11 +1712,16 @@ class PerceptionArtifactWriter:
             )
             selected = detection.target_id == selected_target_id
             in_scene_zone = bool(detection.metadata.get("in_scene_zone", True))
+            detection_state = str(detection.metadata.get("detection_state", "actionable"))
             color = "#ef4444" if detection.occupied else "#22c55e"
             if not in_scene_zone:
                 color = "#9ca3af"
+            elif detection_state == "candidate":
+                color = "#facc15"
             stroke_width = 4 if selected else 2
-            label = "occupied" if detection.occupied else "free"
+            label = "actionable_occupied" if detection.occupied else "actionable_free"
+            if detection_state == "candidate":
+                label = "candidate"
             if not in_scene_zone:
                 label = f"{label}/out_of_zone"
             marker_bbox = detection.metadata.get("marker_bbox")
@@ -1567,23 +1746,23 @@ class PerceptionArtifactWriter:
                 f'<circle cx="{detection.screen_x}" cy="{detection.screen_y}" r="4" fill="{color}" />'
             )
             lines.append(
-                f'<text x="{bbox[0]}" y="{max(14, bbox[1] - 6)}" fill="#f9fafb" font-size="14">{detection.target_id} {label} conf={detection.confidence:.2f} dist={detection.distance:.1f} marker={float(detection.metadata.get("marker_confidence", 0.0)):.2f}</text>'
+                f'<text x="{bbox[0]}" y="{max(14, bbox[1] - 6)}" fill="#f9fafb" font-size="14">{detection.target_id} {label} conf={detection.confidence:.2f} dist={detection.distance:.1f} m={float(detection.metadata.get("marker_score", 0.0)):.2f} u={float(detection.metadata.get("upper_template_score", 0.0)):.2f} f={float(detection.metadata.get("fallback_template_score", 0.0)):.2f} ice={float(detection.metadata.get("ice_score", 0.0)):.2f} occ={float(detection.metadata.get("occupied_score", 0.0)):.2f} seen={int(detection.metadata.get("track_seen_frames", 0))}</text>'
             )
             if selected:
                 lines.append(
                     f'<text x="{bbox[0]}" y="{bbox[1] + bbox[3] + 18}" fill="#fde047" font-size="14">selected</text>'
                 )
-        unstable_rejections = result.diagnostics.get("unstable_rejections", [])
-        if isinstance(unstable_rejections, list):
-            for entry in unstable_rejections:
+        candidate_tracks = result.diagnostics.get("candidate_tracks", [])
+        if isinstance(candidate_tracks, list):
+            for entry in candidate_tracks:
                 bbox = entry.get("bbox")
                 if not isinstance(bbox, list) or len(bbox) != 4:
                     continue
                 lines.append(
-                    f'<rect x="{bbox[0]}" y="{bbox[1]}" width="{bbox[2]}" height="{bbox[3]}" fill="none" stroke="#a855f7" stroke-dasharray="5 4" stroke-width="2" />'
+                    f'<rect x="{bbox[0]}" y="{bbox[1]}" width="{bbox[2]}" height="{bbox[3]}" fill="none" stroke="#facc15" stroke-dasharray="5 4" stroke-width="2" />'
                 )
                 lines.append(
-                    f'<text x="{bbox[0]}" y="{max(14, bbox[1] - 4)}" fill="#e9d5ff" font-size="12">{entry.get("target_id")} unstable seen={entry.get("seen_frames")}</text>'
+                    f'<text x="{bbox[0]}" y="{max(14, bbox[1] - 4)}" fill="#fef08a" font-size="12">{entry.get("target_id")} candidate seen={entry.get("track_seen_frames")} m={float(entry.get("marker_score", 0.0)):.2f} u={float(entry.get("upper_template_score", 0.0)):.2f} f={float(entry.get("fallback_template_score", 0.0)):.2f} ice={float(entry.get("ice_score", 0.0)):.2f}</text>'
                 )
         player_veto_rejections = result.diagnostics.get("player_veto_rejections", [])
         if isinstance(player_veto_rejections, list):
@@ -1625,7 +1804,7 @@ class PerceptionArtifactWriter:
                         f'<rect x="{confirmation_bbox[0]}" y="{confirmation_bbox[1]}" width="{confirmation_bbox[2]}" height="{confirmation_bbox[3]}" fill="none" stroke="#fb923c" stroke-width="2" stroke-dasharray="4 3" />'
                     )
                     lines.append(
-                        f'<text x="{confirmation_bbox[0]}" y="{max(14, confirmation_bbox[1] - 4)}" fill="#fdba74" font-size="12">{entry.get("target_id")} not_icy ratio={float(entry.get("ice_pixel_ratio", 0.0)):.2f}</text>'
+                        f'<text x="{confirmation_bbox[0]}" y="{max(14, confirmation_bbox[1] - 4)}" fill="#fdba74" font-size="12">{entry.get("target_id")} not_icy ratio={float(entry.get("ice_pixel_ratio", 0.0)):.2f} dark={float(entry.get("dark_ratio", 0.0)):.2f} brown={float(entry.get("brown_ratio", 0.0)):.2f}</text>'
                     )
         summary_lines = result.diagnostics.get("summary_lines", [])
         if isinstance(summary_lines, list) and summary_lines:
@@ -1856,6 +2035,7 @@ def classify_occupied(
     *,
     mob_hit: TemplateHit,
     occupied_hits: tuple[TemplateHit, ...],
+    minimum_confidence: float = 0.0,
 ) -> tuple[bool, float]:
     best_confidence = 0.0
     mob_center_x, mob_center_y = mob_hit.center_xy
@@ -1876,7 +2056,7 @@ def classify_occupied(
                 vertical_gap = mob_center_y - swords_y
                 if vertical_gap <= max(140.0, bbox_height * 2.0):
                     best_confidence = max(best_confidence, occupied_hit.confidence * 0.92)
-    return (best_confidence > 0.0, best_confidence)
+    return (best_confidence >= minimum_confidence, best_confidence)
 
 
 def build_world_snapshot_from_perception(
@@ -2207,11 +2387,20 @@ def _detect_player_veto(
         and bbox_width >= live_config.player_veto_min_width_px
         and 0 < bbox_height <= live_config.player_veto_max_height_px
     )
+    score = min(
+        1.0,
+        max(
+            green_ratio * 4.0,
+            green_pixels / max(1.0, float(live_config.player_veto_min_pixels * 4)),
+            bbox_width / max(1.0, float(live_config.player_veto_min_width_px * 3)),
+        ),
+    )
     return {
         "triggered": triggered,
         "green_pixel_count": green_pixels,
         "green_pixel_ratio": green_ratio,
         "green_bbox": green_bbox,
+        "score": score,
     }
 
 
@@ -2228,16 +2417,26 @@ def _detect_ice_mob_signature(
             "ice_pixel_count": 0,
             "ice_pixel_ratio": 0.0,
         }
-    crop = image.crop((left, top, left + width, top + height)).convert("RGB")
+    focus_width = max(1, int(round(width * live_config.ice_mob_focus_width_ratio)))
+    focus_height = max(1, int(round(height * live_config.ice_mob_focus_height_ratio)))
+    focus_left = left + max(0, (width - focus_width) // 2)
+    focus_top = top + max(0, height - focus_height - max(1, height // 12))
+    focus_right = min(left + width, focus_left + focus_width)
+    focus_bottom = min(top + height, focus_top + focus_height)
+    crop = image.crop((focus_left, focus_top, focus_right, focus_bottom)).convert("RGB")
     pixels = list(crop.getdata())
     if not pixels:
         return {
             "accepted": False,
             "ice_pixel_count": 0,
             "ice_pixel_ratio": 0.0,
+            "dark_ratio": 0.0,
+            "brown_ratio": 0.0,
         }
 
     ice_pixels = 0
+    dark_pixels = 0
+    brown_pixels = 0
     for red, green, blue in pixels:
         brightness = (float(red) + float(green) + float(blue)) / 3.0
         if (
@@ -2247,16 +2446,43 @@ def _detect_ice_mob_signature(
             and (blue + live_config.ice_mob_blue_red_tolerance) >= red
         ):
             ice_pixels += 1
+        if brightness <= 96.0:
+            dark_pixels += 1
+        if (
+            red >= 70
+            and green >= 45
+            and blue <= 120
+            and red >= green
+            and green >= blue
+            and brightness <= 170.0
+        ):
+            brown_pixels += 1
 
     ice_ratio = ice_pixels / float(len(pixels))
+    dark_ratio = dark_pixels / float(len(pixels))
+    brown_ratio = brown_pixels / float(len(pixels))
+    ice_score = max(
+        0.0,
+        min(
+            1.0,
+            (ice_ratio / max(live_config.ice_mob_min_ratio, 1e-6)) * 0.55
+            + max(0.0, 1.0 - (dark_ratio / max(live_config.ice_mob_max_dark_ratio, 1e-6))) * 0.25
+            + max(0.0, 1.0 - (brown_ratio / max(live_config.ice_mob_max_brown_ratio, 1e-6))) * 0.20,
+        ),
+    )
     accepted = (
         ice_pixels >= live_config.ice_mob_min_pixels
         and ice_ratio >= live_config.ice_mob_min_ratio
+        and dark_ratio <= live_config.ice_mob_max_dark_ratio
+        and brown_ratio <= live_config.ice_mob_max_brown_ratio
     )
     return {
         "accepted": accepted,
         "ice_pixel_count": ice_pixels,
         "ice_pixel_ratio": ice_ratio,
+        "dark_ratio": dark_ratio,
+        "brown_ratio": brown_ratio,
+        "score": ice_score,
     }
 
 
@@ -2680,6 +2906,11 @@ def _build_benchmark_summary(
     total_true_positive = sum(report.true_positive_count for report in frame_reports)
     total_false_positive = sum(report.false_positive_count for report in frame_reports)
     total_false_negative = sum(report.false_negative_count for report in frame_reports)
+    total_player_false_positive = sum(report.player_false_positive_count for report in frame_reports)
+    total_wrong_mob_false_positive = sum(report.wrong_mob_false_positive_count for report in frame_reports)
+    total_ui_or_environment_false_positive = sum(
+        report.ui_or_environment_false_positive_count for report in frame_reports
+    )
     total_matched_ground_truth = sum(report.matched_ground_truth_count for report in frame_reports)
     total_occupied_correct = sum(report.occupied_correct_count for report in frame_reports)
     selected_accuracy_values = [1.0 if report.selected_target_correct else 0.0 for report in frame_reports]
@@ -2749,6 +2980,18 @@ def _build_benchmark_summary(
             "false_negative_count",
             (float(report.false_negative_count) for report in frame_reports),
         ),
+        player_false_positive_count=NumericAggregate.from_values(
+            "player_false_positive_count",
+            (float(report.player_false_positive_count) for report in frame_reports),
+        ),
+        wrong_mob_false_positive_count=NumericAggregate.from_values(
+            "wrong_mob_false_positive_count",
+            (float(report.wrong_mob_false_positive_count) for report in frame_reports),
+        ),
+        ui_or_environment_false_positive_count=NumericAggregate.from_values(
+            "ui_or_environment_false_positive_count",
+            (float(report.ui_or_environment_false_positive_count) for report in frame_reports),
+        ),
         frame_reports=frame_reports,
     )
 
@@ -2803,6 +3046,21 @@ def _build_benchmark_frame_report(result: PerceptionFrameResult) -> BenchmarkFra
         result.detections[index].target_id
         for index in sorted(unmatched_detection_indices)
     )
+    false_positive_detections = tuple(
+        result.detections[index]
+        for index in sorted(unmatched_detection_indices)
+    )
+    player_false_positive_count = 0
+    wrong_mob_false_positive_count = 0
+    ui_or_environment_false_positive_count = 0
+    for detection in false_positive_detections:
+        bucket = _bucket_false_positive_detection(detection)
+        if bucket == "player_fp":
+            player_false_positive_count += 1
+        elif bucket == "wrong_mob_fp":
+            wrong_mob_false_positive_count += 1
+        else:
+            ui_or_environment_false_positive_count += 1
     false_positive_count = len(false_positive_target_ids)
     false_negative_count = len(false_negative_candidate_ids)
     predicted_target_count = len(result.detections)
@@ -2822,6 +3080,9 @@ def _build_benchmark_frame_report(result: PerceptionFrameResult) -> BenchmarkFra
         true_positive_count=matched_ground_truth_count,
         false_positive_count=false_positive_count,
         false_negative_count=false_negative_count,
+        player_false_positive_count=player_false_positive_count,
+        wrong_mob_false_positive_count=wrong_mob_false_positive_count,
+        ui_or_environment_false_positive_count=ui_or_environment_false_positive_count,
         target_recall=0.0
         if ground_truth_target_count == 0
         else matched_ground_truth_count / float(ground_truth_target_count),
@@ -2882,6 +3143,18 @@ def _parse_ground_truth_candidates(ground_truth: dict[str, Any]) -> tuple[Ground
     return tuple(candidates)
 
 
+def _bucket_false_positive_detection(detection: LiveTargetDetection) -> str:
+    player_veto_score = float(detection.metadata.get("player_veto_score", 0.0))
+    brown_ratio = float(detection.metadata.get("ice_signature_brown_ratio", 0.0))
+    ice_score = float(detection.metadata.get("ice_score", 0.0))
+    marker_score = float(detection.metadata.get("marker_score", 0.0))
+    if player_veto_score >= 0.10 or brown_ratio >= 0.12:
+        return "player_fp"
+    if ice_score >= 0.40 and marker_score >= 0.40:
+        return "wrong_mob_fp"
+    return "ui_or_environment_fp"
+
+
 def _build_detection_tuning_parameters(live_config: LiveConfig) -> dict[str, Any]:
     return {
         "perception_confidence_threshold": live_config.perception_confidence_threshold,
@@ -2904,6 +3177,10 @@ def _build_detection_tuning_parameters(live_config: LiveConfig) -> dict[str, Any
         "ice_mob_blue_red_tolerance": live_config.ice_mob_blue_red_tolerance,
         "ice_mob_min_pixels": live_config.ice_mob_min_pixels,
         "ice_mob_min_ratio": live_config.ice_mob_min_ratio,
+        "ice_mob_focus_width_ratio": live_config.ice_mob_focus_width_ratio,
+        "ice_mob_focus_height_ratio": live_config.ice_mob_focus_height_ratio,
+        "ice_mob_max_dark_ratio": live_config.ice_mob_max_dark_ratio,
+        "ice_mob_max_brown_ratio": live_config.ice_mob_max_brown_ratio,
         "scene_profile_path": None
         if live_config.scene_profile_path is None
         else str(live_config.scene_profile_path),
@@ -3115,6 +3392,22 @@ def _build_template_variants(
             )
         )
     return variants
+
+
+def _is_active_mob_template_path(template_path: Path) -> bool:
+    stem = template_path.stem.lower()
+    inactive_tokens = (
+        "nie_targetowac",
+        "player",
+        "with_player",
+        "behind_player",
+        "sword",
+        "swords",
+        "occupied",
+        "reference_only",
+        "do_not_target",
+    )
+    return not any(token in stem for token in inactive_tokens)
 
 
 def _match_template_variants(

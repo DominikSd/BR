@@ -14,23 +14,39 @@
           "max_error_px": 48,
           "occupied": false,
           "selected": true
+        },
+        {
+          "candidate_id": "scene1_busy_lower_right",
+          "screen_xy": [721, 842],
+          "max_error_px": 56,
+          "occupied": true,
+          "selected": false
         }
       ]
     },
     "expected_perception": {
-      "min_target_count": 1,
+      "min_target_count": 2,
       "max_target_count": 4,
       "min_free_target_count": 1,
-      "max_occupied_target_count": 0,
+      "min_occupied_target_count": 1,
+      "max_occupied_target_count": 1,
       "expected_candidates": [
         {
           "screen_xy": [724, 813],
           "max_error_px": 48,
           "occupied": false,
           "selected": true
+        },
+        {
+          "screen_xy": [721, 842],
+          "max_error_px": 56,
+          "occupied": true,
+          "selected": false
         }
       ],
-      "occupied_target_screen_xy": [],
+      "occupied_target_screen_xy": [
+        [721, 842]
+      ],
       "occupied_target_max_error_px": 56,
       "selected_target_required": true,
       "selected_target_must_be_free": true,

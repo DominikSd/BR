@@ -197,6 +197,10 @@ def test_live_real_mvp_config_can_be_loaded_from_yaml() -> None:
     assert settings.live.ice_mob_blue_red_tolerance == 16
     assert settings.live.ice_mob_min_pixels == 42
     assert settings.live.ice_mob_min_ratio == 0.10
+    assert settings.live.ice_mob_focus_width_ratio == 0.62
+    assert settings.live.ice_mob_focus_height_ratio == 0.68
+    assert settings.live.ice_mob_max_dark_ratio == 0.34
+    assert settings.live.ice_mob_max_brown_ratio == 0.18
     assert settings.live.combat_indicator_min_ratio == 0.01
     assert settings.live.reward_min_ratio == 0.01
     assert settings.live.template_match_stride_px == 6

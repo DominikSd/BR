@@ -109,7 +109,8 @@ def _build_scene_aware_live_settings(tmp_path: Path) -> Settings:
             marker_dark_core_max_rgb=110,
             marker_min_dark_core_ratio=0.0,
             marker_confidence_threshold=0.55,
-        ),
+            ice_mob_signature_enabled=False,
+            ),
     )
 
 
@@ -264,12 +265,24 @@ def _write_simple_marker_first_templates(root: Path) -> tuple[Path, Path]:
     draw_a.rectangle((5, 2, 12, 7), fill=(170, 195, 225))
     draw_a.rectangle((4, 8, 13, 22), fill=(120, 80, 40))
     mob_a.save(mobs_root / "mob_a" / "base.png")
+    upper_a = Image.new("RGB", (18, 12), color=(35, 35, 35))
+    draw_upper_a = ImageDraw.Draw(upper_a)
+    draw_upper_a.rectangle((5, 2, 12, 7), fill=(170, 195, 225))
+    draw_upper_a.rectangle((6, 8, 11, 11), fill=(150, 175, 210))
+    upper_a.save(mobs_root / "mob_a" / "upper.png")
+    upper_a.save(mobs_root / "mob_a" / "spot_upper.png")
 
     mob_b = Image.new("RGB", (18, 24), color=(35, 35, 35))
     draw_b = ImageDraw.Draw(mob_b)
     draw_b.rectangle((5, 2, 12, 7), fill=(110, 180, 210))
     draw_b.rectangle((4, 8, 13, 22), fill=(70, 110, 150))
     mob_b.save(mobs_root / "mob_b" / "base.png")
+    upper_b = Image.new("RGB", (18, 12), color=(35, 35, 35))
+    draw_upper_b = ImageDraw.Draw(upper_b)
+    draw_upper_b.rectangle((5, 2, 12, 7), fill=(110, 180, 210))
+    draw_upper_b.rectangle((6, 8, 11, 11), fill=(95, 155, 190))
+    upper_b.save(mobs_root / "mob_b" / "upper.png")
+    upper_b.save(mobs_root / "mob_b" / "spot_upper.png")
 
     swords = Image.new("RGB", (12, 12), color=(0, 0, 0))
     draw_s = ImageDraw.Draw(swords)
@@ -1327,6 +1340,26 @@ def test_template_pack_loader_reads_real_template_directories(tmp_path: Path) ->
     assert {variant.rotation_deg for variant in template_pack.mob_variants} >= {0, 90, 180, 270}
 
 
+def test_template_pack_loader_ignores_reference_only_player_and_swords_templates(tmp_path: Path) -> None:
+    settings = _build_marker_first_settings(tmp_path)
+    mobs_root = settings.live.mobs_template_directory
+
+    ignored_player = mobs_root / "mob_a" / "mob_with_player.png"
+    ignored_swords = mobs_root / "mob_b" / "base_with_marker_and_swords_red.png"
+    ignored_manual = mobs_root / "mob_b" / "nie_targetowac.png"
+    source_bytes = (mobs_root / "mob_a" / "base.png").read_bytes()
+    for path in (ignored_player, ignored_swords, ignored_manual):
+        path.write_bytes(source_bytes)
+
+    loader = TemplatePackLoader(settings.live)
+    template_pack = loader.load()
+    variant_names = {variant.source_path.name for variant in template_pack.mob_variants}
+
+    assert "mob_with_player.png" not in variant_names
+    assert "base_with_marker_and_swords_red.png" not in variant_names
+    assert "nie_targetowac.png" not in variant_names
+
+
 def test_frame_loader_and_roi_extraction_use_sidecar_override(tmp_path: Path) -> None:
     settings = _build_live_settings(tmp_path)
     image_path = tmp_path / "frame.png"
@@ -2028,6 +2061,129 @@ def test_marker_first_perception_rejects_non_icy_candidate_with_marker_present(
     assert isinstance(signature_rejections, list)
     assert len(signature_rejections) >= 1
     assert signature_rejections[0]["rejection_reason"] == "mob_signature_not_icy"
+
+
+def test_marker_first_candidate_becomes_actionable_after_seen_frames_threshold(
+    tmp_path: Path,
+) -> None:
+    from PIL import Image, ImageDraw
+
+    settings = _build_marker_first_settings(tmp_path)
+    settings = replace(
+        settings,
+        live=replace(
+            settings.live,
+            marker_color_mode="yellow",
+            candidate_confirmation_frames=2,
+        ),
+    )
+    output_directory = tmp_path / "perception-candidate-actionable"
+    frame_path = tmp_path / "candidate_actionable_frame.png"
+    sidecar_path = tmp_path / "candidate_actionable_frame.json"
+
+    frame_image = Image.new("RGB", (320, 240), color=(40, 40, 40))
+    draw = ImageDraw.Draw(frame_image)
+    mob_a_template = Image.open(settings.live.mobs_template_directory / "mob_a" / "upper.png").convert("RGB")
+    frame_image.paste(mob_a_template, (150, 104))
+    draw.polygon([(159, 92), (163, 86), (167, 92), (163, 98)], fill=(230, 205, 32))
+
+    frame_image.save(frame_path)
+    sidecar_path.write_text(
+        json.dumps(
+            {
+                "captured_at_ts": 105.0,
+                "source": "candidate-actionable-test",
+                "metadata": {
+                    "spawn_roi": [0, 0, 320, 240],
+                    "reference_point_xy": [160, 210],
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    runner = PerceptionAnalysisRunner(
+        live_config=settings.live,
+        output_directory=output_directory,
+    )
+    first_summary = runner.analyze_frame_path(frame_path)
+    first_result = first_summary.frame_results[0]
+    second_summary = runner.analyze_frame_path(frame_path)
+    second_result = second_summary.frame_results[0]
+
+    assert len(first_result.detections) == 0
+    candidate_tracks = first_result.diagnostics.get("candidate_tracks", [])
+    assert isinstance(candidate_tracks, list)
+    assert len(candidate_tracks) >= 1
+    assert candidate_tracks[0]["detection_state"] == "candidate"
+
+    assert len(second_result.detections) >= 1
+    assert second_result.detections[0].metadata["detection_state"] == "actionable"
+    assert second_result.detections[0].metadata["track_seen_frames"] >= 2
+
+
+def test_marker_first_occupied_classifier_does_not_control_target_existence(
+    tmp_path: Path,
+) -> None:
+    from PIL import Image, ImageDraw
+
+    settings = _build_marker_first_settings(tmp_path)
+    settings = replace(
+        settings,
+        live=replace(
+            settings.live,
+            marker_color_mode="yellow",
+            candidate_confirmation_frames=1,
+            occupied_confirmation_frames=1,
+        ),
+    )
+
+    def _write_frame(frame_path: Path, sidecar_path: Path, *, with_swords: bool) -> None:
+        image = Image.new("RGB", (320, 240), color=(40, 40, 40))
+        draw = ImageDraw.Draw(image)
+        mob_template = Image.open(settings.live.mobs_template_directory / "mob_a" / "upper.png").convert("RGB")
+        swords_template = Image.open(settings.live.occupied_template_directory / "crossed_swords.png").convert("RGB")
+        image.paste(mob_template, (150, 104))
+        draw.polygon([(159, 92), (163, 86), (167, 92), (163, 98)], fill=(230, 205, 32))
+        if with_swords:
+            image.paste(swords_template, (154, 94))
+        image.save(frame_path)
+        sidecar_path.write_text(
+            json.dumps(
+                {
+                    "captured_at_ts": 106.0,
+                    "source": frame_path.stem,
+                    "metadata": {
+                        "spawn_roi": [0, 0, 320, 240],
+                        "reference_point_xy": [160, 210],
+                    },
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+    free_frame = tmp_path / "occupied_free_frame.png"
+    free_sidecar = tmp_path / "occupied_free_frame.json"
+    occupied_frame = tmp_path / "occupied_busy_frame.png"
+    occupied_sidecar = tmp_path / "occupied_busy_frame.json"
+    _write_frame(free_frame, free_sidecar, with_swords=False)
+    _write_frame(occupied_frame, occupied_sidecar, with_swords=True)
+
+    runner = PerceptionAnalysisRunner(
+        live_config=settings.live,
+        output_directory=tmp_path / "perception-occupied-stage",
+    )
+    free_result = runner.analyze_frame_path(free_frame).frame_results[0]
+    busy_result = runner.analyze_frame_path(occupied_frame).frame_results[0]
+
+    assert len(free_result.detections) == 1
+    assert len(busy_result.detections) == 1
+    assert free_result.detections[0].occupied is False
+    assert busy_result.detections[0].occupied is True
 
 
 def test_live_preview_state_and_renderer_prepare_debug_overlay(tmp_path: Path) -> None:
