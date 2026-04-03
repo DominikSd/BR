@@ -57,23 +57,27 @@ live:
   template_match_stride_px: 6
   template_rotations_deg: [0, 90, 180, 270]
   marker_color_mode: "yellow"
-  marker_min_red: 170
-  marker_min_green: 135
-  marker_red_green_delta: 35
-  marker_green_blue_delta: 22
-  marker_red_blue_delta: 25
+  marker_min_red: 150
+  marker_min_green: 110
+  marker_red_green_delta: 20
+  marker_green_blue_delta: 8
+  marker_red_blue_delta: 15
   marker_red_green_balance_delta: 70
-  marker_min_blob_pixels: 10
-  marker_max_blob_pixels: 120
-  marker_min_width_px: 5
-  marker_max_width_px: 24
-  marker_min_height_px: 6
-  marker_max_height_px: 24
-  marker_min_fill_density: 0.08
-  marker_max_fill_density: 0.90
+  marker_min_blob_pixels: 4
+  marker_max_blob_pixels: 180
+  marker_min_width_px: 4
+  marker_max_width_px: 28
+  marker_min_height_px: 4
+  marker_max_height_px: 28
+  marker_min_fill_density: 0.04
+  marker_max_fill_density: 0.95
   marker_dark_core_max_rgb: 135
-  marker_min_dark_core_ratio: 0.02
-  marker_confidence_threshold: 0.48
+  marker_min_dark_core_ratio: 0.00
+  marker_confidence_threshold: 0.30
+  rescue_upper_scan_confidence_threshold: 0.74
+  rescue_upper_scan_stride_px: 8
+  rescue_pseudo_marker_size_px: 8
+  rescue_pseudo_marker_offset_y_px: 10
   combat_indicator_min_red: 170
   combat_indicator_red_green_delta: 35
   combat_indicator_red_blue_delta: 25

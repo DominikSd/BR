@@ -95,7 +95,10 @@ def _build_scene_aware_live_settings(tmp_path: Path) -> Settings:
         live=replace(
             load_config("config/live_real_mvp.yaml").live,
             marker_color_mode="red",
+            marker_min_red=170,
             marker_min_green=120,
+            marker_red_green_delta=35,
+            marker_red_blue_delta=25,
             marker_green_blue_delta=25,
             marker_red_green_balance_delta=80,
             marker_min_blob_pixels=6,
@@ -256,9 +259,11 @@ def _write_simple_marker_first_templates(root: Path) -> tuple[Path, Path]:
 
     mobs_root = root / "mobs"
     occupied_root = root / "occupied"
+    markers_root = root / "markers"
     (mobs_root / "mob_a").mkdir(parents=True, exist_ok=True)
     (mobs_root / "mob_b").mkdir(parents=True, exist_ok=True)
     occupied_root.mkdir(parents=True, exist_ok=True)
+    markers_root.mkdir(parents=True, exist_ok=True)
 
     mob_a = Image.new("RGB", (18, 24), color=(35, 35, 35))
     draw_a = ImageDraw.Draw(mob_a)
@@ -289,6 +294,12 @@ def _write_simple_marker_first_templates(root: Path) -> tuple[Path, Path]:
     draw_s.line((2, 2, 9, 9), fill=(60, 220, 60), width=2)
     draw_s.line((9, 2, 2, 9), fill=(60, 220, 60), width=2)
     swords.save(occupied_root / "crossed_swords.png")
+
+    yellow_marker = Image.new("RGB", (10, 12), color=(30, 30, 30))
+    draw_m = ImageDraw.Draw(yellow_marker)
+    draw_m.polygon([(5, 1), (8, 5), (5, 9), (2, 5)], fill=(230, 205, 32))
+    draw_m.rectangle((4, 4, 6, 6), fill=(70, 65, 40))
+    yellow_marker.save(markers_root / "yellow_marker_01.png")
 
     return mobs_root, occupied_root
 
@@ -1335,6 +1346,7 @@ def test_template_pack_loader_reads_real_template_directories(tmp_path: Path) ->
     template_pack = loader.load()
 
     assert len(template_pack.mob_variants) >= 4
+    assert len(template_pack.marker_variants) >= 1
     assert len(template_pack.occupied_variants) >= 2
     assert {variant.label for variant in template_pack.mob_variants} >= {"mob_a", "mob_b"}
     assert {variant.rotation_deg for variant in template_pack.mob_variants} >= {0, 90, 180, 270}
@@ -2122,6 +2134,132 @@ def test_marker_first_candidate_becomes_actionable_after_seen_frames_threshold(
     assert len(second_result.detections) >= 1
     assert second_result.detections[0].metadata["detection_state"] == "actionable"
     assert second_result.detections[0].metadata["track_seen_frames"] >= 2
+
+
+def test_marker_first_perception_can_use_marker_template_fallback_when_color_gate_misses(
+    tmp_path: Path,
+) -> None:
+    from PIL import Image, ImageDraw
+
+    settings = _build_marker_first_settings(tmp_path)
+    settings = replace(
+        settings,
+        live=replace(
+            settings.live,
+            marker_color_mode="yellow",
+            marker_min_red=250,
+            marker_min_green=250,
+            marker_red_blue_delta=120,
+            marker_green_blue_delta=120,
+            marker_confidence_threshold=0.95,
+            confirmation_confidence_threshold=0.35,
+            ice_mob_signature_enabled=False,
+            player_veto_enabled=False,
+        ),
+    )
+    output_directory = tmp_path / "perception-marker-template-fallback"
+    frame_path = tmp_path / "marker_template_fallback_frame.png"
+    sidecar_path = tmp_path / "marker_template_fallback_frame.json"
+
+    frame_image = Image.new("RGB", (320, 240), color=(40, 40, 40))
+    draw = ImageDraw.Draw(frame_image)
+    mob_a_template = Image.open(settings.live.mobs_template_directory / "mob_a" / "upper.png").convert("RGB")
+    marker_template = Image.open(
+        settings.live.mobs_template_directory.parent / "markers" / "yellow_marker_01.png"
+    ).convert("RGB")
+
+    frame_image.paste(mob_a_template, (150, 104))
+    frame_image.paste(marker_template, (158, 86))
+    draw.rectangle((158, 86, 159, 87), fill=(170, 120, 20))
+
+    frame_image.save(frame_path)
+    sidecar_path.write_text(
+        json.dumps(
+            {
+                "captured_at_ts": 106.0,
+                "source": "foreground_window_capture:marker-template-fallback-test",
+                "metadata": {
+                    "spawn_roi": [0, 0, 320, 240],
+                    "reference_point_xy": [160, 210],
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    runner = PerceptionAnalysisRunner(
+        live_config=settings.live,
+        output_directory=output_directory,
+    )
+    summary = runner.analyze_frame_path(frame_path)
+    result = summary.frame_results[0]
+
+    assert result.candidate_hit_count >= 1
+    assert any(hit.label == "yellow_marker" for hit in result.raw_hits)
+    assert any(str(hit.source).startswith("pixel_template:yellow_marker_") for hit in result.raw_hits)
+    assert result.diagnostics["seed_diagnostics"]["seed_mode"] == "marker_template_fallback"
+
+
+def test_marker_first_perception_can_use_upper_rescue_when_no_marker_seed_exists(
+    tmp_path: Path,
+) -> None:
+    from PIL import Image
+
+    settings = _build_marker_first_settings(tmp_path)
+    settings = replace(
+        settings,
+        live=replace(
+            settings.live,
+            marker_color_mode="yellow",
+            marker_min_red=250,
+            marker_min_green=250,
+            marker_red_blue_delta=120,
+            marker_green_blue_delta=120,
+            marker_confidence_threshold=0.95,
+            confirmation_confidence_threshold=0.35,
+            ice_mob_signature_enabled=True,
+            player_veto_enabled=False,
+            rescue_upper_scan_confidence_threshold=0.55,
+            rescue_upper_scan_stride_px=2,
+        ),
+    )
+    output_directory = tmp_path / "perception-upper-rescue"
+    frame_path = tmp_path / "upper_rescue_frame.png"
+    sidecar_path = tmp_path / "upper_rescue_frame.json"
+
+    frame_image = Image.new("RGB", (320, 240), color=(40, 40, 40))
+    mob_b_upper = Image.open(settings.live.mobs_template_directory / "mob_b" / "upper.png").convert("RGB")
+    frame_image.paste(mob_b_upper, (152, 104))
+    frame_image.save(frame_path)
+    sidecar_path.write_text(
+        json.dumps(
+            {
+                "captured_at_ts": 107.0,
+                "source": "foreground_window_capture:upper-rescue-test",
+                "metadata": {
+                    "spawn_roi": [0, 0, 320, 240],
+                    "reference_point_xy": [160, 210],
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    runner = PerceptionAnalysisRunner(
+        live_config=settings.live,
+        output_directory=output_directory,
+    )
+    summary = runner.analyze_frame_path(frame_path)
+    result = summary.frame_results[0]
+
+    assert result.candidate_hit_count >= 1
+    assert any(hit.label == "upper_rescue_seed" for hit in result.raw_hits)
+    assert result.diagnostics["seed_diagnostics"]["seed_mode"] == "upper_rescue"
+    assert result.diagnostics["seed_diagnostics"]["rescue_seed_hit_count"] >= 1
 
 
 def test_marker_first_occupied_classifier_does_not_control_target_existence(

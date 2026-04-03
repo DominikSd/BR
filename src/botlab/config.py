@@ -115,6 +115,10 @@ class LiveConfig:
     marker_dark_core_max_rgb: int = 110
     marker_min_dark_core_ratio: float = 0.0
     marker_confidence_threshold: float = 0.55
+    rescue_upper_scan_confidence_threshold: float = 0.74
+    rescue_upper_scan_stride_px: int = 8
+    rescue_pseudo_marker_size_px: int = 8
+    rescue_pseudo_marker_offset_y_px: int = 10
     combat_indicator_min_red: int = 170
     combat_indicator_red_green_delta: int = 35
     combat_indicator_red_blue_delta: int = 25
@@ -417,6 +421,26 @@ def load_config(config_path: str | Path) -> Settings:
             live_section,
             "marker_confidence_threshold",
             0.55,
+        ),
+        rescue_upper_scan_confidence_threshold=_optional_ratio_float(
+            live_section,
+            "rescue_upper_scan_confidence_threshold",
+            0.74,
+        ),
+        rescue_upper_scan_stride_px=_optional_positive_int(
+            live_section,
+            "rescue_upper_scan_stride_px",
+            8,
+        ),
+        rescue_pseudo_marker_size_px=_optional_positive_int(
+            live_section,
+            "rescue_pseudo_marker_size_px",
+            8,
+        ),
+        rescue_pseudo_marker_offset_y_px=_optional_positive_int(
+            live_section,
+            "rescue_pseudo_marker_offset_y_px",
+            10,
         ),
         combat_indicator_min_red=_optional_int_range(
             live_section,

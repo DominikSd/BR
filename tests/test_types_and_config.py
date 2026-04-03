@@ -68,6 +68,10 @@ def test_load_default_config_returns_settings() -> None:
     assert settings.live.template_rotations_deg == (0, 90, 180, 270)
     assert settings.live.marker_min_red == 170
     assert settings.live.marker_confidence_threshold == 0.55
+    assert settings.live.rescue_upper_scan_confidence_threshold == 0.74
+    assert settings.live.rescue_upper_scan_stride_px == 8
+    assert settings.live.rescue_pseudo_marker_size_px == 8
+    assert settings.live.rescue_pseudo_marker_offset_y_px == 10
     assert settings.live.combat_indicator_min_red == 170
     assert settings.live.combat_indicator_min_ratio == 0.01
     assert settings.live.hp_bar_min_red == 150
@@ -167,19 +171,27 @@ def test_live_real_mvp_config_can_be_loaded_from_yaml() -> None:
     assert settings.live.scene_reference_anchor_mode == "frame_center"
     assert settings.live.scene_reference_anchor_xy == (960, 520)
     assert settings.live.marker_color_mode == "yellow"
-    assert settings.live.marker_min_green == 135
-    assert settings.live.marker_green_blue_delta == 22
+    assert settings.live.marker_min_red == 150
+    assert settings.live.marker_min_green == 110
+    assert settings.live.marker_red_green_delta == 20
+    assert settings.live.marker_green_blue_delta == 8
+    assert settings.live.marker_red_blue_delta == 15
     assert settings.live.marker_red_green_balance_delta == 70
-    assert settings.live.marker_min_blob_pixels == 10
-    assert settings.live.marker_max_blob_pixels == 120
-    assert settings.live.marker_min_width_px == 5
-    assert settings.live.marker_max_width_px == 24
-    assert settings.live.marker_min_height_px == 6
-    assert settings.live.marker_max_height_px == 24
-    assert settings.live.marker_min_fill_density == 0.08
-    assert settings.live.marker_max_fill_density == 0.90
+    assert settings.live.marker_min_blob_pixels == 4
+    assert settings.live.marker_max_blob_pixels == 180
+    assert settings.live.marker_min_width_px == 4
+    assert settings.live.marker_max_width_px == 28
+    assert settings.live.marker_min_height_px == 4
+    assert settings.live.marker_max_height_px == 28
+    assert settings.live.marker_min_fill_density == 0.04
+    assert settings.live.marker_max_fill_density == 0.95
     assert settings.live.marker_dark_core_max_rgb == 135
-    assert settings.live.marker_min_dark_core_ratio == 0.02
+    assert settings.live.marker_min_dark_core_ratio == 0.00
+    assert settings.live.marker_confidence_threshold == 0.30
+    assert settings.live.rescue_upper_scan_confidence_threshold == 0.74
+    assert settings.live.rescue_upper_scan_stride_px == 8
+    assert settings.live.rescue_pseudo_marker_size_px == 8
+    assert settings.live.rescue_pseudo_marker_offset_y_px == 10
     assert settings.live.player_veto_enabled is True
     assert settings.live.player_veto_roi_width_px == 190
     assert settings.live.player_veto_roi_height_px == 70

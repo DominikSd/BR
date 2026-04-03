@@ -198,9 +198,11 @@
       "mob_a": 2,
       "mob_b": 1
     },
+    "seed_diagnostics": {},
     "selection_reason": "nearest_free_in_zone_reachable_target",
     "summary_lines": [
       "thresholds=mob>=0.60 occupied>=0.75 merge_px=28 stride=4",
+      "seed=mode=unknown marker=0 marker_template=0 upper_rescue=0",
       "raw=3 low_conf=0 merged=3 candidates=0 veto=0 not_icy=0",
       "rejects=occupied=0 out_of_zone=0 selected=live-spawn-2-3"
     ],
@@ -227,6 +229,10 @@
       "player_veto_roi_height_px": 52,
       "player_veto_roi_offset_y_px": -40,
       "player_veto_roi_width_px": 170,
+      "rescue_pseudo_marker_offset_y_px": 10,
+      "rescue_pseudo_marker_size_px": 8,
+      "rescue_upper_scan_confidence_threshold": 0.74,
+      "rescue_upper_scan_stride_px": 8,
       "scene_profile_path": null,
       "scene_zone_overlay_visible": true,
       "template_match_stride_px": 4,

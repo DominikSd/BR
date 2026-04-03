@@ -71,6 +71,7 @@ class TemplateVariant:
 
 @dataclass(slots=True, frozen=True)
 class TemplatePack:
+    marker_variants: tuple[TemplateVariant, ...]
     mob_upper_variants: tuple[TemplateVariant, ...]
     mob_fallback_variants: tuple[TemplateVariant, ...]
     occupied_variants: tuple[TemplateVariant, ...]
@@ -559,6 +560,24 @@ class TemplatePackLoader:
             return self._cached_pack
         if Image is None or ImageOps is None:
             raise RuntimeError("Pixel-based perception wymaga Pillow.")
+        marker_variants: list[TemplateVariant] = []
+        markers_root = self._live_config.mobs_template_directory.parent / "markers"
+        marker_label = (
+            "yellow_marker"
+            if self._live_config.marker_color_mode == "yellow"
+            else "red_marker"
+        )
+        if markers_root.exists():
+            for template_path in sorted(markers_root.glob("*.png")):
+                base_image = Image.open(template_path).convert("RGB")
+                marker_variants.extend(
+                    _build_template_variants(
+                        label=marker_label,
+                        template_path=template_path,
+                        image=base_image,
+                        rotations_deg=(0,),
+                    )
+                )
         upper_variants: list[TemplateVariant] = []
         fallback_variants: list[TemplateVariant] = []
         mobs_root = self._live_config.mobs_template_directory
@@ -610,6 +629,7 @@ class TemplatePackLoader:
                     )
                 )
         self._cached_pack = TemplatePack(
+            marker_variants=tuple(marker_variants),
             mob_upper_variants=tuple(upper_variants),
             mob_fallback_variants=tuple(fallback_variants),
             occupied_variants=tuple(occupied_variants),
@@ -659,8 +679,15 @@ class PerceptionAnalyzer:
         pipeline_mode = "pixel"
         player_veto_rejections: tuple[dict[str, Any], ...] = ()
         mob_signature_rejections: tuple[dict[str, Any], ...] = ()
+        seed_diagnostics: dict[str, Any] = {}
         if frame.image is not None:
-            roi_hits, detections, player_veto_rejections, mob_signature_rejections = self._run_marker_first_pipeline(
+            (
+                roi_hits,
+                detections,
+                player_veto_rejections,
+                mob_signature_rejections,
+                seed_diagnostics,
+            ) = self._run_marker_first_pipeline(
                 frame=frame,
                 roi=roi,
                 reference_point_xy=reference_point_xy,
@@ -716,6 +743,7 @@ class PerceptionAnalyzer:
             candidate_tracks=candidate_tracks,
             player_veto_rejections=player_veto_rejections,
             mob_signature_rejections=mob_signature_rejections,
+            seed_diagnostics=seed_diagnostics,
             selected_target=selected_target,
         )
 
@@ -888,9 +916,10 @@ class PerceptionAnalyzer:
         tuple[LiveTargetDetection, ...],
         tuple[dict[str, Any], ...],
         tuple[dict[str, Any], ...],
+        dict[str, Any],
     ]:
         if Image is None or frame.image is None:
-            return (), (), (), ()
+            return (), (), (), (), {}
         image = frame.image.convert("RGB")
         template_pack = self._template_pack_loader.load()
         roi_box = (
@@ -902,17 +931,64 @@ class PerceptionAnalyzer:
         roi_image = image.crop(roi_box)
         stride_px = self._resolve_match_stride_px(frame)
 
-        marker_hits = _detect_marker_hits(
+        marker_hits, marker_seed_diagnostics = _detect_marker_hits_with_diagnostics(
             roi_image=roi_image,
             roi_offset_xy=(roi_box[0], roi_box[1]),
             live_config=self._live_config,
         )
+        filtered_template_marker_hits: tuple[TemplateHit, ...] = ()
+        use_template_marker_fallback = (
+            not marker_hits
+            and str(frame.source).startswith("foreground_window_capture")
+        )
+        if use_template_marker_fallback:
+            template_marker_hits = _match_template_variants(
+                roi_image=roi_image,
+                roi_offset_xy=(roi_box[0], roi_box[1]),
+                variants=template_pack.marker_variants,
+                confidence_threshold=max(0.45, self._live_config.marker_confidence_threshold - 0.03),
+                stride_px=max(1, stride_px),
+            )
+            filtered_template_marker_hits = tuple(
+                hit
+                for hit in template_marker_hits
+                if _marker_template_hit_is_valid(
+                    image=image,
+                    hit=hit,
+                    live_config=self._live_config,
+                )
+            )
+        rescue_seed_hits: tuple[TemplateHit, ...] = ()
+        if not marker_hits and not filtered_template_marker_hits:
+            rescue_seed_hits = _seed_from_upper_rescue_scan(
+                image=image,
+                roi_box=roi_box,
+                template_pack=template_pack,
+                live_config=self._live_config,
+                stride_px=stride_px,
+            )
+        all_marker_hits = tuple((*marker_hits, *filtered_template_marker_hits, *rescue_seed_hits))
         merged_marker_hits = merge_template_hits(
-            marker_hits,
+            all_marker_hits,
             merge_distance_px=self._live_config.merge_distance_px,
         )
 
-        raw_hits: list[TemplateHit] = list(marker_hits)
+        raw_hits: list[TemplateHit] = list(all_marker_hits)
+        seed_mode = "marker"
+        if not marker_hits and filtered_template_marker_hits:
+            seed_mode = "marker_template_fallback"
+        elif not marker_hits and not filtered_template_marker_hits and rescue_seed_hits:
+            seed_mode = "upper_rescue"
+        elif not all_marker_hits:
+            seed_mode = "none"
+        seed_diagnostics = {
+            **marker_seed_diagnostics,
+            "marker_hit_count": len(marker_hits),
+            "marker_template_hit_count": len(filtered_template_marker_hits),
+            "rescue_seed_hit_count": len(rescue_seed_hits),
+            "merged_seed_hit_count": len(merged_marker_hits),
+            "seed_mode": seed_mode,
+        }
         detections: list[LiveTargetDetection] = []
         player_veto_rejections: list[dict[str, Any]] = []
         mob_signature_rejections: list[dict[str, Any]] = []
@@ -1096,6 +1172,7 @@ class PerceptionAnalyzer:
                         "marker_confidence": marker_hit.confidence,
                         "marker_pixel_count": int(marker_hit.metadata.get("pixel_count", 0)),
                         "marker_score": marker_hit.confidence,
+                        "marker_source": marker_hit.source,
                         "upper_template_score": upper_score,
                         "fallback_template_score": fallback_score,
                         "confirmation_stage": confirmation_stage,
@@ -1141,6 +1218,7 @@ class PerceptionAnalyzer:
             ordered_detections,
             tuple(player_veto_rejections),
             tuple(mob_signature_rejections),
+            seed_diagnostics,
         )
 
     def _resolve_match_stride_px(self, frame: LiveFrame) -> int:
@@ -1379,6 +1457,7 @@ class PerceptionAnalyzer:
         candidate_tracks: tuple[LiveTargetDetection, ...],
         player_veto_rejections: tuple[dict[str, Any], ...],
         mob_signature_rejections: tuple[dict[str, Any], ...],
+        seed_diagnostics: dict[str, Any],
         selected_target: LiveTargetDetection | None,
     ) -> dict[str, Any]:
         low_confidence_hits: list[dict[str, Any]] = []
@@ -1474,6 +1553,11 @@ class PerceptionAnalyzer:
             f"mob>={self._live_config.confirmation_confidence_threshold:.2f} "
             f"occupied>={self._live_config.occupied_confidence_threshold:.2f} "
             f"merge_px={self._live_config.merge_distance_px} stride={self._live_config.template_match_stride_px}",
+            "seed="
+            f"mode={seed_diagnostics.get('seed_mode', 'unknown')} "
+            f"marker={seed_diagnostics.get('marker_hit_count', 0)} "
+            f"marker_template={seed_diagnostics.get('marker_template_hit_count', 0)} "
+            f"upper_rescue={seed_diagnostics.get('rescue_seed_hit_count', 0)}",
             "raw="
             f"{len(raw_hits)} low_conf={len(low_confidence_hits)} "
             f"merged={len(detections)} candidates={len(candidate_entries)} "
@@ -1493,6 +1577,7 @@ class PerceptionAnalyzer:
             "candidate_tracks": candidate_entries,
             "player_veto_rejections": list(player_veto_rejections),
             "mob_signature_rejections": list(mob_signature_rejections),
+            "seed_diagnostics": seed_diagnostics,
             "final_candidates": actionable_entries,
             "selection_reason": None
             if selected_target is None
@@ -2115,8 +2200,22 @@ def _detect_marker_hits(
     roi_offset_xy: tuple[int, int],
     live_config: LiveConfig,
 ) -> tuple[TemplateHit, ...]:
+    hits, _ = _detect_marker_hits_with_diagnostics(
+        roi_image=roi_image,
+        roi_offset_xy=roi_offset_xy,
+        live_config=live_config,
+    )
+    return hits
+
+
+def _detect_marker_hits_with_diagnostics(
+    *,
+    roi_image: Any,
+    roi_offset_xy: tuple[int, int],
+    live_config: LiveConfig,
+) -> tuple[tuple[TemplateHit, ...], dict[str, int]]:
     if Image is None:
-        return ()
+        return (), {}
     rgb_image = roi_image.convert("RGB")
     width, height = rgb_image.size
     pixels = rgb_image.load()
@@ -2135,11 +2234,19 @@ def _detect_marker_hits(
     hits: list[TemplateHit] = []
     visited = bytearray(width * height)
     marker_label = "yellow_marker" if live_config.marker_color_mode == "yellow" else "red_marker"
+    diagnostics = {
+        "color_component_count": 0,
+        "size_pass_count": 0,
+        "density_pass_count": 0,
+        "dark_core_pass_count": 0,
+        "confidence_pass_count": 0,
+    }
     for y in range(height):
         for x in range(width):
             index = (y * width) + x
             if marker_mask[index] == 0 or visited[index] == 1:
                 continue
+            diagnostics["color_component_count"] += 1
             queue: list[tuple[int, int]] = [(x, y)]
             visited[index] = 1
             component_pixels: list[tuple[int, int]] = []
@@ -2195,6 +2302,7 @@ def _detect_marker_hits(
                 continue
             if component_height > live_config.marker_max_height_px:
                 continue
+            diagnostics["size_pass_count"] += 1
             bbox_area = max(1, component_width * component_height)
             fill_density = float(pixel_count) / float(bbox_area)
             dark_core_ratio = _compute_marker_dark_core_ratio(
@@ -2209,11 +2317,14 @@ def _detect_marker_hits(
                 continue
             if fill_density > live_config.marker_max_fill_density:
                 continue
+            diagnostics["density_pass_count"] += 1
             if dark_core_ratio < live_config.marker_min_dark_core_ratio:
                 continue
+            diagnostics["dark_core_pass_count"] += 1
             confidence = min(1.0, marker_strength_sum / max(1.0, float(pixel_count)))
             if confidence < live_config.marker_confidence_threshold:
                 continue
+            diagnostics["confidence_pass_count"] += 1
             hits.append(
                 TemplateHit(
                     label=marker_label,
@@ -2233,7 +2344,204 @@ def _detect_marker_hits(
                     },
                 )
             )
-    return tuple(hits)
+    return tuple(hits), diagnostics
+
+
+def _seed_from_upper_rescue_scan(
+    *,
+    image: Any,
+    roi_box: tuple[int, int, int, int],
+    template_pack: TemplatePack,
+    live_config: LiveConfig,
+    stride_px: int,
+) -> tuple[TemplateHit, ...]:
+    rescue_threshold = float(live_config.rescue_upper_scan_confidence_threshold)
+    rescue_stride_px = int(max(1, live_config.rescue_upper_scan_stride_px))
+    pseudo_marker_size_px = int(max(4, live_config.rescue_pseudo_marker_size_px))
+    pseudo_marker_offset_y_px = int(max(4, live_config.rescue_pseudo_marker_offset_y_px))
+
+    upper_hits = _match_local_variants(
+        image=image,
+        box=roi_box,
+        variants=template_pack.mob_upper_variants,
+        confidence_threshold=rescue_threshold,
+        stride_px=max(rescue_stride_px, stride_px),
+    )
+
+    accepted: list[TemplateHit] = []
+    for hit in upper_hits:
+        ice_signature = _detect_ice_mob_signature(
+            image=image,
+            bbox=hit.bbox,
+            live_config=live_config,
+        )
+        if not bool(ice_signature.get("accepted", False)):
+            continue
+
+        center_x, _ = hit.center_xy
+        pseudo_x = max(0, int(round(center_x - (pseudo_marker_size_px / 2.0))))
+        pseudo_y = max(0, int(hit.bbox[1]) - pseudo_marker_offset_y_px)
+        accepted.append(
+            TemplateHit(
+                label="upper_rescue_seed",
+                x=pseudo_x,
+                y=pseudo_y,
+                width=pseudo_marker_size_px,
+                height=pseudo_marker_size_px,
+                confidence=min(0.99, max(0.55, float(hit.confidence))),
+                rotation_deg=hit.rotation_deg,
+                target_id=hit.target_id,
+                source="upper_rescue",
+                metadata={
+                    "seed_mode": "upper_rescue",
+                    "rescue_confirmation_bbox": list(hit.bbox),
+                    "rescue_template_label": hit.label,
+                    "rescue_template_score": float(hit.confidence),
+                    "ice_score": float(ice_signature.get("score", 0.0)),
+                    "ice_pixel_count": int(ice_signature.get("ice_pixel_count", 0)),
+                    "ice_pixel_ratio": float(ice_signature.get("ice_pixel_ratio", 0.0)),
+                },
+            )
+        )
+
+    return merge_template_hits(
+        tuple(accepted),
+        merge_distance_px=max(int(live_config.merge_distance_px), 36),
+    )
+
+
+def _marker_template_hit_is_valid(
+    *,
+    image: Any,
+    hit: TemplateHit,
+    live_config: LiveConfig,
+) -> bool:
+    if Image is None:
+        return False
+    left, top, width, height = hit.bbox
+    if width <= 0 or height <= 0:
+        return False
+    crop = image.crop((left, top, left + width, top + height)).convert("RGB")
+    crop_width, crop_height = crop.size
+    pixels = crop.load()
+    marker_pixel_count = 0
+    marker_strength_sum = 0.0
+    relaxed_min_red = max(120, live_config.marker_min_red - 60)
+    relaxed_min_green = max(105, live_config.marker_min_green - 45)
+    relaxed_red_blue_delta = max(8, live_config.marker_red_blue_delta - 18)
+    relaxed_green_blue_delta = max(6, live_config.marker_green_blue_delta - 16)
+    relaxed_balance_delta = max(90, live_config.marker_red_green_balance_delta + 25)
+    for y in range(crop_height):
+        for x in range(crop_width):
+            red, green, blue = pixels[x, y]
+            if live_config.marker_color_mode == "yellow":
+                is_marker_pixel = (
+                    red >= relaxed_min_red
+                    and green >= relaxed_min_green
+                    and (red - blue) >= relaxed_red_blue_delta
+                    and (green - blue) >= relaxed_green_blue_delta
+                    and abs(red - green) <= relaxed_balance_delta
+                )
+            else:
+                is_marker_pixel = _is_marker_pixel(
+                    red=red,
+                    green=green,
+                    blue=blue,
+                    live_config=live_config,
+                )
+            if is_marker_pixel:
+                marker_pixel_count += 1
+                marker_strength_sum += _compute_marker_pixel_strength(
+                    red=red,
+                    green=green,
+                    blue=blue,
+                    live_config=live_config,
+                )
+    bbox_area = max(1, crop_width * crop_height)
+    fill_density = float(marker_pixel_count) / float(bbox_area)
+    dark_core_ratio = _compute_marker_dark_core_ratio(
+        pixels=pixels,
+        min_x=0,
+        min_y=0,
+        max_x=max(0, crop_width - 1),
+        max_y=max(0, crop_height - 1),
+        dark_core_max_rgb=live_config.marker_dark_core_max_rgb,
+    )
+    minimum_pixels = max(3, live_config.marker_min_blob_pixels // 2)
+    minimum_density = min(live_config.marker_min_fill_density, 0.04)
+    minimum_core_ratio = min(live_config.marker_min_dark_core_ratio, 0.01)
+    if marker_pixel_count < minimum_pixels:
+        return False
+    if fill_density < minimum_density:
+        return False
+    if dark_core_ratio < minimum_core_ratio:
+        return False
+    expanded_margin_x = max(3, crop_width // 2)
+    expanded_margin_y = max(3, crop_height // 2)
+    expanded_left = max(0, left - expanded_margin_x)
+    expanded_top = max(0, top - expanded_margin_y)
+    expanded_right = min(image.size[0], left + width + expanded_margin_x)
+    expanded_bottom = min(image.size[1], top + height + expanded_margin_y)
+    expanded_crop = image.crop((expanded_left, expanded_top, expanded_right, expanded_bottom)).convert("RGB")
+    expanded_width, expanded_height = expanded_crop.size
+    expanded_pixels = expanded_crop.load()
+    expanded_marker_pixel_count = 0
+    expanded_min_x: int | None = None
+    expanded_min_y: int | None = None
+    expanded_max_x: int | None = None
+    expanded_max_y: int | None = None
+    for y in range(expanded_height):
+        for x in range(expanded_width):
+            red, green, blue = expanded_pixels[x, y]
+            if live_config.marker_color_mode == "yellow":
+                is_marker_pixel = (
+                    red >= relaxed_min_red
+                    and green >= relaxed_min_green
+                    and (red - blue) >= relaxed_red_blue_delta
+                    and (green - blue) >= relaxed_green_blue_delta
+                    and abs(red - green) <= relaxed_balance_delta
+                )
+            else:
+                is_marker_pixel = _is_marker_pixel(
+                    red=red,
+                    green=green,
+                    blue=blue,
+                    live_config=live_config,
+                )
+            if not is_marker_pixel:
+                continue
+            expanded_marker_pixel_count += 1
+            expanded_min_x = x if expanded_min_x is None else min(expanded_min_x, x)
+            expanded_min_y = y if expanded_min_y is None else min(expanded_min_y, y)
+            expanded_max_x = x if expanded_max_x is None else max(expanded_max_x, x)
+            expanded_max_y = y if expanded_max_y is None else max(expanded_max_y, y)
+    if expanded_marker_pixel_count > int(max(1, live_config.marker_max_blob_pixels) * 1.5):
+        return False
+    if (
+        expanded_min_x is not None
+        and expanded_min_y is not None
+        and expanded_max_x is not None
+        and expanded_max_y is not None
+    ):
+        expanded_component_width = expanded_max_x - expanded_min_x + 1
+        expanded_component_height = expanded_max_y - expanded_min_y + 1
+        if expanded_component_width > int(max(1, live_config.marker_max_width_px) * 1.6):
+            return False
+        if expanded_component_height > int(max(1, live_config.marker_max_height_px) * 1.6):
+            return False
+    mean_marker_strength = marker_strength_sum / max(1.0, float(marker_pixel_count))
+    confidence = max(hit.confidence, mean_marker_strength)
+    hit.metadata.update(
+        {
+            "pixel_count": marker_pixel_count,
+            "mean_marker_strength": mean_marker_strength,
+            "fill_density": fill_density,
+            "dark_core_ratio": dark_core_ratio,
+            "validation_mode": "template_plus_color",
+        }
+    )
+    object.__setattr__(hit, "confidence", confidence)
+    return confidence >= max(0.40, live_config.marker_confidence_threshold - 0.08)
 
 
 def _is_marker_pixel(
@@ -3181,6 +3489,10 @@ def _build_detection_tuning_parameters(live_config: LiveConfig) -> dict[str, Any
         "ice_mob_focus_height_ratio": live_config.ice_mob_focus_height_ratio,
         "ice_mob_max_dark_ratio": live_config.ice_mob_max_dark_ratio,
         "ice_mob_max_brown_ratio": live_config.ice_mob_max_brown_ratio,
+        "rescue_upper_scan_confidence_threshold": live_config.rescue_upper_scan_confidence_threshold,
+        "rescue_upper_scan_stride_px": live_config.rescue_upper_scan_stride_px,
+        "rescue_pseudo_marker_size_px": live_config.rescue_pseudo_marker_size_px,
+        "rescue_pseudo_marker_offset_y_px": live_config.rescue_pseudo_marker_offset_y_px,
         "scene_profile_path": None
         if live_config.scene_profile_path is None
         else str(live_config.scene_profile_path),
