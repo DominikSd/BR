@@ -97,6 +97,12 @@ def test_load_default_config_returns_settings() -> None:
     assert settings.live.engage_target_match_max_distance_px == 72
     assert settings.live.engage_min_target_confidence == 0.70
     assert settings.live.engage_min_seen_frames == 1
+    assert settings.live.preview_fast_mode is False
+    assert settings.live.preview_skip_fallback_confirmation is False
+    assert settings.live.preview_render_aux_boxes is True
+    assert settings.live.preview_crop_to_spawn_roi is False
+    assert settings.live.preview_crop_padding_px == 0
+    assert settings.live.preview_analyze_every_nth_frame == 1
     assert settings.live.rest_resource_sample_count == 3
     assert settings.live.rest_resource_sample_interval_s == 0.10
     assert settings.live.rest_resource_min_confidence == 0.60
@@ -142,6 +148,12 @@ def test_live_config_profile_can_be_loaded_from_yaml() -> None:
     assert settings.live.engage_target_match_max_distance_px == 72
     assert settings.live.engage_min_target_confidence == 0.70
     assert settings.live.engage_min_seen_frames == 1
+    assert settings.live.preview_fast_mode is False
+    assert settings.live.preview_skip_fallback_confirmation is False
+    assert settings.live.preview_render_aux_boxes is True
+    assert settings.live.preview_crop_to_spawn_roi is False
+    assert settings.live.preview_crop_padding_px == 0
+    assert settings.live.preview_analyze_every_nth_frame == 1
     assert settings.live.rest_resource_sample_count == 3
     assert settings.live.rest_resource_sample_interval_s == 0.10
     assert settings.live.rest_resource_min_confidence == 0.60
@@ -219,7 +231,15 @@ def test_live_real_mvp_config_can_be_loaded_from_yaml() -> None:
     assert settings.live.engage_verify_delay_s == 0.20
     assert settings.live.engage_min_target_confidence == 0.80
     assert settings.live.engage_min_seen_frames == 2
-    assert settings.live.preview_refresh_interval_ms == 80
+    assert settings.live.preview_fast_mode is True
+    assert settings.live.preview_skip_fallback_confirmation is True
+    assert settings.live.preview_render_aux_boxes is False
+    assert settings.live.preview_crop_to_spawn_roi is True
+    assert settings.live.preview_crop_padding_px == 16
+    assert settings.live.preview_analyze_every_nth_frame == 2
+    assert settings.live.preview_refresh_interval_ms == 150
+    assert settings.live.preview_max_width_px == 1280
+    assert settings.live.preview_max_height_px == 720
     assert settings.live.rest_resource_sample_count == 5
     assert settings.live.rest_resource_sample_interval_s == 0.10
     assert settings.live.rest_resource_min_confidence == 0.65

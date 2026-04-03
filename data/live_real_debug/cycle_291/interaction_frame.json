@@ -1,0 +1,28 @@
+{
+  "captured_at_ts": 13195.0,
+  "height": 0,
+  "metadata": {
+    "cycle_id": 291,
+    "in_combat": false,
+    "interaction_ready": true,
+    "phase": "interaction",
+    "targets": [
+      {
+        "bbox_height": null,
+        "bbox_width": null,
+        "confidence": 1.0,
+        "distance": 0.25,
+        "metadata": {},
+        "mob_variant": "mob_b",
+        "occupied": false,
+        "orientation_deg": 0,
+        "reachable": true,
+        "screen_x": 688,
+        "screen_y": 269,
+        "target_id": "live-spawn-291-2"
+      }
+    ]
+  },
+  "source": "dry_run:single_spot_mvp",
+  "width": 0
+}

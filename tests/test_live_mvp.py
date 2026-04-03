@@ -24,6 +24,7 @@ from botlab.adapters.live import (
     should_start_rest,
 )
 from botlab.adapters.live.capture import CaptureRegion, _calculate_window_relative_capture_bbox
+from botlab.adapters.live.capture import ForegroundWindowCapture, WindowCaptureStatus
 from botlab.adapters.live.input import LiveInputDriver
 from botlab.adapters.live.models import (
     LiveEngageOutcome,
@@ -548,6 +549,62 @@ def test_window_relative_capture_bbox_is_computed_from_window_bbox() -> None:
     )
 
     assert capture_bbox == (120, 230, 760, 550)
+
+
+def test_foreground_window_capture_can_bypass_foreground_guard_for_preview(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from PIL import Image
+
+    settings = _build_scene_aware_live_settings(tmp_path)
+    live = replace(
+        settings.live,
+        dry_run=False,
+        foreground_only=True,
+        capture_region=(0, 0, 120, 80),
+    )
+    capture = ForegroundWindowCapture(live)
+
+    monkeypatch.setattr(
+        capture,
+        "_resolve_window_status",
+        lambda: WindowCaptureStatus(
+            configured_window_title="BrokenRanks",
+            matched_window_hwnd=12345,
+            matched_window_title="BrokenRanks",
+            foreground_window_title="botlab live vision preview",
+            window_bbox=(100, 200, 220, 280),
+            capture_bbox=(100, 200, 220, 280),
+            foreground_matches=False,
+            reliable=False,
+            real_input_allowed=False,
+            block_reason="foreground_window_mismatch",
+            warning="foreground_window_mismatch",
+        ),
+    )
+    monkeypatch.setattr(
+        "botlab.adapters.live.capture._grab_window_content",
+        lambda hwnd, window_bbox, capture_bbox: Image.new(
+            "RGB",
+            (capture_bbox[2] - capture_bbox[0], capture_bbox[3] - capture_bbox[1]),
+            color=(32, 48, 64),
+        ),
+    )
+
+    frame = capture.capture_frame(
+        cycle_id=1,
+        phase="observation",
+        default_ts=123.0,
+        session_state=LiveSessionState(),
+        allow_background_capture=True,
+    )
+
+    assert frame.source == "window_content_capture_preview_bypass"
+    assert frame.metadata["capture_reliability"] == "preview_background_bypass"
+    assert frame.metadata["preview_background_bypass"] is True
+    assert frame.width == 120
+    assert frame.height == 80
 
 
 def test_should_start_rest_when_hp_or_condition_is_below_threshold() -> None:
@@ -2398,7 +2455,55 @@ def test_live_engage_observe_forces_safe_dry_run_even_for_real_live_settings(tmp
     state, _image = observe.render_next_attempt()
 
     assert observe.safe_dry_run_enabled is True
+    assert observe._runner.runtime.settings.live.dry_run is False
     assert any("input_mode=dry_run_safe" in line for line in state.headline_lines)
+
+
+def test_live_preview_renderer_can_crop_to_spawn_roi(tmp_path: Path) -> None:
+    settings = _build_live_settings(tmp_path)
+    frame = LiveFrame(
+        width=1280,
+        height=720,
+        captured_at_ts=100.0,
+        source="preview-crop-test",
+        metadata={
+            "reference_point_xy": [640, 360],
+            "perception_profile": {
+                "detection_duration_s": 0.010,
+                "selection_duration_s": 0.003,
+                "action_ready_duration_s": 0.002,
+            },
+            "template_hits": [],
+        },
+        image=None,
+    )
+    analyzer = PerceptionAnalysisRunner(
+        live_config=replace(settings.live, spawn_roi=(320, 140, 640, 320)),
+        output_directory=tmp_path / "preview-crop-output",
+    )._analyzer
+    result = analyzer.analyze_frame(frame, cycle_id=1, phase="preview")
+    state = build_live_preview_state(frame=frame, result=result)
+
+    cropped_renderer = LiveVisionPreviewRenderer(
+        max_width_px=2000,
+        max_height_px=2000,
+        render_aux_boxes=False,
+        crop_to_spawn_roi=True,
+        crop_padding_px=0,
+    )
+    full_renderer = LiveVisionPreviewRenderer(
+        max_width_px=2000,
+        max_height_px=2000,
+        render_aux_boxes=False,
+        crop_to_spawn_roi=False,
+        crop_padding_px=0,
+    )
+
+    cropped_image = cropped_renderer.render(frame=frame, result=result, state=state)
+    full_image = full_renderer.render(frame=frame, result=result, state=state)
+
+    assert full_image.size == (1280, 720)
+    assert cropped_image.size == (640, 320)
 
 
 def test_simple_state_detector_can_detect_combat_indicator_from_pixels(tmp_path: Path) -> None:

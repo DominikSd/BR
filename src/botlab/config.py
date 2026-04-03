@@ -190,6 +190,12 @@ class LiveConfig:
     engage_target_match_max_distance_px: int = 72
     engage_min_target_confidence: float = 0.70
     engage_min_seen_frames: int = 1
+    preview_fast_mode: bool = False
+    preview_skip_fallback_confirmation: bool = False
+    preview_render_aux_boxes: bool = True
+    preview_crop_to_spawn_roi: bool = False
+    preview_crop_padding_px: int = 0
+    preview_analyze_every_nth_frame: int = 1
     preview_refresh_interval_ms: int = 120
     preview_max_width_px: int = 1600
     preview_max_height_px: int = 900
@@ -839,6 +845,36 @@ def load_config(config_path: str | Path) -> Settings:
             "engage_min_seen_frames",
             1,
         ),
+        preview_fast_mode=_optional_bool(
+            live_section,
+            "preview_fast_mode",
+            False,
+        ),
+        preview_skip_fallback_confirmation=_optional_bool(
+            live_section,
+            "preview_skip_fallback_confirmation",
+            False,
+        ),
+        preview_render_aux_boxes=_optional_bool(
+            live_section,
+            "preview_render_aux_boxes",
+            True,
+        ),
+        preview_crop_to_spawn_roi=_optional_bool(
+            live_section,
+            "preview_crop_to_spawn_roi",
+            False,
+        ),
+        preview_crop_padding_px=_optional_non_negative_int(
+            live_section,
+            "preview_crop_padding_px",
+            0,
+        ),
+        preview_analyze_every_nth_frame=_optional_positive_int(
+            live_section,
+            "preview_analyze_every_nth_frame",
+            1,
+        ),
         preview_refresh_interval_ms=_optional_positive_int(
             live_section,
             "preview_refresh_interval_ms",
@@ -937,6 +973,15 @@ def _optional_positive_int(data: Mapping[str, Any], key: str, default: int) -> i
         raise ConfigError(f"Pole '{key}' musi byc liczba calkowita.")
     if value <= 0:
         raise ConfigError(f"Pole '{key}' musi byc wieksze od 0.")
+    return value
+
+
+def _optional_non_negative_int(data: Mapping[str, Any], key: str, default: int) -> int:
+    value = data.get(key, default)
+    if not isinstance(value, int):
+        raise ConfigError(f"Pole '{key}' musi byc liczba calkowita.")
+    if value < 0:
+        raise ConfigError(f"Pole '{key}' nie moze byc ujemne.")
     return value
 
 

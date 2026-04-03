@@ -1004,6 +1004,11 @@ class PerceptionAnalyzer:
         player_veto_rejections: list[dict[str, Any]] = []
         mob_signature_rejections: list[dict[str, Any]] = []
         local_stride_px = max(1, min(4, stride_px))
+        skip_fallback_confirmation = (
+            phase == "preview"
+            and self._live_config.preview_fast_mode
+            and self._live_config.preview_skip_fallback_confirmation
+        )
         for index, marker_hit in enumerate(merged_marker_hits, start=1):
             confirmation_roi_box = _build_local_roi_box(
                 anchor_x=marker_hit.x + (marker_hit.width / 2.0),
@@ -1030,7 +1035,11 @@ class PerceptionAnalyzer:
             )
             fallback_confirmation_hits: tuple[TemplateHit, ...] = ()
             best_fallback_confirmation: TemplateHit | None = None
-            if best_upper_confirmation is None and template_pack.mob_fallback_variants:
+            if (
+                best_upper_confirmation is None
+                and template_pack.mob_fallback_variants
+                and not skip_fallback_confirmation
+            ):
                 fallback_confirmation_hits = _match_local_variants(
                     image=image,
                     box=confirmation_roi_box,
@@ -3523,6 +3532,10 @@ def _build_detection_tuning_parameters(live_config: LiveConfig) -> dict[str, Any
         "rescue_upper_scan_stride_px": live_config.rescue_upper_scan_stride_px,
         "rescue_pseudo_marker_size_px": live_config.rescue_pseudo_marker_size_px,
         "rescue_pseudo_marker_offset_y_px": live_config.rescue_pseudo_marker_offset_y_px,
+        "preview_fast_mode": live_config.preview_fast_mode,
+        "preview_skip_fallback_confirmation": live_config.preview_skip_fallback_confirmation,
+        "preview_render_aux_boxes": live_config.preview_render_aux_boxes,
+        "preview_analyze_every_nth_frame": live_config.preview_analyze_every_nth_frame,
         "scene_profile_path": None
         if live_config.scene_profile_path is None
         else str(live_config.scene_profile_path),

@@ -98,8 +98,8 @@ class LiveRuntime:
         self._perception_artifact_writer = perception_artifact_writer
         self._logger = logger
         self._session_state = LiveSessionState()
-        self._frames: dict[tuple[int, str], LiveFrame] = {}
-        self._perception_results: dict[tuple[int, str], PerceptionFrameResult] = {}
+        self._frames: dict[tuple[int, str, str], LiveFrame] = {}
+        self._perception_results: dict[tuple[int, str, str], PerceptionFrameResult] = {}
         self._observation_preparations: dict[int, ObservationPreparationResult] = {}
         self._target_resolutions: dict[int, TargetResolution] = {}
         self._approach_results: dict[int, TargetApproachResult] = {}
@@ -126,8 +126,10 @@ class LiveRuntime:
         cycle_id: int,
         phase: str,
         default_ts: float,
+        allow_background_capture: bool = False,
     ) -> LiveFrame:
-        cache_key = (cycle_id, phase)
+        capture_mode = "preview_bypass" if allow_background_capture else "default"
+        cache_key = (cycle_id, phase, capture_mode)
         cached_frame = self._frames.get(cache_key)
         if cached_frame is not None:
             return cached_frame
@@ -137,6 +139,7 @@ class LiveRuntime:
             phase=phase,
             default_ts=default_ts,
             session_state=self._session_state,
+            allow_background_capture=allow_background_capture,
         )
         artifact_paths = self._artifact_writer.write_frame(
             cycle_id=cycle_id,
@@ -161,13 +164,20 @@ class LiveRuntime:
         cycle_id: int,
         phase: str,
         default_ts: float,
+        allow_background_capture: bool = False,
     ) -> PerceptionFrameResult:
-        cache_key = (cycle_id, phase)
+        capture_mode = "preview_bypass" if allow_background_capture else "default"
+        cache_key = (cycle_id, phase, capture_mode)
         cached_result = self._perception_results.get(cache_key)
         if cached_result is not None:
             return cached_result
 
-        frame = self.capture_frame(cycle_id=cycle_id, phase=phase, default_ts=default_ts)
+        frame = self.capture_frame(
+            cycle_id=cycle_id,
+            phase=phase,
+            default_ts=default_ts,
+            allow_background_capture=allow_background_capture,
+        )
         result = self._perception_analyzer.analyze_frame(frame, cycle_id=cycle_id, phase=phase)
         artifact_paths = self._perception_artifact_writer.write_cycle_result(
             cycle_id=cycle_id,
@@ -198,7 +208,7 @@ class LiveRuntime:
         cycle_id: int,
         phase: str,
     ) -> PerceptionFrameResult | None:
-        return self._perception_results.get((cycle_id, phase))
+        return self._perception_results.get((cycle_id, phase, "default"))
 
     def set_observation_preparation(self, result: ObservationPreparationResult) -> None:
         self._observation_preparations[result.cycle_id] = result
@@ -982,6 +992,7 @@ class LiveRunner:
         initial_anchor_cycle_id: int = 0,
         logger_name: str = "botlab.live",
         enable_console: bool = False,
+        force_input_dry_run: bool = False,
     ) -> "LiveRunner":
         scheduler = CycleScheduler.from_cycle_config(settings.cycle)
         scheduler.bootstrap(
@@ -1014,10 +1025,10 @@ class LiveRunner:
         recovery = RecoveryManager(settings.cycle)
         input_driver = LiveInputDriver(
             logger=logger,
-            dry_run=settings.live.dry_run,
-            enable_real_input=settings.live.enable_real_input,
-            enable_real_clicks=settings.live.enable_real_clicks,
-            enable_real_keys=settings.live.enable_real_keys,
+            dry_run=settings.live.dry_run or force_input_dry_run,
+            enable_real_input=False if force_input_dry_run else settings.live.enable_real_input,
+            enable_real_clicks=False if force_input_dry_run else settings.live.enable_real_clicks,
+            enable_real_keys=False if force_input_dry_run else settings.live.enable_real_keys,
             screen_offset_xy=(
                 settings.live.capture_region[0],
                 settings.live.capture_region[1],

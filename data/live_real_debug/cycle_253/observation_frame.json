@@ -1,0 +1,64 @@
+{
+  "captured_at_ts": 11485.0,
+  "height": 0,
+  "metadata": {
+    "condition_ratio": 1.0,
+    "cycle_id": 253,
+    "hp_ratio": 1.0,
+    "in_combat": false,
+    "perception_profile": {
+      "action_ready_duration_s": 0.002,
+      "detection_duration_s": 0.011,
+      "selection_duration_s": 0.003
+    },
+    "phase": "observation",
+    "rest_available": true,
+    "reward_visible": false,
+    "targets": [
+      {
+        "bbox_height": null,
+        "bbox_width": null,
+        "confidence": 1.0,
+        "distance": 5.322947,
+        "metadata": {},
+        "mob_variant": "mob_a",
+        "occupied": false,
+        "orientation_deg": 0,
+        "reachable": true,
+        "screen_x": 652,
+        "screen_y": 244,
+        "target_id": "live-spawn-253-1"
+      },
+      {
+        "bbox_height": null,
+        "bbox_width": null,
+        "confidence": 1.0,
+        "distance": 4.917898,
+        "metadata": {},
+        "mob_variant": "mob_b",
+        "occupied": false,
+        "orientation_deg": 0,
+        "reachable": true,
+        "screen_x": 713,
+        "screen_y": 247,
+        "target_id": "live-spawn-253-2"
+      },
+      {
+        "bbox_height": null,
+        "bbox_width": null,
+        "confidence": 1.0,
+        "distance": 5.376737,
+        "metadata": {},
+        "mob_variant": "mob_a",
+        "occupied": false,
+        "orientation_deg": 0,
+        "reachable": true,
+        "screen_x": 666,
+        "screen_y": 238,
+        "target_id": "live-spawn-253-3"
+      }
+    ]
+  },
+  "source": "dry_run:single_spot_mvp",
+  "width": 0
+}

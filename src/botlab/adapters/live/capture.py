@@ -39,6 +39,7 @@ class CaptureRegion:
 @dataclass(slots=True, frozen=True)
 class WindowCaptureStatus:
     configured_window_title: str
+    matched_window_hwnd: int | None
     matched_window_title: str | None
     foreground_window_title: str | None
     window_bbox: tuple[int, int, int, int] | None
@@ -52,6 +53,7 @@ class WindowCaptureStatus:
     def to_dict(self) -> dict[str, Any]:
         return {
             "configured_window_title": self.configured_window_title,
+            "matched_window_hwnd": self.matched_window_hwnd,
             "matched_window_title": self.matched_window_title,
             "foreground_window_title": self.foreground_window_title,
             "window_bbox": None if self.window_bbox is None else list(self.window_bbox),
@@ -194,6 +196,7 @@ class ForegroundWindowCapture:
         phase: str,
         default_ts: float,
         session_state: LiveSessionState,
+        allow_background_capture: bool = False,
     ) -> LiveFrame:
         if ImageGrab is None:
             raise RuntimeError(
@@ -201,9 +204,28 @@ class ForegroundWindowCapture:
             )
         window_status = self._resolve_window_status()
         self._last_window_status = window_status
+        preview_background_bypass = False
         if window_status.reliable:
             image = ImageGrab.grab(bbox=window_status.capture_bbox)
             source = "foreground_window_capture"
+            capture_reliability = "trusted"
+        elif allow_background_capture and window_status.window_bbox is not None:
+            image = None
+            if window_status.matched_window_hwnd is not None:
+                image = _grab_window_content(
+                    hwnd=window_status.matched_window_hwnd,
+                    window_bbox=window_status.window_bbox,
+                    capture_bbox=window_status.capture_bbox,
+                )
+            if image is not None:
+                source = "window_content_capture_preview_bypass"
+                capture_reliability = "preview_background_bypass"
+                preview_background_bypass = True
+            else:
+                image = ImageGrab.grab(bbox=window_status.capture_bbox)
+                source = "foreground_window_capture_preview_bypass"
+                capture_reliability = "preview_background_bypass_fallback"
+                preview_background_bypass = True
         else:
             if Image is None:
                 raise RuntimeError("Brak Pillow/Image. Window guard wymaga mozliwosci utworzenia placeholder frame.")
@@ -211,6 +233,7 @@ class ForegroundWindowCapture:
             blocked_height = max(1, int(window_status.capture_bbox[3] - window_status.capture_bbox[1]))
             image = Image.new("RGB", (blocked_width, blocked_height), color=(8, 8, 8))
             source = "foreground_window_capture_blocked"
+            capture_reliability = "blocked"
         return LiveFrame(
             width=int(image.size[0]),
             height=int(image.size[1]),
@@ -224,7 +247,8 @@ class ForegroundWindowCapture:
                 "resource_fallback_enabled": False,
                 "state_fallback_enabled": False,
                 "window_guard": window_status.to_dict(),
-                "capture_reliability": "trusted" if window_status.reliable else "blocked",
+                "capture_reliability": capture_reliability,
+                "preview_background_bypass": preview_background_bypass,
             },
             image=image,
         )
@@ -240,6 +264,7 @@ class ForegroundWindowCapture:
         if sys.platform != "win32":
             return WindowCaptureStatus(
                 configured_window_title=configured_title,
+                matched_window_hwnd=None,
                 matched_window_title=None,
                 foreground_window_title=None,
                 window_bbox=None,
@@ -256,6 +281,7 @@ class ForegroundWindowCapture:
         if matched_window is None:
             return WindowCaptureStatus(
                 configured_window_title=configured_title,
+                matched_window_hwnd=None,
                 matched_window_title=None,
                 foreground_window_title=None if foreground_window is None else foreground_window["title"],
                 window_bbox=None,
@@ -285,6 +311,7 @@ class ForegroundWindowCapture:
 
         return WindowCaptureStatus(
             configured_window_title=configured_title,
+            matched_window_hwnd=int(matched_window["hwnd"]),
             matched_window_title=str(matched_window["title"]),
             foreground_window_title=foreground_title,
             window_bbox=window_bbox,
@@ -309,7 +336,9 @@ class DryRunWindowCapture:
         phase: str,
         default_ts: float,
         session_state: LiveSessionState,
+        allow_background_capture: bool = False,
     ) -> LiveFrame:
+        _ = allow_background_capture
         metadata = self._build_frame_metadata(
             cycle_id=cycle_id,
             phase=phase,
@@ -1095,3 +1124,112 @@ def _get_window_rect(hwnd: int) -> tuple[int, int, int, int] | None:
     if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
         return None
     return (int(rect.left), int(rect.top), int(rect.right), int(rect.bottom))
+
+
+def _grab_window_content(
+    *,
+    hwnd: int,
+    window_bbox: tuple[int, int, int, int],
+    capture_bbox: tuple[int, int, int, int],
+):
+    if sys.platform != "win32" or Image is None:
+        return None
+
+    user32 = ctypes.windll.user32
+    gdi32 = ctypes.windll.gdi32
+    window_left, window_top, window_right, window_bottom = window_bbox
+    width = max(1, int(window_right - window_left))
+    height = max(1, int(window_bottom - window_top))
+
+    hwnd_dc = user32.GetWindowDC(hwnd)
+    if not hwnd_dc:
+        return None
+    mem_dc = gdi32.CreateCompatibleDC(hwnd_dc)
+    if not mem_dc:
+        user32.ReleaseDC(hwnd, hwnd_dc)
+        return None
+    bitmap = gdi32.CreateCompatibleBitmap(hwnd_dc, width, height)
+    if not bitmap:
+        gdi32.DeleteDC(mem_dc)
+        user32.ReleaseDC(hwnd, hwnd_dc)
+        return None
+
+    old_object = gdi32.SelectObject(mem_dc, bitmap)
+    try:
+        print_success = bool(user32.PrintWindow(hwnd, mem_dc, 0))
+        if not print_success:
+            print_success = bool(user32.PrintWindow(hwnd, mem_dc, 2))
+        if not print_success:
+            return None
+
+        class BITMAPINFOHEADER(ctypes.Structure):
+            _fields_ = [
+                ("biSize", ctypes.wintypes.DWORD),
+                ("biWidth", ctypes.wintypes.LONG),
+                ("biHeight", ctypes.wintypes.LONG),
+                ("biPlanes", ctypes.wintypes.WORD),
+                ("biBitCount", ctypes.wintypes.WORD),
+                ("biCompression", ctypes.wintypes.DWORD),
+                ("biSizeImage", ctypes.wintypes.DWORD),
+                ("biXPelsPerMeter", ctypes.wintypes.LONG),
+                ("biYPelsPerMeter", ctypes.wintypes.LONG),
+                ("biClrUsed", ctypes.wintypes.DWORD),
+                ("biClrImportant", ctypes.wintypes.DWORD),
+            ]
+
+        class RGBQUAD(ctypes.Structure):
+            _fields_ = [
+                ("rgbBlue", ctypes.c_ubyte),
+                ("rgbGreen", ctypes.c_ubyte),
+                ("rgbRed", ctypes.c_ubyte),
+                ("rgbReserved", ctypes.c_ubyte),
+            ]
+
+        class BITMAPINFO(ctypes.Structure):
+            _fields_ = [
+                ("bmiHeader", BITMAPINFOHEADER),
+                ("bmiColors", RGBQUAD * 1),
+            ]
+
+        bitmap_info = BITMAPINFO()
+        bitmap_info.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+        bitmap_info.bmiHeader.biWidth = width
+        bitmap_info.bmiHeader.biHeight = -height
+        bitmap_info.bmiHeader.biPlanes = 1
+        bitmap_info.bmiHeader.biBitCount = 32
+        bitmap_info.bmiHeader.biCompression = 0
+
+        buffer = ctypes.create_string_buffer(width * height * 4)
+        dib_rows = gdi32.GetDIBits(
+            mem_dc,
+            bitmap,
+            0,
+            height,
+            buffer,
+            ctypes.byref(bitmap_info),
+            0,
+        )
+        if dib_rows != height:
+            return None
+
+        image = Image.frombuffer(
+            "RGB",
+            (width, height),
+            buffer,
+            "raw",
+            "BGRX",
+            0,
+            1,
+        )
+        crop_left = max(0, int(capture_bbox[0] - window_left))
+        crop_top = max(0, int(capture_bbox[1] - window_top))
+        crop_right = min(width, int(capture_bbox[2] - window_left))
+        crop_bottom = min(height, int(capture_bbox[3] - window_top))
+        if crop_right <= crop_left or crop_bottom <= crop_top:
+            return image
+        return image.crop((crop_left, crop_top, crop_right, crop_bottom))
+    finally:
+        gdi32.SelectObject(mem_dc, old_object)
+        gdi32.DeleteObject(bitmap)
+        gdi32.DeleteDC(mem_dc)
+        user32.ReleaseDC(hwnd, hwnd_dc)

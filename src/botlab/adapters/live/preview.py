@@ -39,6 +39,9 @@ class LiveVisionPreviewState:
     detection_latency_ms: float
     selection_latency_ms: float
     total_reaction_latency_ms: float
+    render_latency_ms: float
+    dropped_or_skipped_frames: int
+    preview_mode: str
     headline_lines: tuple[str, ...]
 
 
@@ -47,6 +50,9 @@ def build_live_preview_state(
     frame: LiveFrame,
     result: PerceptionFrameResult,
     engage_result: LiveEngageResult | None = None,
+    render_latency_ms: float = 0.0,
+    dropped_or_skipped_frames: int = 0,
+    preview_mode: str = "standard",
 ) -> LiveVisionPreviewState:
     selected_target = result.selected_target
     headline_lines = [
@@ -54,7 +60,8 @@ def build_live_preview_state(
         f"scene={result.scene_name or 'none'}",
         f"targets={len(result.detections)} free={len(result.selectable_detections)} occupied={len(result.occupied_detections)} out_of_zone={len(result.out_of_zone_detections)}",
         f"selected={result.selected_target_id or 'None'}",
-        f"detection={result.timings.detection_latency_ms:.1f}ms selection={result.timings.selection_latency_ms:.1f}ms reaction={result.timings.total_reaction_latency_ms:.1f}ms",
+        f"detection_ms={result.timings.detection_latency_ms:.1f} render_ms={render_latency_ms:.1f} selection={result.timings.selection_latency_ms:.1f} reaction={result.timings.total_reaction_latency_ms:.1f}ms",
+        f"preview_mode={preview_mode} dropped_or_skipped_frames={dropped_or_skipped_frames}",
         f"candidate_hits={result.candidate_hit_count} merged={result.merged_hit_count}",
         (
             "selected_info="
@@ -63,6 +70,11 @@ def build_live_preview_state(
             else "selected_info=None"
         ),
     ]
+    capture_reliability = frame.metadata.get("capture_reliability")
+    if isinstance(capture_reliability, str) and capture_reliability:
+        headline_lines.append(f"capture_reliability={capture_reliability}")
+    if bool(frame.metadata.get("preview_background_bypass")):
+        headline_lines.append("preview_background_bypass=true")
     calibration_warning = result.scene_calibration.get("warning")
     if isinstance(calibration_warning, str) and calibration_warning.strip():
         headline_lines.append(f"scene_calibration_warning={calibration_warning}")
@@ -85,6 +97,9 @@ def build_live_preview_state(
         detection_latency_ms=result.timings.detection_latency_ms,
         selection_latency_ms=result.timings.selection_latency_ms,
         total_reaction_latency_ms=result.timings.total_reaction_latency_ms,
+        render_latency_ms=render_latency_ms,
+        dropped_or_skipped_frames=dropped_or_skipped_frames,
+        preview_mode=preview_mode,
         headline_lines=tuple(headline_lines),
     )
 
@@ -95,9 +110,15 @@ class LiveVisionPreviewRenderer:
         *,
         max_width_px: int,
         max_height_px: int,
+        render_aux_boxes: bool = True,
+        crop_to_spawn_roi: bool = False,
+        crop_padding_px: int = 0,
     ) -> None:
         self._max_width_px = max_width_px
         self._max_height_px = max_height_px
+        self._render_aux_boxes = render_aux_boxes
+        self._crop_to_spawn_roi = crop_to_spawn_roi
+        self._crop_padding_px = max(0, int(crop_padding_px))
 
     def render(
         self,
@@ -129,7 +150,7 @@ class LiveVisionPreviewRenderer:
             width=3,
         )
         draw.text((int(roi["x"]) + 4, int(roi["y"]) + 4), "spawn_roi", fill=(147, 197, 253), font=font)
-        if result.scene_zone_polygon:
+        if self._render_aux_boxes and result.scene_zone_polygon:
             draw.polygon(result.scene_zone_polygon, outline=(34, 197, 94), width=3)
             draw.text(
                 (int(result.scene_zone_polygon[0][0]), max(4, int(result.scene_zone_polygon[0][1]) - 18)),
@@ -138,22 +159,23 @@ class LiveVisionPreviewRenderer:
                 font=font,
             )
 
-        reference_x, reference_y = result.reference_point_xy
-        draw.line((reference_x - 10, reference_y, reference_x + 10, reference_y), fill=(253, 224, 71), width=2)
-        draw.line((reference_x, reference_y - 10, reference_x, reference_y + 10), fill=(253, 224, 71), width=2)
+        if self._render_aux_boxes:
+            reference_x, reference_y = result.reference_point_xy
+            draw.line((reference_x - 10, reference_y, reference_x + 10, reference_y), fill=(253, 224, 71), width=2)
+            draw.line((reference_x, reference_y - 10, reference_x, reference_y + 10), fill=(253, 224, 71), width=2)
 
-        for hit in result.raw_hits:
-            if hit.label == "red_marker":
-                color = (239, 68, 68)
-            elif hit.label == "occupied_swords":
-                color = (249, 115, 22)
-            else:
-                color = (56, 189, 248)
-            draw.rectangle(
-                (hit.x, hit.y, hit.x + hit.width, hit.y + hit.height),
-                outline=color,
-                width=1,
-            )
+            for hit in result.raw_hits:
+                if hit.label == "red_marker":
+                    color = (239, 68, 68)
+                elif hit.label == "occupied_swords":
+                    color = (249, 115, 22)
+                else:
+                    color = (56, 189, 248)
+                draw.rectangle(
+                    (hit.x, hit.y, hit.x + hit.width, hit.y + hit.height),
+                    outline=color,
+                    width=1,
+                )
 
         for detection in result.detections:
             bbox = detection.bbox or (
@@ -177,42 +199,43 @@ class LiveVisionPreviewRenderer:
                 (detection.screen_x - 4, detection.screen_y - 4, detection.screen_x + 4, detection.screen_y + 4),
                 fill=color,
             )
-            marker_bbox = detection.metadata.get("marker_bbox")
-            if isinstance(marker_bbox, list) and len(marker_bbox) == 4:
-                draw.rectangle(
-                    (
-                        marker_bbox[0],
-                        marker_bbox[1],
-                        marker_bbox[0] + marker_bbox[2],
-                        marker_bbox[1] + marker_bbox[3],
-                    ),
-                    outline=(239, 68, 68),
-                    width=2,
-                )
-            occupied_roi = detection.metadata.get("occupied_roi")
-            if isinstance(occupied_roi, list) and len(occupied_roi) == 4:
-                draw.rectangle(
-                    (
-                        occupied_roi[0],
-                        occupied_roi[1],
-                        occupied_roi[0] + occupied_roi[2],
-                        occupied_roi[1] + occupied_roi[3],
-                    ),
-                    outline=(249, 115, 22),
-                    width=1,
-                )
-            confirmation_roi = detection.metadata.get("confirmation_roi")
-            if isinstance(confirmation_roi, list) and len(confirmation_roi) == 4:
-                draw.rectangle(
-                    (
-                        confirmation_roi[0],
-                        confirmation_roi[1],
-                        confirmation_roi[0] + confirmation_roi[2],
-                        confirmation_roi[1] + confirmation_roi[3],
-                    ),
-                    outline=(56, 189, 248),
-                    width=1,
-                )
+            if self._render_aux_boxes:
+                marker_bbox = detection.metadata.get("marker_bbox")
+                if isinstance(marker_bbox, list) and len(marker_bbox) == 4:
+                    draw.rectangle(
+                        (
+                            marker_bbox[0],
+                            marker_bbox[1],
+                            marker_bbox[0] + marker_bbox[2],
+                            marker_bbox[1] + marker_bbox[3],
+                        ),
+                        outline=(239, 68, 68),
+                        width=2,
+                    )
+                occupied_roi = detection.metadata.get("occupied_roi")
+                if isinstance(occupied_roi, list) and len(occupied_roi) == 4:
+                    draw.rectangle(
+                        (
+                            occupied_roi[0],
+                            occupied_roi[1],
+                            occupied_roi[0] + occupied_roi[2],
+                            occupied_roi[1] + occupied_roi[3],
+                        ),
+                        outline=(249, 115, 22),
+                        width=1,
+                    )
+                confirmation_roi = detection.metadata.get("confirmation_roi")
+                if isinstance(confirmation_roi, list) and len(confirmation_roi) == 4:
+                    draw.rectangle(
+                        (
+                            confirmation_roi[0],
+                            confirmation_roi[1],
+                            confirmation_roi[0] + confirmation_roi[2],
+                            confirmation_roi[1] + confirmation_roi[3],
+                        ),
+                        outline=(56, 189, 248),
+                        width=1,
+                    )
             label = "occupied" if detection.occupied else "free"
             if not in_scene_zone:
                 label = f"{label}/out_of_zone"
@@ -258,6 +281,7 @@ class LiveVisionPreviewRenderer:
             )
 
         self._draw_headline_box(draw=draw, font=font, state=state)
+        canvas = self._crop_canvas_to_spawn_roi(canvas=canvas, result=result)
         return self._resize_to_fit(canvas)
 
     def _draw_headline_box(self, *, draw, font, state: LiveVisionPreviewState) -> None:
@@ -287,6 +311,18 @@ class LiveVisionPreviewRenderer:
         resized_height = max(1, int(height * scale))
         return image.resize((resized_width, resized_height))
 
+    def _crop_canvas_to_spawn_roi(self, *, canvas, result: PerceptionFrameResult):
+        if not self._crop_to_spawn_roi:
+            return canvas
+        roi = result.roi
+        left = max(0, int(roi["x"]) - self._crop_padding_px)
+        top = max(0, int(roi["y"]) - self._crop_padding_px)
+        right = min(canvas.size[0], int(roi["x"]) + int(roi["width"]) + self._crop_padding_px)
+        bottom = min(canvas.size[1], int(roi["y"]) + int(roi["height"]) + self._crop_padding_px)
+        if right <= left or bottom <= top:
+            return canvas
+        return canvas.crop((left, top, right, bottom))
+
 
 class LiveVisionPreview:
     def __init__(
@@ -309,35 +345,83 @@ class LiveVisionPreview:
         self._renderer = LiveVisionPreviewRenderer(
             max_width_px=settings.live.preview_max_width_px,
             max_height_px=settings.live.preview_max_height_px,
+            render_aux_boxes=settings.live.preview_render_aux_boxes,
+            crop_to_spawn_roi=settings.live.preview_crop_to_spawn_roi,
+            crop_padding_px=settings.live.preview_crop_padding_px,
         )
         self._session_state = LiveSessionState()
         self._tick_index = 0
+        self._preview_loop_index = 0
+        self._skipped_frame_count = 0
+        self._last_render_payload: tuple[LiveVisionPreviewState, Any] | None = None
 
     def render_next_frame(self):
+        self._preview_loop_index += 1
+        analyze_every = max(1, self._settings.live.preview_analyze_every_nth_frame)
+        if (
+            self._settings.live.preview_fast_mode
+            and self._last_render_payload is not None
+            and (self._preview_loop_index % analyze_every) != 0
+        ):
+            self._skipped_frame_count += 1
+            return self._last_render_payload
+
         frame = self._capture.capture_frame(
             cycle_id=self._tick_index + 1,
             phase="observation",
             default_ts=float(self._clock()),
             session_state=self._session_state,
+            allow_background_capture=True,
         )
+        analyze_started = time.perf_counter()
         result = self._analyzer.analyze_frame(
             frame,
             cycle_id=self._tick_index + 1,
             phase="preview",
         )
-        state = build_live_preview_state(frame=frame, result=result)
+        analyze_elapsed_ms = max(0.0, (time.perf_counter() - analyze_started) * 1000.0)
+        render_started = time.perf_counter()
+        preview_mode = "fast" if self._settings.live.preview_fast_mode else "standard"
+        state = build_live_preview_state(
+            frame=frame,
+            result=result,
+            render_latency_ms=0.0,
+            dropped_or_skipped_frames=self._skipped_frame_count,
+            preview_mode=preview_mode,
+        )
         image = self._renderer.render(frame=frame, result=result, state=state)
+        render_elapsed_ms = max(0.0, (time.perf_counter() - render_started) * 1000.0)
+        state = build_live_preview_state(
+            frame=frame,
+            result=result,
+            render_latency_ms=render_elapsed_ms,
+            dropped_or_skipped_frames=self._skipped_frame_count,
+            preview_mode=preview_mode,
+        )
         self._tick_index += 1
+        refresh_budget_ms = float(self._settings.live.preview_refresh_interval_ms)
+        if analyze_elapsed_ms > refresh_budget_ms:
+            self._logger.warning(
+                "live_preview detection exceeded refresh budget detection_ms=%.1f budget_ms=%.1f skipped=%s",
+                analyze_elapsed_ms,
+                refresh_budget_ms,
+                self._skipped_frame_count,
+            )
         self._logger.info(
-            "live_preview frame=%s targets=%s free=%s occupied=%s selected=%s reaction_ms=%.3f",
+            "live_preview frame=%s targets=%s free=%s occupied=%s selected=%s detection_ms=%.1f render_ms=%.1f skipped=%s mode=%s reaction_ms=%.3f",
             self._tick_index,
             state.candidate_count,
             state.free_target_count,
             state.occupied_target_count,
             state.selected_target_id,
+            analyze_elapsed_ms,
+            render_elapsed_ms,
+            self._skipped_frame_count,
+            preview_mode,
             state.total_reaction_latency_ms,
         )
-        return state, image
+        self._last_render_payload = (state, image)
+        return self._last_render_payload
 
     def run(self) -> int:
         try:
@@ -437,25 +521,24 @@ class LiveEngageObserve:
         enable_console: bool = True,
     ) -> None:
         self._safe_dry_run_enabled = not settings.live.dry_run
-        if self._safe_dry_run_enabled:
-            settings = replace(
-                settings,
-                live=replace(settings.live, dry_run=True),
-            )
         self._settings = settings
         self._logger = logging.getLogger(logger_name)
         self._runner = LiveRunner.from_settings(
             settings,
             logger_name=logger_name,
             enable_console=enable_console,
+            force_input_dry_run=self._safe_dry_run_enabled,
         )
         self._renderer = LiveVisionPreviewRenderer(
             max_width_px=settings.live.preview_max_width_px,
             max_height_px=settings.live.preview_max_height_px,
+            render_aux_boxes=settings.live.preview_render_aux_boxes,
+            crop_to_spawn_roi=settings.live.preview_crop_to_spawn_roi,
+            crop_padding_px=settings.live.preview_crop_padding_px,
         )
         if self._safe_dry_run_enabled:
             self._logger.warning(
-                "live_engage_observe forced dry_run input for safety; preview keeps real capture but disables real clicks."
+                "live_engage_observe forced dry_run input for safety while preserving real live capture."
             )
 
     @property
@@ -479,11 +562,13 @@ class LiveEngageObserve:
             cycle_id=result.cycle_id,
             phase="observation",
             default_ts=observation_result.timings.frame_captured_ts,
+            allow_background_capture=True,
         )
         state = build_live_preview_state(
             frame=frame,
             result=observation_result,
             engage_result=result,
+            preview_mode="observe_fast" if self._settings.live.preview_fast_mode else "observe_standard",
         )
         if self._safe_dry_run_enabled:
             state = LiveVisionPreviewState(
@@ -498,6 +583,9 @@ class LiveEngageObserve:
                 detection_latency_ms=state.detection_latency_ms,
                 selection_latency_ms=state.selection_latency_ms,
                 total_reaction_latency_ms=state.total_reaction_latency_ms,
+                render_latency_ms=state.render_latency_ms,
+                dropped_or_skipped_frames=state.dropped_or_skipped_frames,
+                preview_mode=state.preview_mode,
                 headline_lines=state.headline_lines + ("input_mode=dry_run_safe",),
             )
         image = self._renderer.render(

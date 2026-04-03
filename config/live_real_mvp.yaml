@@ -137,6 +137,12 @@ live:
   engage_target_match_max_distance_px: 72
   engage_min_target_confidence: 0.80
   engage_min_seen_frames: 2
-  preview_refresh_interval_ms: 80
-  preview_max_width_px: 1600
-  preview_max_height_px: 900
+  preview_fast_mode: true
+  preview_skip_fallback_confirmation: true
+  preview_render_aux_boxes: false
+  preview_crop_to_spawn_roi: true
+  preview_crop_padding_px: 16
+  preview_analyze_every_nth_frame: 2
+  preview_refresh_interval_ms: 150
+  preview_max_width_px: 1280
+  preview_max_height_px: 720

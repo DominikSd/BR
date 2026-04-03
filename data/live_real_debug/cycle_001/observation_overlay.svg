@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" viewBox="0 0 0 0">
+<svg xmlns="http://www.w3.org/2000/svg" width="2576" height="1408" viewBox="0 0 2576 1408">
 <rect width="100%" height="100%" fill="#111827" />
 <rect x="80" y="40" width="1450" height="860" fill="none" stroke="#60a5fa" stroke-width="2" />
 <text x="84" y="56" fill="#93c5fd" font-size="14">spawn_roi</text>
@@ -10,12 +10,8 @@
 <text x="564" y="636" fill="#93c5fd" font-size="14">combat_indicator_roi</text>
 <rect x="500" y="120" width="260" height="120" fill="none" stroke="#60a5fa" stroke-width="2" />
 <text x="504" y="136" fill="#93c5fd" font-size="14">reward_roi</text>
-<circle cx="520" cy="280" r="12" fill="none" stroke="#ef4444" stroke-width="3" />
-<line x1="510" y1="270" x2="530" y2="290" stroke="#f97316" stroke-width="3" />
-<line x1="530" y1="270" x2="510" y2="290" stroke="#f97316" stroke-width="3" />
-<text x="536" y="274" fill="#f9fafb" font-size="14">occupied-near</text>
-<circle cx="620" cy="300" r="12" fill="none" stroke="#22c55e" stroke-width="3" />
-<text x="636" y="294" fill="#f9fafb" font-size="14">front-free</text>
-<circle cx="760" cy="318" r="12" fill="none" stroke="#22c55e" stroke-width="3" />
-<text x="776" y="312" fill="#f9fafb" font-size="14">fallback-safe</text>
+<rect x="8" y="8" width="520" height="76" fill="#0f172a" fill-opacity="0.80" stroke="#334155" stroke-width="1" />
+<text x="16" y="28" fill="#f8fafc" font-size="14">window=BrokenRanks matched=BrokenRanks</text>
+<text x="16" y="46" fill="#f8fafc" font-size="14">foreground=observation_perception.json - Untitled (Workspace) - Visual Studio Code matches=False reliable=False</text>
+<text x="16" y="64" fill="#f8fafc" font-size="14">capture_bbox=[-8, -8, 2568, 1400] block_reason=foreground_window_mismatch</text>
 </svg>
