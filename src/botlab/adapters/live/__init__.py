@@ -8,6 +8,7 @@ from botlab.adapters.live.engage import (
 from botlab.adapters.live.runner import LiveRunner
 from botlab.adapters.live.preview import (
     LiveEngageObserve,
+    LivePreviewSnapshotWriter,
     LiveVisionPreview,
     LiveVisionPreviewRenderer,
     build_live_preview_state,
@@ -38,6 +39,7 @@ __all__ = [
     "LiveEngageRunReport",
     "LiveEngageService",
     "LiveEngageSessionSummary",
+    "LivePreviewSnapshotWriter",
     "LiveRunner",
     "LiveVisionPreview",
     "LiveVisionPreviewRenderer",

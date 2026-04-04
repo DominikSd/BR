@@ -89,6 +89,7 @@ class LiveRuntime:
         perception_analyzer: PerceptionAnalyzer,
         perception_artifact_writer: PerceptionArtifactWriter,
         logger: logging.Logger,
+        default_allow_background_capture: bool = False,
     ) -> None:
         self._settings = settings
         self._scheduler = scheduler
@@ -97,6 +98,7 @@ class LiveRuntime:
         self._perception_analyzer = perception_analyzer
         self._perception_artifact_writer = perception_artifact_writer
         self._logger = logger
+        self._default_allow_background_capture = default_allow_background_capture
         self._session_state = LiveSessionState()
         self._frames: dict[tuple[int, str, str], LiveFrame] = {}
         self._perception_results: dict[tuple[int, str, str], PerceptionFrameResult] = {}
@@ -128,7 +130,8 @@ class LiveRuntime:
         default_ts: float,
         allow_background_capture: bool = False,
     ) -> LiveFrame:
-        capture_mode = "preview_bypass" if allow_background_capture else "default"
+        effective_allow_background_capture = allow_background_capture or self._default_allow_background_capture
+        capture_mode = "preview_bypass" if effective_allow_background_capture else "default"
         cache_key = (cycle_id, phase, capture_mode)
         cached_frame = self._frames.get(cache_key)
         if cached_frame is not None:
@@ -139,7 +142,7 @@ class LiveRuntime:
             phase=phase,
             default_ts=default_ts,
             session_state=self._session_state,
-            allow_background_capture=allow_background_capture,
+            allow_background_capture=effective_allow_background_capture,
         )
         artifact_paths = self._artifact_writer.write_frame(
             cycle_id=cycle_id,
@@ -166,7 +169,8 @@ class LiveRuntime:
         default_ts: float,
         allow_background_capture: bool = False,
     ) -> PerceptionFrameResult:
-        capture_mode = "preview_bypass" if allow_background_capture else "default"
+        effective_allow_background_capture = allow_background_capture or self._default_allow_background_capture
+        capture_mode = "preview_bypass" if effective_allow_background_capture else "default"
         cache_key = (cycle_id, phase, capture_mode)
         cached_result = self._perception_results.get(cache_key)
         if cached_result is not None:
@@ -176,7 +180,7 @@ class LiveRuntime:
             cycle_id=cycle_id,
             phase=phase,
             default_ts=default_ts,
-            allow_background_capture=allow_background_capture,
+            allow_background_capture=effective_allow_background_capture,
         )
         result = self._perception_analyzer.analyze_frame(frame, cycle_id=cycle_id, phase=phase)
         artifact_paths = self._perception_artifact_writer.write_cycle_result(
@@ -209,6 +213,15 @@ class LiveRuntime:
         phase: str,
     ) -> PerceptionFrameResult | None:
         return self._perception_results.get((cycle_id, phase, "default"))
+
+    def frame_result(
+        self,
+        *,
+        cycle_id: int,
+        phase: str,
+        capture_mode: str = "default",
+    ) -> LiveFrame | None:
+        return self._frames.get((cycle_id, phase, capture_mode))
 
     def set_observation_preparation(self, result: ObservationPreparationResult) -> None:
         self._observation_preparations[result.cycle_id] = result
@@ -993,6 +1006,7 @@ class LiveRunner:
         logger_name: str = "botlab.live",
         enable_console: bool = False,
         force_input_dry_run: bool = False,
+        force_background_capture: bool = False,
     ) -> "LiveRunner":
         scheduler = CycleScheduler.from_cycle_config(settings.cycle)
         scheduler.bootstrap(
@@ -1014,6 +1028,7 @@ class LiveRunner:
             perception_analyzer=PerceptionAnalyzer(settings.live),
             perception_artifact_writer=PerceptionArtifactWriter(settings.live.debug_directory),
             logger=logger,
+            default_allow_background_capture=force_background_capture,
         )
         decision_engine = DecisionEngine(settings.cycle, settings.combat)
         fsm = CycleFSM(

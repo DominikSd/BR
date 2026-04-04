@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import logging
 import queue
 import threading
 import time
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Any, Callable
 
 from botlab.adapters.live.capture import create_capture
@@ -26,11 +28,80 @@ except Exception:  # pragma: no cover - optional dependency path
 Clock = Callable[[], float]
 
 
+class LivePreviewSnapshotWriter:
+    def __init__(self, *, debug_directory: Path) -> None:
+        self._output_directory = Path(debug_directory) / "preview_snapshot"
+        self._image_path = self._output_directory / "latest_preview.png"
+        self._state_path = self._output_directory / "latest_preview.json"
+
+    @property
+    def image_path(self) -> Path:
+        return self._image_path
+
+    @property
+    def state_path(self) -> Path:
+        return self._state_path
+
+    def save(self, *, state: LiveVisionPreviewState, image) -> tuple[Path, Path]:
+        if Image is None:
+            raise RuntimeError("Snapshot preview wymaga Pillow.")
+        self._output_directory.mkdir(parents=True, exist_ok=True)
+        image.save(self._image_path)
+        payload = {
+            "frame_source": state.frame_source,
+            "frame_width": state.frame_width,
+            "frame_height": state.frame_height,
+            "capture_reliability": state.capture_reliability,
+            "preview_background_bypass": state.preview_background_bypass,
+            "window_guard_block_reason": state.window_guard_block_reason,
+            "capture_mode_used_for_preview": state.capture_mode_used_for_preview,
+            "selected_target_id": state.selected_target_id,
+            "candidate_count": state.candidate_count,
+            "free_target_count": state.free_target_count,
+            "occupied_target_count": state.occupied_target_count,
+            "out_of_zone_target_count": state.out_of_zone_target_count,
+            "detection_latency_ms": state.detection_latency_ms,
+            "selection_latency_ms": state.selection_latency_ms,
+            "total_reaction_latency_ms": state.total_reaction_latency_ms,
+            "render_latency_ms": state.render_latency_ms,
+            "dropped_or_skipped_frames": state.dropped_or_skipped_frames,
+            "preview_mode": state.preview_mode,
+            "headline_lines": list(state.headline_lines),
+            "image_path": str(self._image_path),
+        }
+        self._state_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return self._image_path, self._state_path
+
+
+def _clone_preview_payload(
+    payload: tuple[LiveVisionPreviewState, Any],
+) -> tuple[LiveVisionPreviewState, Any]:
+    state, image = payload
+    return state, image.copy() if hasattr(image, "copy") else image
+
+
+def _resolve_snapshot_payload(
+    *,
+    latest_payload: tuple[LiveVisionPreviewState, Any] | None,
+    payload_factory: Callable[[], tuple[LiveVisionPreviewState, Any]],
+) -> tuple[LiveVisionPreviewState, Any]:
+    if latest_payload is not None:
+        return _clone_preview_payload(latest_payload)
+    return _clone_preview_payload(payload_factory())
+
+
 @dataclass(slots=True, frozen=True)
 class LiveVisionPreviewState:
     frame_source: str
     frame_width: int
     frame_height: int
+    capture_reliability: str | None
+    preview_background_bypass: bool
+    window_guard_block_reason: str | None
+    capture_mode_used_for_preview: str
     selected_target_id: str | None
     candidate_count: int
     free_target_count: int
@@ -53,16 +124,28 @@ def build_live_preview_state(
     render_latency_ms: float = 0.0,
     dropped_or_skipped_frames: int = 0,
     preview_mode: str = "standard",
+    capture_mode_used_for_preview: str = "default",
 ) -> LiveVisionPreviewState:
     selected_target = result.selected_target
+    capture_reliability = frame.metadata.get("capture_reliability")
+    if not isinstance(capture_reliability, str) or not capture_reliability:
+        capture_reliability = None
+    preview_background_bypass = bool(frame.metadata.get("preview_background_bypass"))
+    window_guard = frame.metadata.get("window_guard")
+    window_guard_block_reason = None
+    if isinstance(window_guard, dict):
+        block_reason = window_guard.get("block_reason")
+        if isinstance(block_reason, str) and block_reason.strip():
+            window_guard_block_reason = block_reason
     headline_lines = [
-        f"source={frame.source}",
+        f"frame_source={frame.source}",
         f"scene={result.scene_name or 'none'}",
         f"targets={len(result.detections)} free={len(result.selectable_detections)} occupied={len(result.occupied_detections)} out_of_zone={len(result.out_of_zone_detections)}",
         f"selected={result.selected_target_id or 'None'}",
         f"detection_ms={result.timings.detection_latency_ms:.1f} render_ms={render_latency_ms:.1f} selection={result.timings.selection_latency_ms:.1f} reaction={result.timings.total_reaction_latency_ms:.1f}ms",
         f"preview_mode={preview_mode} dropped_or_skipped_frames={dropped_or_skipped_frames}",
         f"candidate_hits={result.candidate_hit_count} merged={result.merged_hit_count}",
+        f"capture_mode_used_for_preview={capture_mode_used_for_preview}",
         (
             "selected_info="
             f"{selected_target.target_id} dist={selected_target.distance:.1f} conf={selected_target.confidence:.2f}"
@@ -70,11 +153,11 @@ def build_live_preview_state(
             else "selected_info=None"
         ),
     ]
-    capture_reliability = frame.metadata.get("capture_reliability")
-    if isinstance(capture_reliability, str) and capture_reliability:
-        headline_lines.append(f"capture_reliability={capture_reliability}")
-    if bool(frame.metadata.get("preview_background_bypass")):
-        headline_lines.append("preview_background_bypass=true")
+    headline_lines.append(f"capture_reliability={capture_reliability or 'unknown'}")
+    headline_lines.append(f"preview_background_bypass={'true' if preview_background_bypass else 'false'}")
+    headline_lines.append(
+        f"window_guard.block_reason={window_guard_block_reason or 'none'}"
+    )
     calibration_warning = result.scene_calibration.get("warning")
     if isinstance(calibration_warning, str) and calibration_warning.strip():
         headline_lines.append(f"scene_calibration_warning={calibration_warning}")
@@ -89,6 +172,10 @@ def build_live_preview_state(
         frame_source=frame.source,
         frame_width=frame.width,
         frame_height=frame.height,
+        capture_reliability=capture_reliability,
+        preview_background_bypass=preview_background_bypass,
+        window_guard_block_reason=window_guard_block_reason,
+        capture_mode_used_for_preview=capture_mode_used_for_preview,
         selected_target_id=result.selected_target_id,
         candidate_count=len(result.detections),
         free_target_count=len(result.selectable_detections),
@@ -349,6 +436,7 @@ class LiveVisionPreview:
             crop_to_spawn_roi=settings.live.preview_crop_to_spawn_roi,
             crop_padding_px=settings.live.preview_crop_padding_px,
         )
+        self._snapshot_writer = LivePreviewSnapshotWriter(debug_directory=settings.live.debug_directory)
         self._session_state = LiveSessionState()
         self._tick_index = 0
         self._preview_loop_index = 0
@@ -388,6 +476,7 @@ class LiveVisionPreview:
             render_latency_ms=0.0,
             dropped_or_skipped_frames=self._skipped_frame_count,
             preview_mode=preview_mode,
+            capture_mode_used_for_preview="preview_bypass",
         )
         image = self._renderer.render(frame=frame, result=result, state=state)
         render_elapsed_ms = max(0.0, (time.perf_counter() - render_started) * 1000.0)
@@ -397,6 +486,7 @@ class LiveVisionPreview:
             render_latency_ms=render_elapsed_ms,
             dropped_or_skipped_frames=self._skipped_frame_count,
             preview_mode=preview_mode,
+            capture_mode_used_for_preview="preview_bypass",
         )
         self._tick_index += 1
         refresh_budget_ms = float(self._settings.live.preview_refresh_interval_ms)
@@ -435,8 +525,43 @@ class LiveVisionPreview:
         root.title("botlab live vision preview")
         root.configure(bg="#111827")
 
+        latest_snapshot: dict[str, tuple[LiveVisionPreviewState, Any] | None] = {"payload": None}
+
         image_label = tk.Label(root, bg="#111827")
         image_label.pack()
+
+        controls_frame = tk.Frame(root, bg="#111827")
+        controls_frame.pack(fill="x", padx=8, pady=(8, 0))
+
+        snapshot_status = tk.Label(
+            controls_frame,
+            bg="#111827",
+            fg="#93c5fd",
+            justify="left",
+            anchor="w",
+            font=("Consolas", 9),
+            text=f"Snapshot: {self._snapshot_writer.image_path}",
+        )
+        snapshot_status.pack(side="left", fill="x", expand=True)
+
+        def save_snapshot(event=None):
+            try:
+                state, snapshot_image = _resolve_snapshot_payload(
+                    latest_payload=latest_snapshot["payload"],
+                    payload_factory=self.render_next_frame,
+                )
+                latest_snapshot["payload"] = (state, snapshot_image.copy() if hasattr(snapshot_image, "copy") else snapshot_image)
+                image_path, state_path = self._snapshot_writer.save(state=state, image=snapshot_image)
+                snapshot_status.configure(text=f"Snapshot zapisany: {image_path.name} | {state_path.name}")
+            except Exception as exc:  # pragma: no cover - GUI path
+                snapshot_status.configure(text=f"Snapshot blad: {exc}")
+
+        save_button = tk.Button(
+            controls_frame,
+            text="Zapisz klatke (S)",
+            command=save_snapshot,
+        )
+        save_button.pack(side="right")
 
         status_label = tk.Label(
             root,
@@ -459,6 +584,8 @@ class LiveVisionPreview:
         root.bind("<Escape>", stop_preview)
         root.bind("q", stop_preview)
         root.bind("Q", stop_preview)
+        root.bind("s", save_snapshot)
+        root.bind("S", save_snapshot)
 
         def worker() -> None:
             interval_s = max(0.01, self._settings.live.preview_refresh_interval_ms / 1000.0)
@@ -492,6 +619,7 @@ class LiveVisionPreview:
                         running["value"] = False
                         raise payload
                     state, image = payload
+                    latest_snapshot["payload"] = (state, image.copy() if hasattr(image, "copy") else image)
                     photo = ImageTk.PhotoImage(image)
                     image_label.configure(image=photo)
                     image_label.image = photo
@@ -520,26 +648,31 @@ class LiveEngageObserve:
         logger_name: str = "botlab.live.engage.observe",
         enable_console: bool = True,
     ) -> None:
-        self._safe_dry_run_enabled = not settings.live.dry_run
-        self._settings = settings
+        observe_settings = replace(
+            settings,
+            live=replace(settings.live, dry_run=False),
+        )
+        self._safe_dry_run_enabled = True
+        self._settings = observe_settings
         self._logger = logging.getLogger(logger_name)
         self._runner = LiveRunner.from_settings(
-            settings,
+            observe_settings,
             logger_name=logger_name,
             enable_console=enable_console,
-            force_input_dry_run=self._safe_dry_run_enabled,
+            force_input_dry_run=True,
+            force_background_capture=True,
         )
         self._renderer = LiveVisionPreviewRenderer(
-            max_width_px=settings.live.preview_max_width_px,
-            max_height_px=settings.live.preview_max_height_px,
-            render_aux_boxes=settings.live.preview_render_aux_boxes,
-            crop_to_spawn_roi=settings.live.preview_crop_to_spawn_roi,
-            crop_padding_px=settings.live.preview_crop_padding_px,
+            max_width_px=observe_settings.live.preview_max_width_px,
+            max_height_px=observe_settings.live.preview_max_height_px,
+            render_aux_boxes=observe_settings.live.preview_render_aux_boxes,
+            crop_to_spawn_roi=observe_settings.live.preview_crop_to_spawn_roi,
+            crop_padding_px=observe_settings.live.preview_crop_padding_px,
         )
-        if self._safe_dry_run_enabled:
-            self._logger.warning(
-                "live_engage_observe forced dry_run input for safety while preserving real live capture."
-            )
+        self._snapshot_writer = LivePreviewSnapshotWriter(debug_directory=observe_settings.live.debug_directory)
+        self._logger.warning(
+            "live_engage_observe forced dry_run input for safety while preserving real live capture."
+        )
 
     @property
     def safe_dry_run_enabled(self) -> bool:
@@ -558,36 +691,37 @@ class LiveEngageObserve:
             cycle_id=result.cycle_id,
             phase="engage_verify",
         )
-        frame = self._runner.runtime.capture_frame(
+        frame = self._runner.runtime.frame_result(
             cycle_id=result.cycle_id,
             phase="observation",
-            default_ts=observation_result.timings.frame_captured_ts,
-            allow_background_capture=True,
+            capture_mode="default",
         )
+        capture_mode_used_for_preview = "default"
+        if frame is None:
+            frame = self._runner.runtime.frame_result(
+                cycle_id=result.cycle_id,
+                phase="observation",
+                capture_mode="preview_bypass",
+            )
+            if frame is not None:
+                capture_mode_used_for_preview = "preview_bypass"
+        if frame is None:
+            frame = self._runner.runtime.capture_frame(
+                cycle_id=result.cycle_id,
+                phase="observation",
+                default_ts=observation_result.timings.frame_captured_ts,
+                allow_background_capture=True,
+            )
+            capture_mode_used_for_preview = "preview_bypass_fallback"
         state = build_live_preview_state(
             frame=frame,
             result=observation_result,
             engage_result=result,
             preview_mode="observe_fast" if self._settings.live.preview_fast_mode else "observe_standard",
+            capture_mode_used_for_preview=capture_mode_used_for_preview,
         )
         if self._safe_dry_run_enabled:
-            state = LiveVisionPreviewState(
-                frame_source=state.frame_source,
-                frame_width=state.frame_width,
-                frame_height=state.frame_height,
-                selected_target_id=state.selected_target_id,
-                candidate_count=state.candidate_count,
-                free_target_count=state.free_target_count,
-                occupied_target_count=state.occupied_target_count,
-                out_of_zone_target_count=state.out_of_zone_target_count,
-                detection_latency_ms=state.detection_latency_ms,
-                selection_latency_ms=state.selection_latency_ms,
-                total_reaction_latency_ms=state.total_reaction_latency_ms,
-                render_latency_ms=state.render_latency_ms,
-                dropped_or_skipped_frames=state.dropped_or_skipped_frames,
-                preview_mode=state.preview_mode,
-                headline_lines=state.headline_lines + ("input_mode=dry_run_safe",),
-            )
+            state = replace(state, headline_lines=state.headline_lines + ("input_mode=dry_run_safe",))
         image = self._renderer.render(
             frame=frame,
             result=observation_result,
@@ -616,8 +750,43 @@ class LiveEngageObserve:
         root.title("botlab live engage observe")
         root.configure(bg="#111827")
 
+        latest_snapshot: dict[str, tuple[LiveVisionPreviewState, Any] | None] = {"payload": None}
+
         image_label = tk.Label(root, bg="#111827")
         image_label.pack()
+
+        controls_frame = tk.Frame(root, bg="#111827")
+        controls_frame.pack(fill="x", padx=8, pady=(8, 0))
+
+        snapshot_status = tk.Label(
+            controls_frame,
+            bg="#111827",
+            fg="#93c5fd",
+            justify="left",
+            anchor="w",
+            font=("Consolas", 9),
+            text=f"Snapshot: {self._snapshot_writer.image_path}",
+        )
+        snapshot_status.pack(side="left", fill="x", expand=True)
+
+        def save_snapshot(event=None):
+            try:
+                state, snapshot_image = _resolve_snapshot_payload(
+                    latest_payload=latest_snapshot["payload"],
+                    payload_factory=self.render_next_attempt,
+                )
+                latest_snapshot["payload"] = (state, snapshot_image.copy() if hasattr(snapshot_image, "copy") else snapshot_image)
+                image_path, state_path = self._snapshot_writer.save(state=state, image=snapshot_image)
+                snapshot_status.configure(text=f"Snapshot zapisany: {image_path.name} | {state_path.name}")
+            except Exception as exc:  # pragma: no cover - GUI path
+                snapshot_status.configure(text=f"Snapshot blad: {exc}")
+
+        save_button = tk.Button(
+            controls_frame,
+            text="Zapisz klatke (S)",
+            command=save_snapshot,
+        )
+        save_button.pack(side="right")
 
         status_label = tk.Label(
             root,
@@ -640,6 +809,8 @@ class LiveEngageObserve:
         root.bind("<Escape>", stop_preview)
         root.bind("q", stop_preview)
         root.bind("Q", stop_preview)
+        root.bind("s", save_snapshot)
+        root.bind("S", save_snapshot)
 
         def worker() -> None:
             interval_s = max(0.01, self._settings.live.preview_refresh_interval_ms / 1000.0)
@@ -673,6 +844,7 @@ class LiveEngageObserve:
                         running["value"] = False
                         raise payload
                     state, image = payload
+                    latest_snapshot["payload"] = (state, image.copy() if hasattr(image, "copy") else image)
                     photo = ImageTk.PhotoImage(image)
                     image_label.configure(image=photo)
                     image_label.image = photo

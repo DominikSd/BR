@@ -4,12 +4,14 @@ from dataclasses import replace
 import json
 import logging
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from botlab.adapters.live import (
     LiveEngageSessionSummary,
     LiveEngageObserve,
+    LivePreviewSnapshotWriter,
     LiveRunner,
     LiveVisionPreviewRenderer,
     PerceptionAnalysisRunner,
@@ -24,8 +26,9 @@ from botlab.adapters.live import (
     should_start_rest,
 )
 from botlab.adapters.live.capture import CaptureRegion, _calculate_window_relative_capture_bbox
-from botlab.adapters.live.capture import ForegroundWindowCapture, WindowCaptureStatus
+from botlab.adapters.live.capture import ForegroundWindowCapture, WindowCaptureStatus, create_capture
 from botlab.adapters.live.input import LiveInputDriver
+from botlab.adapters.live import preview as live_preview_module
 from botlab.adapters.live.models import (
     LiveEngageOutcome,
     LiveFrame,
@@ -2435,28 +2438,237 @@ def test_live_preview_state_and_renderer_prepare_debug_overlay(tmp_path: Path) -
     assert image.size[1] <= 160
 
 
+def _build_observe_preview_payload(
+    tmp_path: Path,
+) -> tuple[LiveFrame, PerceptionFrameResult, LiveEngageResult]:
+    settings = _build_live_settings(tmp_path)
+    capture = create_capture(settings.live)
+    frame = capture.capture_frame(
+        cycle_id=1,
+        phase="observation",
+        default_ts=100.0,
+        session_state=LiveSessionState(),
+    )
+    analyzer = PerceptionAnalysisRunner(
+        live_config=settings.live,
+        output_directory=tmp_path / "observe-preview-output",
+    )._analyzer
+    result = analyzer.analyze_frame(frame, cycle_id=1, phase="observation")
+    engage_result = LiveEngageOutcomeResultFactory.build(
+        cycle_id=1,
+        outcome=LiveEngageOutcome.ENGAGED,
+        detection_latency_ms=result.timings.detection_latency_ms,
+        selection_latency_ms=result.timings.selection_latency_ms,
+        total_reaction_latency_ms=result.timings.total_reaction_latency_ms,
+        verification_latency_ms=120.0,
+    )
+    return frame, result, engage_result
+
+
+class _FakeObserveRuntime:
+    def __init__(
+        self,
+        *,
+        settings: Settings,
+        observation_frame: LiveFrame | None,
+        observation_result: PerceptionFrameResult,
+        preview_bypass_frame: LiveFrame | None = None,
+        fallback_frame: LiveFrame | None = None,
+        verification_result: PerceptionFrameResult | None = None,
+    ) -> None:
+        self.settings = settings
+        self._observation_frame = observation_frame
+        self._observation_result = observation_result
+        self._preview_bypass_frame = preview_bypass_frame
+        self._fallback_frame = fallback_frame
+        self._verification_result = verification_result
+        self.frame_result_calls: list[tuple[int, str, str]] = []
+        self.capture_calls: list[dict[str, object]] = []
+
+    def perception_result(self, *, cycle_id: int, phase: str) -> PerceptionFrameResult | None:
+        assert cycle_id == 1
+        if phase == "observation":
+            return self._observation_result
+        if phase == "engage_verify":
+            return self._verification_result
+        return None
+
+    def frame_result(
+        self,
+        *,
+        cycle_id: int,
+        phase: str,
+        capture_mode: str = "default",
+    ) -> LiveFrame | None:
+        self.frame_result_calls.append((cycle_id, phase, capture_mode))
+        if cycle_id == 1 and phase == "observation" and capture_mode == "default":
+            return self._observation_frame
+        if cycle_id == 1 and phase == "observation" and capture_mode == "preview_bypass":
+            return self._preview_bypass_frame
+        return None
+
+    def capture_frame(
+        self,
+        *,
+        cycle_id: int,
+        phase: str,
+        default_ts: float,
+        allow_background_capture: bool = False,
+    ) -> LiveFrame:
+        self.capture_calls.append(
+            {
+                "cycle_id": cycle_id,
+                "phase": phase,
+                "default_ts": default_ts,
+                "allow_background_capture": allow_background_capture,
+            }
+        )
+        if self._fallback_frame is None:
+            raise AssertionError("Fallback recapture nie powinien zostac wywolany.")
+        return self._fallback_frame
+
+
+class _FakeObserveRunner:
+    def __init__(self, *, runtime: _FakeObserveRuntime, engage_result: LiveEngageResult) -> None:
+        self.runtime = runtime
+        self._engage_result = engage_result
+
+    def run_engage_attempts(self, total_attempts: int):
+        assert total_attempts == 1
+        return SimpleNamespace(results=(self._engage_result,))
+
+
 def test_live_engage_observe_can_render_next_attempt(tmp_path: Path) -> None:
     settings = _build_live_settings(tmp_path)
-    observe = LiveEngageObserve(settings=settings, enable_console=False)
+    cached_frame, observation_result, engage_result = _build_observe_preview_payload(tmp_path)
+    fake_runtime = _FakeObserveRuntime(
+        settings=replace(settings, live=replace(settings.live, dry_run=False)),
+        observation_frame=cached_frame,
+        observation_result=observation_result,
+    )
+    fake_runner = _FakeObserveRunner(runtime=fake_runtime, engage_result=engage_result)
 
-    state, image = observe.render_next_attempt()
+    from botlab.adapters.live import preview as preview_module
 
-    assert state.selected_target_id is not None
+    original_from_settings = preview_module.LiveRunner.from_settings
+    preview_module.LiveRunner.from_settings = lambda *args, **kwargs: fake_runner
+    try:
+        observe = LiveEngageObserve(settings=settings, enable_console=False)
+        state, image = observe.render_next_attempt()
+    finally:
+        preview_module.LiveRunner.from_settings = original_from_settings
+
+    assert state.selected_target_id == observation_result.selected_target_id
     assert any("engage=" in line for line in state.headline_lines)
+    assert any("capture_mode_used_for_preview=default" in line for line in state.headline_lines)
     assert image.size[0] > 0
     assert image.size[1] > 0
+    assert fake_runtime.frame_result_calls == [
+        (engage_result.cycle_id, "observation", "default"),
+    ]
+    assert fake_runtime.capture_calls == []
 
 
-def test_live_engage_observe_forces_safe_dry_run_even_for_real_live_settings(tmp_path: Path) -> None:
+def test_live_engage_observe_uses_real_capture_even_when_config_dry_run_is_true(tmp_path: Path) -> None:
     settings = _build_live_settings(tmp_path)
-    settings = replace(settings, live=replace(settings.live, dry_run=False))
 
     observe = LiveEngageObserve(settings=settings, enable_console=False)
-    state, _image = observe.render_next_attempt()
 
     assert observe.safe_dry_run_enabled is True
     assert observe._runner.runtime.settings.live.dry_run is False
+    assert isinstance(observe._runner.runtime._capture, ForegroundWindowCapture)
+
+
+def test_live_engage_observe_falls_back_to_recapture_only_on_cache_miss(tmp_path: Path) -> None:
+    settings = _build_live_settings(tmp_path)
+    _cached_frame, observation_result, engage_result = _build_observe_preview_payload(tmp_path)
+    fallback_frame = LiveFrame(
+        width=320,
+        height=240,
+        captured_at_ts=observation_result.timings.frame_captured_ts,
+        source="foreground_window_capture_blocked",
+        metadata={
+            "capture_reliability": "blocked",
+            "preview_background_bypass": False,
+            "window_guard": {"block_reason": "foreground_window_mismatch"},
+        },
+        image=None,
+    )
+    fake_runtime = _FakeObserveRuntime(
+        settings=replace(settings, live=replace(settings.live, dry_run=False)),
+        observation_frame=None,
+        fallback_frame=fallback_frame,
+        observation_result=observation_result,
+    )
+    fake_runner = _FakeObserveRunner(runtime=fake_runtime, engage_result=engage_result)
+
+    from botlab.adapters.live import preview as preview_module
+
+    original_from_settings = preview_module.LiveRunner.from_settings
+    preview_module.LiveRunner.from_settings = lambda *args, **kwargs: fake_runner
+    try:
+        observe = LiveEngageObserve(settings=settings, enable_console=False)
+        state, _image = observe.render_next_attempt()
+    finally:
+        preview_module.LiveRunner.from_settings = original_from_settings
+
+    assert fake_runtime.frame_result_calls == [
+        (engage_result.cycle_id, "observation", "default"),
+        (engage_result.cycle_id, "observation", "preview_bypass"),
+    ]
+    assert len(fake_runtime.capture_calls) == 1
+    assert fake_runtime.capture_calls[0]["allow_background_capture"] is True
+    assert state.frame_source == "foreground_window_capture_blocked"
+    assert state.capture_reliability == "blocked"
+    assert state.preview_background_bypass is False
+    assert state.window_guard_block_reason == "foreground_window_mismatch"
+    assert state.capture_mode_used_for_preview == "preview_bypass_fallback"
+    assert any("capture_mode_used_for_preview=preview_bypass_fallback" in line for line in state.headline_lines)
+    assert any("capture_reliability=blocked" in line for line in state.headline_lines)
+    assert any("window_guard.block_reason=foreground_window_mismatch" in line for line in state.headline_lines)
     assert any("input_mode=dry_run_safe" in line for line in state.headline_lines)
+
+
+def test_live_engage_observe_uses_cached_preview_bypass_observation_frame(tmp_path: Path) -> None:
+    settings = _build_live_settings(tmp_path)
+    cached_frame, observation_result, engage_result = _build_observe_preview_payload(tmp_path)
+    preview_bypass_frame = replace(
+        cached_frame,
+        source="window_content_capture_preview_bypass",
+        metadata={
+            **cached_frame.metadata,
+            "capture_reliability": "preview_background_bypass",
+            "preview_background_bypass": True,
+        },
+    )
+    fake_runtime = _FakeObserveRuntime(
+        settings=replace(settings, live=replace(settings.live, dry_run=False)),
+        observation_frame=None,
+        preview_bypass_frame=preview_bypass_frame,
+        observation_result=observation_result,
+    )
+    fake_runner = _FakeObserveRunner(runtime=fake_runtime, engage_result=engage_result)
+
+    from botlab.adapters.live import preview as preview_module
+
+    original_from_settings = preview_module.LiveRunner.from_settings
+    preview_module.LiveRunner.from_settings = lambda *args, **kwargs: fake_runner
+    try:
+        observe = LiveEngageObserve(settings=settings, enable_console=False)
+        state, _image = observe.render_next_attempt()
+    finally:
+        preview_module.LiveRunner.from_settings = original_from_settings
+
+    assert fake_runtime.frame_result_calls == [
+        (engage_result.cycle_id, "observation", "default"),
+        (engage_result.cycle_id, "observation", "preview_bypass"),
+    ]
+    assert fake_runtime.capture_calls == []
+    assert state.frame_source == "window_content_capture_preview_bypass"
+    assert state.capture_reliability == "preview_background_bypass"
+    assert state.preview_background_bypass is True
+    assert state.capture_mode_used_for_preview == "preview_bypass"
+    assert any("capture_mode_used_for_preview=preview_bypass" in line for line in state.headline_lines)
 
 
 def test_live_preview_renderer_can_crop_to_spawn_roi(tmp_path: Path) -> None:
@@ -2504,6 +2716,93 @@ def test_live_preview_renderer_can_crop_to_spawn_roi(tmp_path: Path) -> None:
 
     assert full_image.size == (1280, 720)
     assert cropped_image.size == (640, 320)
+
+
+def test_live_preview_snapshot_writer_overwrites_single_latest_files(tmp_path: Path) -> None:
+    from PIL import Image
+
+    settings = _build_live_settings(tmp_path)
+    frame = LiveFrame(
+        width=320,
+        height=240,
+        captured_at_ts=100.0,
+        source="snapshot-test",
+        metadata={
+            "capture_reliability": "trusted",
+            "preview_background_bypass": False,
+            "window_guard": {"block_reason": None},
+        },
+        image=Image.new("RGB", (320, 240), color=(20, 20, 20)),
+    )
+    analyzer = PerceptionAnalysisRunner(
+        live_config=settings.live,
+        output_directory=tmp_path / "snapshot-test-output",
+    )._analyzer
+    result = analyzer.analyze_frame(frame, cycle_id=1, phase="preview")
+    state = build_live_preview_state(
+        frame=frame,
+        result=result,
+        preview_mode="fast",
+        capture_mode_used_for_preview="preview_bypass",
+    )
+    writer = LivePreviewSnapshotWriter(debug_directory=tmp_path / "debug")
+
+    first_image = Image.new("RGB", (100, 50), color=(255, 0, 0))
+    first_image_path, first_state_path = writer.save(state=state, image=first_image)
+    first_payload = json.loads(first_state_path.read_text(encoding="utf-8"))
+
+    second_image = Image.new("RGB", (120, 60), color=(0, 255, 0))
+    second_image_path, second_state_path = writer.save(state=state, image=second_image)
+    second_payload = json.loads(second_state_path.read_text(encoding="utf-8"))
+
+    assert first_image_path == second_image_path
+    assert first_state_path == second_state_path
+    assert first_image_path.name == "latest_preview.png"
+    assert first_state_path.name == "latest_preview.json"
+    assert first_payload["image_path"] == str(first_image_path)
+    assert second_payload["image_path"] == str(second_image_path)
+
+    saved_image = Image.open(second_image_path)
+    assert saved_image.size == (120, 60)
+
+
+def test_resolve_snapshot_payload_can_render_fresh_frame_when_cache_is_empty(tmp_path: Path) -> None:
+    from PIL import Image
+
+    settings = _build_live_settings(tmp_path)
+    frame = LiveFrame(
+        width=320,
+        height=240,
+        captured_at_ts=100.0,
+        source="snapshot-resolve-test",
+        metadata={
+            "capture_reliability": "trusted",
+            "preview_background_bypass": False,
+            "window_guard": {"block_reason": None},
+        },
+        image=Image.new("RGB", (320, 240), color=(10, 10, 10)),
+    )
+    analyzer = PerceptionAnalysisRunner(
+        live_config=settings.live,
+        output_directory=tmp_path / "snapshot-resolve-output",
+    )._analyzer
+    result = analyzer.analyze_frame(frame, cycle_id=1, phase="preview")
+    state = build_live_preview_state(frame=frame, result=result)
+
+    calls = {"count": 0}
+
+    def payload_factory():
+        calls["count"] += 1
+        return state, Image.new("RGB", (32, 16), color=(1, 2, 3))
+
+    resolved_state, resolved_image = live_preview_module._resolve_snapshot_payload(
+        latest_payload=None,
+        payload_factory=payload_factory,
+    )
+
+    assert calls["count"] == 1
+    assert resolved_state is state
+    assert resolved_image.size == (32, 16)
 
 
 def test_simple_state_detector_can_detect_combat_indicator_from_pixels(tmp_path: Path) -> None:

@@ -1,6 +1,13 @@
+# Python
 __pycache__/
 *.pyc
 *.pyo
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Test and tooling caches
 .pytest_cache/
 .pytest_tmp/
 pytest-temp*/
@@ -11,14 +18,14 @@ test-runtime-temp/
 data/test-runtime-temp/
 .ruff_cache/
 .mypy_cache/
-*.egg-info/
-.venv/
-dist/
-build/
-logs/*.log
-data/telemetry/*.sqlite3
-data/live_debug/
-data/perception*/
-data/template-candidates/
-screenshots/
-assets/live/sample_frames/raw/*.png
+
+# Runtime outputs and local debug artifacts
+/data/**
+!/data/telemetry/
+!/data/telemetry/.gitkeep
+/logs/**
+!/logs/.gitkeep
+/screenshots/
+
+# Local raw capture dumps that are not part of the canonical sample set
+/assets/live/sample_frames/raw/[0-9][0-9][0-9]_*.png
