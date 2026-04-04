@@ -227,10 +227,14 @@ def test_live_real_mvp_config_can_be_loaded_from_yaml() -> None:
     assert settings.live.ice_mob_max_brown_ratio == 0.18
     assert settings.live.combat_indicator_min_ratio == 0.01
     assert settings.live.reward_min_ratio == 0.01
-    assert settings.live.template_match_stride_px == 6
+    assert settings.live.template_match_stride_px == 8
+    assert settings.live.enable_fallback_confirmation is False
+    assert settings.live.confirmation_anchor_search_enabled is True
+    assert settings.live.confirmation_anchor_only is True
     assert settings.live.engage_verify_delay_s == 0.20
     assert settings.live.engage_min_target_confidence == 0.80
     assert settings.live.engage_min_seen_frames == 2
+    assert settings.live.max_seed_hits_for_confirmation == 6
     assert settings.live.preview_fast_mode is True
     assert settings.live.preview_skip_fallback_confirmation is True
     assert settings.live.preview_render_aux_boxes is False

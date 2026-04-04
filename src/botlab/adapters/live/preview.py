@@ -86,11 +86,10 @@ def _clone_preview_payload(
 def _resolve_snapshot_payload(
     *,
     latest_payload: tuple[LiveVisionPreviewState, Any] | None,
-    payload_factory: Callable[[], tuple[LiveVisionPreviewState, Any]],
 ) -> tuple[LiveVisionPreviewState, Any]:
     if latest_payload is not None:
         return _clone_preview_payload(latest_payload)
-    return _clone_preview_payload(payload_factory())
+    raise RuntimeError("Brak gotowej klatki do zapisu. Poczekaj na pierwsza wyrenderowana klatke.")
 
 
 @dataclass(slots=True, frozen=True)
@@ -540,7 +539,7 @@ class LiveVisionPreview:
             justify="left",
             anchor="w",
             font=("Consolas", 9),
-            text=f"Snapshot: {self._snapshot_writer.image_path}",
+            text="Snapshot: czekam na pierwsza gotowa klatke",
         )
         snapshot_status.pack(side="left", fill="x", expand=True)
 
@@ -548,7 +547,6 @@ class LiveVisionPreview:
             try:
                 state, snapshot_image = _resolve_snapshot_payload(
                     latest_payload=latest_snapshot["payload"],
-                    payload_factory=self.render_next_frame,
                 )
                 latest_snapshot["payload"] = (state, snapshot_image.copy() if hasattr(snapshot_image, "copy") else snapshot_image)
                 image_path, state_path = self._snapshot_writer.save(state=state, image=snapshot_image)
@@ -631,6 +629,22 @@ class LiveVisionPreview:
                 root.destroy()
                 raise RuntimeError("Live preview zatrzymal sie podczas analizy klatki.") from exc
             root.after(30, poll_results)
+
+        status_label.configure(text="Trwa analiza pierwszej klatki...")
+        root.update_idletasks()
+        try:
+            initial_state, initial_image = self.render_next_frame()
+            latest_snapshot["payload"] = (
+                initial_state,
+                initial_image.copy() if hasattr(initial_image, "copy") else initial_image,
+            )
+            initial_photo = ImageTk.PhotoImage(initial_image)
+            image_label.configure(image=initial_photo)
+            image_label.image = initial_photo
+            status_label.configure(text="\n".join(initial_state.headline_lines))
+            snapshot_status.configure(text=f"Snapshot gotowy: {self._snapshot_writer.image_path.name}")
+        except Exception as exc:  # pragma: no cover - GUI environment specific
+            status_label.configure(text=f"Blad pierwszej klatki: {exc}")
 
         if not worker_state["started"]:
             threading.Thread(target=worker, name="botlab-live-preview", daemon=True).start()
@@ -765,7 +779,7 @@ class LiveEngageObserve:
             justify="left",
             anchor="w",
             font=("Consolas", 9),
-            text=f"Snapshot: {self._snapshot_writer.image_path}",
+            text="Snapshot: czekam na pierwsza gotowa klatke",
         )
         snapshot_status.pack(side="left", fill="x", expand=True)
 
@@ -773,7 +787,6 @@ class LiveEngageObserve:
             try:
                 state, snapshot_image = _resolve_snapshot_payload(
                     latest_payload=latest_snapshot["payload"],
-                    payload_factory=self.render_next_attempt,
                 )
                 latest_snapshot["payload"] = (state, snapshot_image.copy() if hasattr(snapshot_image, "copy") else snapshot_image)
                 image_path, state_path = self._snapshot_writer.save(state=state, image=snapshot_image)
@@ -856,6 +869,22 @@ class LiveEngageObserve:
                 root.destroy()
                 raise RuntimeError("Live engage observe zatrzymal sie podczas analizy proby.") from exc
             root.after(30, poll_results)
+
+        status_label.configure(text="Trwa analiza pierwszej proby...")
+        root.update_idletasks()
+        try:
+            initial_state, initial_image = self.render_next_attempt()
+            latest_snapshot["payload"] = (
+                initial_state,
+                initial_image.copy() if hasattr(initial_image, "copy") else initial_image,
+            )
+            initial_photo = ImageTk.PhotoImage(initial_image)
+            image_label.configure(image=initial_photo)
+            image_label.image = initial_photo
+            status_label.configure(text="\n".join(initial_state.headline_lines))
+            snapshot_status.configure(text=f"Snapshot gotowy: {self._snapshot_writer.image_path.name}")
+        except Exception as exc:  # pragma: no cover - GUI environment specific
+            status_label.configure(text=f"Blad pierwszej proby: {exc}")
 
         if not worker_state["started"]:
             threading.Thread(target=worker, name="botlab-live-engage-observe", daemon=True).start()

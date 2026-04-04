@@ -43,9 +43,10 @@ from botlab.adapters.live.perception import (
     ReactionLatency,
     TemplateHit,
     TemplatePackLoader,
+    _limit_seed_hits_for_confirmation,
     compare_perception_summary_payloads,
 )
-from botlab.adapters.live.runner import LiveRestProvider
+from botlab.adapters.live.runner import LiveRestProvider, LiveRuntime
 from botlab.adapters.live.vision import LiveResourceProvider, SimpleStateDetector, extract_named_roi
 from botlab.application.dto import (
     TargetApproachResult,
@@ -2196,6 +2197,62 @@ def test_marker_first_candidate_becomes_actionable_after_seen_frames_threshold(
     assert second_result.detections[0].metadata["track_seen_frames"] >= 2
 
 
+def test_marker_first_perception_can_use_anchor_only_upper_confirmation(
+    tmp_path: Path,
+) -> None:
+    from PIL import Image, ImageDraw
+
+    settings = _build_marker_first_settings(tmp_path)
+    settings = replace(
+        settings,
+        live=replace(
+            settings.live,
+            marker_color_mode="yellow",
+            candidate_confirmation_frames=1,
+            enable_fallback_confirmation=False,
+            confirmation_anchor_search_enabled=True,
+            confirmation_anchor_only=True,
+            confirmation_template_stride_px=6,
+        ),
+    )
+    output_directory = tmp_path / "perception-anchor-only"
+    frame_path = tmp_path / "anchor_only_frame.png"
+    sidecar_path = tmp_path / "anchor_only_frame.json"
+
+    frame_image = Image.new("RGB", (320, 240), color=(40, 40, 40))
+    draw = ImageDraw.Draw(frame_image)
+    mob_upper_template = Image.open(settings.live.mobs_template_directory / "mob_a" / "upper.png").convert("RGB")
+    frame_image.paste(mob_upper_template, (150, 104))
+    draw.polygon([(159, 92), (163, 86), (167, 92), (163, 98)], fill=(230, 205, 32))
+
+    frame_image.save(frame_path)
+    sidecar_path.write_text(
+        json.dumps(
+            {
+                "captured_at_ts": 105.5,
+                "source": "anchor-only-test",
+                "metadata": {
+                    "spawn_roi": [0, 0, 320, 240],
+                    "reference_point_xy": [160, 210],
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    runner = PerceptionAnalysisRunner(
+        live_config=settings.live,
+        output_directory=output_directory,
+    )
+    result = runner.analyze_frame_path(frame_path).frame_results[0]
+
+    assert len(result.detections) >= 1
+    assert result.detections[0].metadata["confirmation_search_mode"] == "anchor"
+    assert result.detections[0].metadata["confirmation_stage"] == "upper"
+
+
 def test_marker_first_perception_can_use_marker_template_fallback_when_color_gate_misses(
     tmp_path: Path,
 ) -> None:
@@ -2671,6 +2728,36 @@ def test_live_engage_observe_uses_cached_preview_bypass_observation_frame(tmp_pa
     assert any("capture_mode_used_for_preview=preview_bypass" in line for line in state.headline_lines)
 
 
+def test_live_runtime_perception_result_falls_back_to_preview_bypass_cache() -> None:
+    runtime = LiveRuntime.__new__(LiveRuntime)
+    preview_bypass_result = SimpleNamespace(selected_target_id="preview-bypass-only")
+    runtime._perception_results = {
+        (7, "observation", "preview_bypass"): preview_bypass_result,
+    }
+
+    result = runtime.perception_result(cycle_id=7, phase="observation")
+
+    assert result is preview_bypass_result
+
+
+def test_limit_seed_hits_for_confirmation_prefers_high_confidence_and_nearer_hits() -> None:
+    hits = (
+        TemplateHit("yellow_marker", 500, 500, 10, 10, 0.95),
+        TemplateHit("yellow_marker", 700, 700, 10, 10, 0.93),
+        TemplateHit("yellow_marker", 120, 120, 10, 10, 0.90),
+        TemplateHit("yellow_marker", 130, 130, 10, 10, 0.88),
+    )
+
+    limited_hits = _limit_seed_hits_for_confirmation(
+        hits=hits,
+        reference_point_xy=(128.0, 128.0),
+        max_seed_hits=2,
+    )
+
+    assert len(limited_hits) == 2
+    assert [hit.bbox for hit in limited_hits] == [hits[2].bbox, hits[3].bbox]
+
+
 def test_live_preview_renderer_can_crop_to_spawn_roi(tmp_path: Path) -> None:
     settings = _build_live_settings(tmp_path)
     frame = LiveFrame(
@@ -2766,7 +2853,7 @@ def test_live_preview_snapshot_writer_overwrites_single_latest_files(tmp_path: P
     assert saved_image.size == (120, 60)
 
 
-def test_resolve_snapshot_payload_can_render_fresh_frame_when_cache_is_empty(tmp_path: Path) -> None:
+def test_resolve_snapshot_payload_requires_ready_payload_when_cache_is_empty(tmp_path: Path) -> None:
     from PIL import Image
 
     settings = _build_live_settings(tmp_path)
@@ -2789,18 +2876,15 @@ def test_resolve_snapshot_payload_can_render_fresh_frame_when_cache_is_empty(tmp
     result = analyzer.analyze_frame(frame, cycle_id=1, phase="preview")
     state = build_live_preview_state(frame=frame, result=result)
 
-    calls = {"count": 0}
-
-    def payload_factory():
-        calls["count"] += 1
-        return state, Image.new("RGB", (32, 16), color=(1, 2, 3))
+    with pytest.raises(RuntimeError, match="Brak gotowej klatki do zapisu"):
+        live_preview_module._resolve_snapshot_payload(
+            latest_payload=None,
+        )
 
     resolved_state, resolved_image = live_preview_module._resolve_snapshot_payload(
-        latest_payload=None,
-        payload_factory=payload_factory,
+        latest_payload=(state, Image.new("RGB", (32, 16), color=(1, 2, 3))),
     )
 
-    assert calls["count"] == 1
     assert resolved_state is state
     assert resolved_image.size == (32, 16)
 

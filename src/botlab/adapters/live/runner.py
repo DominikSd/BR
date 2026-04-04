@@ -212,7 +212,10 @@ class LiveRuntime:
         cycle_id: int,
         phase: str,
     ) -> PerceptionFrameResult | None:
-        return self._perception_results.get((cycle_id, phase, "default"))
+        default_result = self._perception_results.get((cycle_id, phase, "default"))
+        if default_result is not None:
+            return default_result
+        return self._perception_results.get((cycle_id, phase, "preview_bypass"))
 
     def frame_result(
         self,

@@ -54,8 +54,8 @@ live:
   scene_reference_anchor_xy: [960, 520]
   mobs_template_directory: "assets/live/templates/mobs"
   occupied_template_directory: "assets/live/templates/occupied"
-  template_match_stride_px: 6
-  template_rotations_deg: [0, 90, 180, 270]
+  template_match_stride_px: 8
+  template_rotations_deg: [0]
   marker_color_mode: "yellow"
   marker_min_red: 150
   marker_min_green: 110
@@ -102,12 +102,17 @@ live:
   confirmation_roi_width_px: 88
   confirmation_roi_height_px: 120
   confirmation_roi_offset_y_px: 4
+  enable_fallback_confirmation: false
+  confirmation_anchor_search_enabled: true
+  confirmation_anchor_only: true
+  confirmation_template_stride_px: 12
   confirmation_confidence_threshold: 0.60
   confirmation_alignment_weight: 0.25
   confirmation_foreground_weight: 0.10
   confirmation_max_horizontal_offset_px: 56
   confirmation_min_vertical_offset_px: 12
   confirmation_max_vertical_offset_px: 180
+  max_seed_hits_for_confirmation: 6
   player_veto_enabled: true
   player_veto_roi_width_px: 190
   player_veto_roi_height_px: 70

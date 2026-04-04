@@ -155,12 +155,17 @@ class LiveConfig:
     confirmation_roi_width_px: int = 88
     confirmation_roi_height_px: int = 120
     confirmation_roi_offset_y_px: int = 4
+    enable_fallback_confirmation: bool = True
+    confirmation_anchor_search_enabled: bool = False
+    confirmation_anchor_only: bool = False
+    confirmation_template_stride_px: int = 4
     confirmation_confidence_threshold: float = 0.60
     confirmation_alignment_weight: float = 0.25
     confirmation_foreground_weight: float = 0.10
     confirmation_max_horizontal_offset_px: int = 56
     confirmation_min_vertical_offset_px: int = 12
     confirmation_max_vertical_offset_px: int = 180
+    max_seed_hits_for_confirmation: int = 24
     player_veto_enabled: bool = True
     player_veto_roi_width_px: int = 170
     player_veto_roi_height_px: int = 52
@@ -643,6 +648,21 @@ def load_config(config_path: str | Path) -> Settings:
             "occupied_local_roi_offset_y_px",
             -42,
         ),
+        enable_fallback_confirmation=_optional_bool(
+            live_section,
+            "enable_fallback_confirmation",
+            True,
+        ),
+        confirmation_anchor_search_enabled=_optional_bool(
+            live_section,
+            "confirmation_anchor_search_enabled",
+            False,
+        ),
+        confirmation_anchor_only=_optional_bool(
+            live_section,
+            "confirmation_anchor_only",
+            False,
+        ),
         confirmation_roi_width_px=_optional_positive_int(
             live_section,
             "confirmation_roi_width_px",
@@ -656,6 +676,11 @@ def load_config(config_path: str | Path) -> Settings:
         confirmation_roi_offset_y_px=_optional_int(
             live_section,
             "confirmation_roi_offset_y_px",
+            4,
+        ),
+        confirmation_template_stride_px=_optional_positive_int(
+            live_section,
+            "confirmation_template_stride_px",
             4,
         ),
         confirmation_confidence_threshold=_optional_ratio_float(
@@ -687,6 +712,11 @@ def load_config(config_path: str | Path) -> Settings:
             live_section,
             "confirmation_max_vertical_offset_px",
             180,
+        ),
+        max_seed_hits_for_confirmation=_optional_positive_int(
+            live_section,
+            "max_seed_hits_for_confirmation",
+            24,
         ),
         player_veto_enabled=_optional_bool(
             live_section,

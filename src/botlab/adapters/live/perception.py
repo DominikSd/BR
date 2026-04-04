@@ -981,6 +981,11 @@ class PerceptionAnalyzer:
             all_marker_hits,
             merge_distance_px=self._live_config.merge_distance_px,
         )
+        limited_marker_hits = _limit_seed_hits_for_confirmation(
+            hits=merged_marker_hits,
+            reference_point_xy=reference_point_xy,
+            max_seed_hits=self._live_config.max_seed_hits_for_confirmation,
+        )
 
         raw_hits: list[TemplateHit] = list(all_marker_hits)
         seed_mode = "marker"
@@ -996,6 +1001,8 @@ class PerceptionAnalyzer:
             "marker_template_hit_count": len(filtered_template_marker_hits),
             "rescue_seed_hit_count": len(rescue_seed_hits),
             "merged_seed_hit_count": len(merged_marker_hits),
+            "limited_seed_hit_count": len(limited_marker_hits),
+            "seed_limit_applied": len(limited_marker_hits) < len(merged_marker_hits),
             "seed_mode": seed_mode,
             "zero_seed_streak": self._zero_seed_streak,
             "upper_rescue_attempted": should_run_upper_rescue,
@@ -1003,13 +1010,13 @@ class PerceptionAnalyzer:
         detections: list[LiveTargetDetection] = []
         player_veto_rejections: list[dict[str, Any]] = []
         mob_signature_rejections: list[dict[str, Any]] = []
-        local_stride_px = max(1, min(4, stride_px))
+        local_stride_px = max(1, self._live_config.confirmation_template_stride_px)
         skip_fallback_confirmation = (
             phase == "preview"
             and self._live_config.preview_fast_mode
             and self._live_config.preview_skip_fallback_confirmation
         )
-        for index, marker_hit in enumerate(merged_marker_hits, start=1):
+        for index, marker_hit in enumerate(limited_marker_hits, start=1):
             confirmation_roi_box = _build_local_roi_box(
                 anchor_x=marker_hit.x + (marker_hit.width / 2.0),
                 anchor_y=marker_hit.y + marker_hit.height,
@@ -1019,13 +1026,38 @@ class PerceptionAnalyzer:
                 frame_width=frame.width,
                 frame_height=frame.height,
             )
-            upper_confirmation_hits = _match_local_variants(
-                image=image,
-                box=confirmation_roi_box,
-                variants=template_pack.mob_upper_variants,
-                confidence_threshold=self._live_config.confirmation_confidence_threshold,
-                stride_px=local_stride_px,
-            )
+            upper_confirmation_hits: tuple[TemplateHit, ...] = ()
+            confirmation_search_mode = "sliding"
+            if self._live_config.confirmation_anchor_search_enabled:
+                upper_confirmation_hits = _match_anchor_aligned_variants(
+                    image=image,
+                    marker_hit=marker_hit,
+                    box=confirmation_roi_box,
+                    variants=template_pack.mob_upper_variants,
+                    confidence_threshold=self._live_config.confirmation_confidence_threshold,
+                    stride_px=local_stride_px,
+                )
+                if upper_confirmation_hits:
+                    confirmation_search_mode = "anchor"
+                elif not self._live_config.confirmation_anchor_only:
+                    upper_confirmation_hits = _match_local_variants(
+                        image=image,
+                        box=confirmation_roi_box,
+                        variants=template_pack.mob_upper_variants,
+                        confidence_threshold=self._live_config.confirmation_confidence_threshold,
+                        stride_px=local_stride_px,
+                    )
+                    confirmation_search_mode = "anchor_then_sliding"
+                else:
+                    confirmation_search_mode = "anchor_only"
+            else:
+                upper_confirmation_hits = _match_local_variants(
+                    image=image,
+                    box=confirmation_roi_box,
+                    variants=template_pack.mob_upper_variants,
+                    confidence_threshold=self._live_config.confirmation_confidence_threshold,
+                    stride_px=local_stride_px,
+                )
             raw_hits.extend(upper_confirmation_hits)
             best_upper_confirmation = _select_best_confirmation_hit(
                 marker_hit=marker_hit,
@@ -1039,6 +1071,7 @@ class PerceptionAnalyzer:
                 best_upper_confirmation is None
                 and template_pack.mob_fallback_variants
                 and not skip_fallback_confirmation
+                and self._live_config.enable_fallback_confirmation
             ):
                 fallback_confirmation_hits = _match_local_variants(
                     image=image,
@@ -1196,6 +1229,7 @@ class PerceptionAnalyzer:
                         "upper_template_score": upper_score,
                         "fallback_template_score": fallback_score,
                         "confirmation_stage": confirmation_stage,
+                        "confirmation_search_mode": confirmation_search_mode,
                         "confirmation_selected_score": best_confirmation.confidence,
                         "occupied_confidence": occupied_confidence,
                         "occupied_candidate": occupied_candidate,
@@ -2878,6 +2912,101 @@ def _match_local_variants(
     )
 
 
+def _match_anchor_aligned_variants(
+    *,
+    image: Any,
+    marker_hit: TemplateHit,
+    box: tuple[int, int, int, int],
+    variants: tuple[TemplateVariant, ...],
+    confidence_threshold: float,
+    stride_px: int,
+) -> tuple[TemplateHit, ...]:
+    if not variants or ImageChops is None or ImageStat is None or ImageOps is None:
+        return ()
+    left, top, width, height = box
+    if width <= 0 or height <= 0:
+        return ()
+    right = left + width
+    bottom = top + height
+    marker_center_x, _ = marker_hit.center_xy
+    marker_bottom_y = marker_hit.y + marker_hit.height
+    horizontal_step = max(4, int(stride_px))
+    x_offsets = (
+        -(horizontal_step * 2),
+        -horizontal_step,
+        0,
+        horizontal_step,
+        horizontal_step * 2,
+    )
+    y_offsets = (
+        -horizontal_step,
+        -(horizontal_step // 2),
+        0,
+        horizontal_step // 2,
+        horizontal_step,
+        horizontal_step * 2,
+    )
+    hits: list[TemplateHit] = []
+    for variant in variants:
+        tested_positions: set[tuple[int, int]] = set()
+        base_x = int(round(marker_center_x - (variant.width / 2.0)))
+        for x_offset in x_offsets:
+            candidate_x = base_x + x_offset
+            for y_offset in y_offsets:
+                candidate_y = int(round(marker_bottom_y + y_offset))
+                if candidate_x < left or candidate_y < top:
+                    continue
+                if candidate_x + variant.width > right:
+                    continue
+                if candidate_y + variant.height > bottom:
+                    continue
+                position = (candidate_x, candidate_y)
+                if position in tested_positions:
+                    continue
+                tested_positions.add(position)
+                candidate_image = image.crop(
+                    (
+                        candidate_x,
+                        candidate_y,
+                        candidate_x + variant.width,
+                        candidate_y + variant.height,
+                    )
+                )
+                if variant.label == "occupied_swords" and variant.mask_image is not None:
+                    confidence = _occupied_template_match_confidence(
+                        candidate_image,
+                        variant.image,
+                        variant.mask_image,
+                    )
+                else:
+                    confidence = _template_match_confidence(
+                        candidate_image,
+                        variant.image,
+                        variant.mask_image,
+                    )
+                if confidence < confidence_threshold:
+                    continue
+                hits.append(
+                    TemplateHit(
+                        label=variant.label,
+                        x=candidate_x,
+                        y=candidate_y,
+                        width=variant.width,
+                        height=variant.height,
+                        confidence=confidence,
+                        rotation_deg=variant.rotation_deg,
+                        target_id=None,
+                        source=f"pixel_template_anchor:{variant.variant_name}",
+                        metadata={
+                            "template_path": str(variant.source_path),
+                            "variant_name": variant.variant_name,
+                            "search_mode": "anchor_aligned",
+                        },
+                    )
+                )
+    return tuple(hits)
+
+
 def _select_best_confirmation_hit(
     *,
     marker_hit: TemplateHit,
@@ -2956,6 +3085,26 @@ def _select_best_confirmation_hit(
         reverse=True,
     )
     return scored_hits[0][1]
+
+
+def _limit_seed_hits_for_confirmation(
+    *,
+    hits: tuple[TemplateHit, ...],
+    reference_point_xy: tuple[float, float],
+    max_seed_hits: int,
+) -> tuple[TemplateHit, ...]:
+    if max_seed_hits <= 0 or len(hits) <= max_seed_hits:
+        return hits
+    ranked_hits = sorted(
+        hits,
+        key=lambda hit: (
+            float(hit.confidence) - min(math.dist(reference_point_xy, hit.center_xy), 1200.0) / 2400.0,
+            float(hit.confidence),
+            -math.dist(reference_point_xy, hit.center_xy),
+        ),
+        reverse=True,
+    )
+    return tuple(ranked_hits[:max_seed_hits])
 
 
 def _estimate_confirmation_foreground_score(
@@ -3513,6 +3662,11 @@ def _build_detection_tuning_parameters(live_config: LiveConfig) -> dict[str, Any
         "candidate_confirmation_frames": live_config.candidate_confirmation_frames,
         "occupied_confirmation_frames": live_config.occupied_confirmation_frames,
         "candidate_loss_frames": live_config.candidate_loss_frames,
+        "enable_fallback_confirmation": live_config.enable_fallback_confirmation,
+        "confirmation_anchor_search_enabled": live_config.confirmation_anchor_search_enabled,
+        "confirmation_anchor_only": live_config.confirmation_anchor_only,
+        "confirmation_template_stride_px": live_config.confirmation_template_stride_px,
+        "max_seed_hits_for_confirmation": live_config.max_seed_hits_for_confirmation,
         "player_veto_enabled": live_config.player_veto_enabled,
         "player_veto_roi_width_px": live_config.player_veto_roi_width_px,
         "player_veto_roi_height_px": live_config.player_veto_roi_height_px,
