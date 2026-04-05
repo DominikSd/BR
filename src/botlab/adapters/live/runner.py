@@ -1124,6 +1124,7 @@ class LiveRunner:
             logger_name=logger_name,
             enable_console=enable_console,
         )
+        effective_force_input_dry_run = force_input_dry_run or settings.live.shadow_session_enabled
         capture = create_capture(settings.live)
         runtime = LiveRuntime(
             settings=settings,
@@ -1145,16 +1146,20 @@ class LiveRunner:
         recovery = RecoveryManager(settings.cycle)
         input_driver = LiveInputDriver(
             logger=logger,
-            dry_run=settings.live.dry_run or force_input_dry_run,
-            enable_real_input=False if force_input_dry_run else settings.live.enable_real_input,
-            enable_real_clicks=False if force_input_dry_run else settings.live.enable_real_clicks,
-            enable_real_keys=False if force_input_dry_run else settings.live.enable_real_keys,
+            dry_run=settings.live.dry_run or effective_force_input_dry_run,
+            enable_real_input=False if effective_force_input_dry_run else settings.live.enable_real_input,
+            enable_real_clicks=False if effective_force_input_dry_run else settings.live.enable_real_clicks,
+            enable_real_keys=False if effective_force_input_dry_run else settings.live.enable_real_keys,
             screen_offset_xy=(
                 settings.live.capture_region[0],
                 settings.live.capture_region[1],
             ),
             real_input_guard=getattr(capture, "real_input_guard_status", None),
         )
+        if settings.live.shadow_session_enabled:
+            logger.warning(
+                "live_shadow_session enabled: forcing dry-run input while preserving real capture and perception."
+            )
         state_detector = SimpleStateDetector(settings.live)
         resource_provider = LiveResourceProvider(settings.live)
         world_provider = LiveWorldStateProvider(runtime)
@@ -1294,6 +1299,15 @@ class LiveRunner:
             log_path=self._resolve_log_path(),
             sqlite_path=self._storage.sqlite_path,
         )
+
+    def run_shadow_session(self, total_attempts: int) -> LiveEngageRunReport:
+        if total_attempts <= 0:
+            raise ValueError("total_attempts musi byc wieksze od 0.")
+        if not self._runtime.settings.live.shadow_session_enabled:
+            self._logger.warning(
+                "run_shadow_session uruchomiono bez shadow_session_enabled=true; kontynuuje w trybie bezpiecznego dry-run input tylko jesli wymusza to caller."
+            )
+        return self.run_engage_attempts(total_attempts)
 
     def _resolve_log_path(self) -> Path:
         for handler in self._logger.handlers:

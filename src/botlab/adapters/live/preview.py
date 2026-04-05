@@ -126,6 +126,7 @@ def build_live_preview_state(
     dropped_or_skipped_frames: int = 0,
     preview_mode: str = "standard",
     capture_mode_used_for_preview: str = "default",
+    shadow_session_enabled: bool = False,
 ) -> LiveVisionPreviewState:
     selected_target = result.selected_target
     capture_reliability = frame.metadata.get("capture_reliability")
@@ -193,6 +194,11 @@ def build_live_preview_state(
                 f"reason={engage_gate_reason or 'none'} "
                 f"rejections={engage_gate_rejections}"
             )
+        final_decision_code = engage_result.metadata.get("final_decision_code")
+        if isinstance(final_decision_code, str) and final_decision_code.strip():
+            headline_lines.append(f"final_decision={final_decision_code}")
+    if shadow_session_enabled:
+        headline_lines.append("shadow_session=true")
     return LiveVisionPreviewState(
         frame_source=frame.source,
         frame_width=frame.width,
@@ -546,6 +552,7 @@ class LiveVisionPreview:
             dropped_or_skipped_frames=self._skipped_frame_count,
             preview_mode=preview_mode,
             capture_mode_used_for_preview="preview_bypass",
+            shadow_session_enabled=bool(self._settings.live.shadow_session_enabled),
         )
         image = self._renderer.render(frame=frame, result=result, state=state)
         render_elapsed_ms = max(0.0, (time.perf_counter() - render_started) * 1000.0)
@@ -556,6 +563,7 @@ class LiveVisionPreview:
             dropped_or_skipped_frames=self._skipped_frame_count,
             preview_mode=preview_mode,
             capture_mode_used_for_preview="preview_bypass",
+            shadow_session_enabled=bool(self._settings.live.shadow_session_enabled),
         )
         self._tick_index += 1
         refresh_budget_ms = float(self._settings.live.preview_refresh_interval_ms)
@@ -766,7 +774,10 @@ class LiveEngageObserve:
         return self._safe_dry_run_enabled
 
     def render_next_attempt(self):
-        report = self._runner.run_engage_attempts(1)
+        if self._settings.live.shadow_session_enabled:
+            report = self._runner.run_shadow_session(1)
+        else:
+            report = self._runner.run_engage_attempts(1)
         result = report.results[0]
         observation_result = self._runner.runtime.perception_result(
             cycle_id=result.cycle_id,
@@ -819,8 +830,17 @@ class LiveEngageObserve:
             frame=frame,
             result=observation_result,
             engage_result=result,
-            preview_mode="observe_fast" if self._settings.live.preview_fast_mode else "observe_standard",
+            preview_mode=(
+                "shadow_session_fast"
+                if self._settings.live.shadow_session_enabled and self._settings.live.preview_fast_mode
+                else "shadow_session_standard"
+                if self._settings.live.shadow_session_enabled
+                else "observe_fast"
+                if self._settings.live.preview_fast_mode
+                else "observe_standard"
+            ),
             capture_mode_used_for_preview=capture_mode_used_for_preview,
+            shadow_session_enabled=bool(self._settings.live.shadow_session_enabled),
         )
         if self._safe_dry_run_enabled:
             state = replace(state, headline_lines=state.headline_lines + ("input_mode=dry_run_safe",))

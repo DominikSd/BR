@@ -479,6 +479,36 @@ class AccuracySummary:
 
 
 @dataclass(slots=True, frozen=True)
+class SequenceEvaluationSummary:
+    frame_count: int
+    evaluated_transition_count: int
+    comparable_selected_transition_count: int
+    stable_selected_transition_count: int
+    selected_target_stability_rate: float | None
+    target_switch_count: int
+    wrong_target_switch_count: int
+    player_fp_selected_count: int
+    decision_code_counts: dict[str, int] = field(default_factory=dict)
+    frame_decisions: tuple[dict[str, Any], ...] = ()
+    transitions: tuple[dict[str, Any], ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "frame_count": self.frame_count,
+            "evaluated_transition_count": self.evaluated_transition_count,
+            "comparable_selected_transition_count": self.comparable_selected_transition_count,
+            "stable_selected_transition_count": self.stable_selected_transition_count,
+            "selected_target_stability_rate": self.selected_target_stability_rate,
+            "target_switch_count": self.target_switch_count,
+            "wrong_target_switch_count": self.wrong_target_switch_count,
+            "player_fp_selected_count": self.player_fp_selected_count,
+            "decision_code_counts": dict(self.decision_code_counts),
+            "frame_decisions": [dict(entry) for entry in self.frame_decisions],
+            "transitions": [dict(entry) for entry in self.transitions],
+        }
+
+
+@dataclass(slots=True, frozen=True)
 class PerceptionSessionSummary:
     frame_results: tuple[PerceptionFrameResult, ...]
     candidate_hits: LatencyAggregate
@@ -491,6 +521,7 @@ class PerceptionSessionSummary:
     strict_pixel_only: bool = False
     accuracy_summary: AccuracySummary | None = None
     benchmark_summary: BenchmarkSummary | None = None
+    sequence_evaluation: SequenceEvaluationSummary | None = None
     tuning_parameters: dict[str, Any] = field(default_factory=dict)
     worst_frames: tuple[dict[str, Any], ...] = ()
 
@@ -544,6 +575,8 @@ class PerceptionSessionSummary:
             payload["accuracy_summary"] = self.accuracy_summary.to_dict()
         if self.benchmark_summary is not None:
             payload["benchmark_summary"] = self.benchmark_summary.to_dict()
+        if self.sequence_evaluation is not None:
+            payload["sequence_evaluation"] = self.sequence_evaluation.to_dict()
         real_scene_regression = self.real_scene_regression_entries()
         if real_scene_regression:
             payload["real_scene_regression"] = list(real_scene_regression)
@@ -790,6 +823,10 @@ class PerceptionAnalyzer:
         frame_results: Iterable[PerceptionFrameResult],
     ) -> PerceptionSessionSummary:
         results = tuple(frame_results)
+        sequence_evaluation = _build_sequence_evaluation_summary(
+            results=results,
+            live_config=self._live_config,
+        )
         return PerceptionSessionSummary(
             frame_results=results,
             candidate_hits=LatencyAggregate.from_values(
@@ -826,6 +863,7 @@ class PerceptionAnalyzer:
                 results,
                 strict_pixel_only=self._strict_pixel_only,
             ),
+            sequence_evaluation=sequence_evaluation,
             tuning_parameters=_build_detection_tuning_parameters(self._live_config),
             worst_frames=_build_worst_frame_entries(results),
         )
@@ -1275,9 +1313,13 @@ class PerceptionAnalyzer:
                 )
             all_occupied_hits = tuple((*occupied_hits, *occupied_color_hits))
             raw_hits.extend(all_occupied_hits)
-            occupied_threshold = max(
-                0.35,
-                occupied_template_threshold * 0.75,
+            occupied_threshold = (
+                occupied_template_threshold
+                if occupied_template_rescue_used and not occupied_color_hits
+                else max(
+                    0.35,
+                    occupied_template_threshold * 0.75,
+                )
             )
             occupied_candidate, occupied_confidence = classify_occupied(
                 mob_hit=best_confirmation,
@@ -2077,6 +2119,19 @@ class PerceptionAnalyzer:
             "engage_quality_gate_rejection_count": 0,
             "final_detection_count": len(detections),
         }
+        decision_summary = _build_frame_decision_summary(
+            detections=detections,
+            selected_target=selected_target,
+            selection_reason=selection_reason,
+            live_config=self._live_config,
+        )
+        summary_lines.append(
+            "decision="
+            f"{decision_summary['decision_code']} "
+            f"switch={int(bool(decision_summary['target_switch_detected']))} "
+            f"wrong_switch={int(bool(decision_summary['wrong_target_switch']))} "
+            f"player_fp={int(bool(decision_summary['player_fp_selected']))}"
+        )
         return {
             "tuning_parameters": _build_detection_tuning_parameters(self._live_config),
             "ladder_diagnostics": ladder_diagnostics,
@@ -2092,6 +2147,7 @@ class PerceptionAnalyzer:
             "seed_diagnostics": seed_diagnostics,
             "final_candidates": actionable_entries,
             "selection_reason": selection_reason,
+            "decision_summary": decision_summary,
             "summary_lines": summary_lines,
         }
 
@@ -4207,6 +4263,176 @@ def _bucket_false_positive_detection(detection: LiveTargetDetection) -> str:
     if ice_score >= 0.40 and marker_score >= 0.40:
         return "wrong_mob_fp"
     return "ui_or_environment_fp"
+
+
+def _build_frame_decision_summary(
+    *,
+    detections: tuple[LiveTargetDetection, ...],
+    selected_target: LiveTargetDetection | None,
+    selection_reason: str | None,
+    live_config: LiveConfig,
+) -> dict[str, Any]:
+    previous_target_id = None
+    if selected_target is not None:
+        previous_target_id = _optional_str(selected_target.metadata.get("selection_previous_target_id"))
+    switch_detected = selected_target is not None and previous_target_id is not None and previous_target_id != selected_target.target_id
+    previous_detection = None
+    if previous_target_id is not None:
+        previous_detection = next(
+            (detection for detection in detections if detection.target_id == previous_target_id),
+            None,
+        )
+    previous_target_still_selectable = bool(
+        previous_detection is not None
+        and not previous_detection.occupied
+        and previous_detection.reachable
+        and bool(previous_detection.metadata.get("in_scene_zone", True))
+    )
+    switch_justified = not switch_detected
+    if switch_detected:
+        if previous_detection is None or not previous_target_still_selectable:
+            switch_justified = True
+        else:
+            switch_justified = bool(
+                selected_target is not None
+                and (
+                    selected_target.confidence
+                    >= previous_detection.confidence + float(live_config.target_stability_confidence_margin)
+                    or selected_target.distance
+                    + float(live_config.target_stability_switch_distance_gain_px)
+                    < previous_detection.distance
+                )
+            )
+    wrong_target_switch = switch_detected and not switch_justified
+    player_fp_selected = bool(
+        selected_target is not None
+        and _bucket_false_positive_detection(selected_target) == "player_fp"
+    )
+    if selected_target is None:
+        if detections and all(detection.occupied for detection in detections):
+            decision_code = "occupied_rejection"
+        elif detections and all(not bool(detection.metadata.get("in_scene_zone", True)) for detection in detections):
+            decision_code = "out_of_zone_rejection"
+        else:
+            decision_code = "target_rejected"
+    elif player_fp_selected:
+        decision_code = "player_false_positive"
+    elif wrong_target_switch:
+        decision_code = "target_switched_wrong"
+    elif switch_detected:
+        decision_code = "target_switched"
+    else:
+        decision_code = "target_accepted"
+    return {
+        "decision_code": decision_code,
+        "selection_reason": selection_reason,
+        "selected_target_id": None if selected_target is None else selected_target.target_id,
+        "selected_target_confidence": None if selected_target is None else float(selected_target.confidence),
+        "selected_target_distance": None if selected_target is None else float(selected_target.distance),
+        "selected_target_in_scene_zone": None
+        if selected_target is None
+        else bool(selected_target.metadata.get("in_scene_zone", True)),
+        "selected_target_reachable": None if selected_target is None else bool(selected_target.reachable),
+        "selected_target_occupied": None if selected_target is None else bool(selected_target.occupied),
+        "previous_target_id": previous_target_id,
+        "previous_target_still_selectable": previous_target_still_selectable,
+        "target_switch_detected": switch_detected,
+        "target_switch_justified": switch_justified,
+        "wrong_target_switch": wrong_target_switch,
+        "player_fp_selected": player_fp_selected,
+        "selectable_detection_count": sum(
+            1
+            for detection in detections
+            if not detection.occupied
+            and detection.reachable
+            and bool(detection.metadata.get("in_scene_zone", True))
+        ),
+    }
+
+
+def _resolve_frame_decision_summary(
+    result: PerceptionFrameResult,
+    *,
+    live_config: LiveConfig,
+) -> dict[str, Any]:
+    cached = result.diagnostics.get("decision_summary")
+    if isinstance(cached, dict):
+        return dict(cached)
+    return _build_frame_decision_summary(
+        detections=result.detections,
+        selected_target=result.selected_target,
+        selection_reason=_optional_str(result.diagnostics.get("selection_reason")),
+        live_config=live_config,
+    )
+
+
+def _build_sequence_evaluation_summary(
+    *,
+    results: tuple[PerceptionFrameResult, ...],
+    live_config: LiveConfig,
+) -> SequenceEvaluationSummary:
+    frame_decisions = tuple(
+        {
+            "frame_source": result.frame_source,
+            "phase": result.phase,
+            **_resolve_frame_decision_summary(result, live_config=live_config),
+        }
+        for result in results
+    )
+    decision_code_counts: dict[str, int] = {}
+    player_fp_selected_count = 0
+    for decision in frame_decisions:
+        code = str(decision.get("decision_code", "unknown"))
+        decision_code_counts[code] = decision_code_counts.get(code, 0) + 1
+        if bool(decision.get("player_fp_selected", False)):
+            player_fp_selected_count += 1
+
+    transitions: list[dict[str, Any]] = []
+    comparable_selected_transition_count = 0
+    stable_selected_transition_count = 0
+    target_switch_count = 0
+    wrong_target_switch_count = 0
+    for previous, current in zip(frame_decisions, frame_decisions[1:]):
+        previous_target_id = _optional_str(previous.get("selected_target_id"))
+        current_target_id = _optional_str(current.get("selected_target_id"))
+        if previous_target_id is not None and current_target_id is not None:
+            comparable_selected_transition_count += 1
+            if previous_target_id == current_target_id:
+                stable_selected_transition_count += 1
+        if bool(current.get("target_switch_detected", False)):
+            target_switch_count += 1
+        if bool(current.get("wrong_target_switch", False)):
+            wrong_target_switch_count += 1
+        transitions.append(
+            {
+                "from_frame_source": previous.get("frame_source"),
+                "to_frame_source": current.get("frame_source"),
+                "from_selected_target_id": previous_target_id,
+                "to_selected_target_id": current_target_id,
+                "target_switch_detected": bool(current.get("target_switch_detected", False)),
+                "target_switch_justified": bool(current.get("target_switch_justified", True)),
+                "wrong_target_switch": bool(current.get("wrong_target_switch", False)),
+                "decision_code": current.get("decision_code"),
+            }
+        )
+    selected_target_stability_rate = None
+    if comparable_selected_transition_count > 0:
+        selected_target_stability_rate = (
+            float(stable_selected_transition_count) / float(comparable_selected_transition_count)
+        )
+    return SequenceEvaluationSummary(
+        frame_count=len(results),
+        evaluated_transition_count=max(0, len(results) - 1),
+        comparable_selected_transition_count=comparable_selected_transition_count,
+        stable_selected_transition_count=stable_selected_transition_count,
+        selected_target_stability_rate=selected_target_stability_rate,
+        target_switch_count=target_switch_count,
+        wrong_target_switch_count=wrong_target_switch_count,
+        player_fp_selected_count=player_fp_selected_count,
+        decision_code_counts=decision_code_counts,
+        frame_decisions=frame_decisions,
+        transitions=tuple(transitions),
+    )
 
 
 def _build_detection_tuning_parameters(live_config: LiveConfig) -> dict[str, Any]:

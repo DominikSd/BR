@@ -43,6 +43,7 @@ def test_load_default_config_returns_settings() -> None:
 
     assert settings.vision.enabled is False
     assert settings.live.dry_run is False
+    assert settings.live.shadow_session_enabled is False
     assert settings.live.enable_real_input is False
     assert settings.live.enable_real_clicks is False
     assert settings.live.enable_real_keys is False
@@ -291,6 +292,7 @@ def test_live_preview_fast_config_can_be_loaded_from_yaml() -> None:
 
     assert settings.app.mode == "live"
     assert settings.live.debug_directory.name == "live_preview_fast_debug"
+    assert settings.live.shadow_session_enabled is False
     assert settings.live.preview_fast_mode is True
     assert settings.live.preview_skip_fallback_confirmation is True
     assert settings.live.preview_render_aux_boxes is False
@@ -331,6 +333,7 @@ def test_live_accuracy_regression_config_can_be_loaded_from_yaml() -> None:
 
     assert settings.app.mode == "live"
     assert settings.live.debug_directory.name == "live_accuracy_regression_debug"
+    assert settings.live.shadow_session_enabled is False
     assert settings.live.preview_fast_mode is False
     assert settings.live.preview_skip_fallback_confirmation is False
     assert settings.live.preview_render_aux_boxes is False
@@ -365,6 +368,23 @@ def test_live_accuracy_regression_config_can_be_loaded_from_yaml() -> None:
     assert settings.live.player_veto_tall_blob_min_green_pixels == 40
     assert settings.live.player_veto_tall_blob_max_upper_score == 0.88
     assert settings.live.player_veto_tall_blob_max_detection_confidence == 0.80
+
+
+def test_live_shadow_session_config_can_be_loaded_from_yaml() -> None:
+    settings = load_config(PROJECT_ROOT / "config" / "live_shadow_session.yaml")
+
+    assert settings.app.mode == "live"
+    assert settings.live.shadow_session_enabled is True
+    assert settings.live.dry_run is False
+    assert settings.live.enable_real_input is False
+    assert settings.live.enable_real_clicks is False
+    assert settings.live.enable_real_keys is False
+    assert settings.live.debug_directory.name == "live_shadow_session_debug"
+    assert settings.live.preview_fast_mode is False
+    assert settings.live.candidate_confirmation_frames == 2
+    assert settings.live.occupied_confirmation_frames == 2
+    assert settings.live.offline_static_frame_confirmation_override_enabled is True
+    assert settings.live.engage_min_seen_frames == 2
 
 
 def test_cycle_prediction_window_methods() -> None:

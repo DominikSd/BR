@@ -44,6 +44,13 @@ class LiveEngageSessionSummary:
     selection_latency: LatencyAggregate
     total_reaction_latency: LatencyAggregate
     verification_latency: LatencyAggregate
+    selected_target_stability_rate: float | None = None
+    target_switch_count: int = 0
+    wrong_target_switch_count: int = 0
+    valid_target_but_engage_rejected_count: int = 0
+    verify_lost_target_count: int = 0
+    player_fp_selected_count: int = 0
+    decision_code_counts: dict[str, int] = field(default_factory=dict)
     calibration_warning_count: int = 0
     right_click_action_count: int = 0
     key_press_action_count: int = 0
@@ -53,6 +60,23 @@ class LiveEngageSessionSummary:
     @classmethod
     def from_results(cls, results: Iterable[LiveEngageResult]) -> "LiveEngageSessionSummary":
         parsed_results = tuple(results)
+        comparable_selected_transition_count = 0
+        stable_selected_transition_count = 0
+        for previous, current in zip(parsed_results, parsed_results[1:]):
+            if previous.selected_target_id is None or current.selected_target_id is None:
+                continue
+            comparable_selected_transition_count += 1
+            if previous.selected_target_id == current.selected_target_id:
+                stable_selected_transition_count += 1
+        selected_target_stability_rate = None
+        if comparable_selected_transition_count > 0:
+            selected_target_stability_rate = (
+                float(stable_selected_transition_count) / float(comparable_selected_transition_count)
+            )
+        decision_code_counts: dict[str, int] = {}
+        for result in parsed_results:
+            decision_code = str(result.metadata.get("final_decision_code", result.reason))
+            decision_code_counts[decision_code] = decision_code_counts.get(decision_code, 0) + 1
         return cls(
             total_attempts=len(parsed_results),
             engaged_count=sum(1 for result in parsed_results if result.outcome is LiveEngageOutcome.ENGAGED),
@@ -134,6 +158,29 @@ class LiveEngageSessionSummary:
                     if result.verification_latency_ms is not None
                 ),
             ),
+            selected_target_stability_rate=selected_target_stability_rate,
+            target_switch_count=sum(
+                1 for result in parsed_results if bool(result.metadata.get("target_switch_detected", False))
+            ),
+            wrong_target_switch_count=sum(
+                1 for result in parsed_results if bool(result.metadata.get("wrong_target_switch", False))
+            ),
+            valid_target_but_engage_rejected_count=sum(
+                1
+                for result in parsed_results
+                if result.outcome is LiveEngageOutcome.NO_TARGET_AVAILABLE
+                and bool(result.metadata.get("engage_quality_gate_rejected", False))
+                and bool(result.metadata.get("valid_target_available", False))
+            ),
+            verify_lost_target_count=sum(
+                1
+                for result in parsed_results
+                if str(result.metadata.get("final_decision_code", "")) == "target_lost_on_verify"
+            ),
+            player_fp_selected_count=sum(
+                1 for result in parsed_results if bool(result.metadata.get("player_fp_selected", False))
+            ),
+            decision_code_counts=decision_code_counts,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -148,6 +195,13 @@ class LiveEngageSessionSummary:
             "engage_quality_gate_rejection_count": self.engage_quality_gate_rejection_count,
             "occupied_rejection_count": self.occupied_rejection_count,
             "out_of_zone_rejection_count": self.out_of_zone_rejection_count,
+            "selected_target_stability_rate": self.selected_target_stability_rate,
+            "target_switch_count": self.target_switch_count,
+            "wrong_target_switch_count": self.wrong_target_switch_count,
+            "valid_target_but_engage_rejected_count": self.valid_target_but_engage_rejected_count,
+            "verify_lost_target_count": self.verify_lost_target_count,
+            "player_fp_selected_count": self.player_fp_selected_count,
+            "decision_code_counts": dict(self.decision_code_counts),
             "calibration_warning_count": self.calibration_warning_count,
             "right_click_action_count": self.right_click_action_count,
             "key_press_action_count": self.key_press_action_count,
@@ -314,9 +368,14 @@ class LiveEngageArtifactWriter:
         )
         engage_gate_reason = result.metadata.get("engage_gate_reason")
         engage_gate_decision = result.metadata.get("engage_gate_decision")
+        final_decision_code = result.metadata.get("final_decision_code")
         if engage_gate_reason is not None or engage_gate_decision is not None:
             lines.append(
                 f'<text x="16" y="72" fill="#cbd5e1" font-size="14">engage_gate_decision={engage_gate_decision} engage_gate_reason={engage_gate_reason}</text>'
+            )
+        if final_decision_code is not None:
+            lines.append(
+                f'<text x="16" y="92" fill="#cbd5e1" font-size="14">final_decision_code={final_decision_code}</text>'
             )
         verify_state_detection = result.metadata.get("verify_state_detection")
         if isinstance(verify_state_detection, dict):
@@ -393,6 +452,7 @@ class LiveEngageService:
                 metadata={
                     "approach_reason": engagement.approach_result.reason,
                     "interaction_reason": engagement.interaction_result.reason,
+                    "final_decision_code": "target_rejected",
                     **engagement.approach_result.metadata,
                     **observation_metrics_metadata,
                     "engage_ladder_diagnostics": _build_engage_ladder_diagnostics(
@@ -410,6 +470,10 @@ class LiveEngageService:
             )
 
         if engagement.approach_result.reason.startswith("engage_quality_gate_"):
+            final_decision_code = _resolve_quality_gate_final_decision_code(
+                approach_reason=engagement.approach_result.reason,
+                observation_metrics_metadata=observation_metrics_metadata,
+            )
             result = LiveEngageResult(
                 cycle_id=cycle_id,
                 outcome=LiveEngageOutcome.NO_TARGET_AVAILABLE,
@@ -426,6 +490,7 @@ class LiveEngageService:
                 metadata={
                     "approach_reason": engagement.approach_result.reason,
                     "interaction_reason": engagement.interaction_result.reason,
+                    "final_decision_code": final_decision_code,
                     **engagement.approach_result.metadata,
                     **observation_metrics_metadata,
                     "engage_ladder_diagnostics": _build_engage_ladder_diagnostics(
@@ -443,6 +508,9 @@ class LiveEngageService:
             )
 
         if selected_target_id is None or final_target_id is None:
+            final_decision_code = _resolve_no_target_final_decision_code(
+                observation_metrics_metadata=observation_metrics_metadata,
+            )
             result = LiveEngageResult(
                 cycle_id=cycle_id,
                 outcome=LiveEngageOutcome.NO_TARGET_AVAILABLE,
@@ -459,6 +527,7 @@ class LiveEngageService:
                 metadata={
                     "approach_reason": engagement.approach_result.reason,
                     "interaction_reason": engagement.interaction_result.reason,
+                    "final_decision_code": final_decision_code,
                     **engagement.approach_result.metadata,
                     **observation_metrics_metadata,
                     "engage_ladder_diagnostics": _build_engage_ladder_diagnostics(
@@ -568,17 +637,28 @@ def classify_engage_outcome(
         normalized_hint = outcome_hint.strip().lower()
         for outcome in LiveEngageOutcome:
             if outcome.value == normalized_hint:
-                return outcome, f"engage_result_hint:{normalized_hint}", {"result_hint": normalized_hint}
+                return outcome, f"engage_result_hint:{normalized_hint}", {
+                    "result_hint": normalized_hint,
+                    "final_decision_code": "target_accepted"
+                    if outcome is LiveEngageOutcome.ENGAGED
+                    else "target_rejected",
+                }
 
     if verify_state.in_combat:
-        return LiveEngageOutcome.ENGAGED, "entered_combat_detected", {"verify_in_combat": True}
+        return LiveEngageOutcome.ENGAGED, "entered_combat_detected", {
+            "verify_in_combat": True,
+            "final_decision_code": "target_accepted",
+        }
 
     if (
         bool(verify_frame_metadata.get("approach_timeout", False))
         or bool(verify_frame_metadata.get("verify_timeout", False))
         or "timeout" in engagement.approach_result.reason
     ):
-        return LiveEngageOutcome.APPROACH_TIMEOUT, "engage_verify_timeout", {"verify_timeout": True}
+        return LiveEngageOutcome.APPROACH_TIMEOUT, "engage_verify_timeout", {
+            "verify_timeout": True,
+            "final_decision_code": "target_rejected",
+        }
 
     final_target = _find_detection_by_target_id(
         detections=verify_perception.detections,
@@ -595,6 +675,7 @@ def classify_engage_outcome(
             LiveEngageOutcome.TARGET_STOLEN,
             "target_became_occupied_after_click",
             {
+                "final_decision_code": "occupied_rejection",
                 "verify_target_id": final_target.target_id,
                 "verify_target_xy": [final_target.screen_x, final_target.screen_y],
             },
@@ -611,6 +692,7 @@ def classify_engage_outcome(
                 LiveEngageOutcome.TARGET_STOLEN,
                 "occupied_target_near_click_point",
                 {
+                    "final_decision_code": "occupied_rejection",
                     "verify_target_id": occupied_near_click.target_id,
                     "verify_target_xy": [occupied_near_click.screen_x, occupied_near_click.screen_y],
                 },
@@ -618,11 +700,12 @@ def classify_engage_outcome(
 
     return (
         LiveEngageOutcome.MISCLICK,
-        "target_not_engaged_and_not_stolen",
+        "target_lost_on_verify",
         {
             "verify_target_count": len(verify_perception.detections),
             "verify_free_target_count": len(verify_perception.free_detections),
             "verify_occupied_target_count": len(verify_perception.occupied_detections),
+            "final_decision_code": "target_lost_on_verify",
         },
     )
 
@@ -721,6 +804,40 @@ def _find_nearest_detection(
     return nearest
 
 
+def _resolve_quality_gate_final_decision_code(
+    *,
+    approach_reason: str,
+    observation_metrics_metadata: dict[str, Any],
+) -> str:
+    if approach_reason == "engage_quality_gate_target_occupied":
+        return "occupied_rejection"
+    if approach_reason == "engage_quality_gate_out_of_zone":
+        return "out_of_zone_rejection"
+    if approach_reason in {
+        "engage_quality_gate_player_veto",
+        "engage_quality_gate_player_veto_suspicious",
+    }:
+        return "player_false_positive"
+    if bool(observation_metrics_metadata.get("valid_target_available", False)):
+        return "engage_rejected_valid_target"
+    selected_target_decision_code = observation_metrics_metadata.get("selected_target_decision_code")
+    if isinstance(selected_target_decision_code, str) and selected_target_decision_code.strip():
+        return selected_target_decision_code
+    return "target_rejected"
+
+
+def _resolve_no_target_final_decision_code(
+    *,
+    observation_metrics_metadata: dict[str, Any],
+) -> str:
+    selected_target_decision_code = observation_metrics_metadata.get("selected_target_decision_code")
+    if isinstance(selected_target_decision_code, str) and selected_target_decision_code.strip():
+        return selected_target_decision_code
+    if bool(observation_metrics_metadata.get("valid_target_available", False)):
+        return "engage_rejected_valid_target"
+    return "target_rejected"
+
+
 def _build_observation_metrics_metadata(
     observation_result: PerceptionFrameResult | None,
 ) -> dict[str, Any]:
@@ -730,14 +847,62 @@ def _build_observation_metrics_metadata(
             "out_of_zone_rejection_count": 0,
             "selected_target_in_zone": None,
             "scene_calibration_warning": None,
+            "valid_target_available_count": 0,
+            "valid_target_available": False,
+            "player_fp_selected": False,
+            "target_switch_detected": False,
+            "wrong_target_switch": False,
+            "selected_target_decision_code": "target_rejected",
         }
     selected_target = observation_result.selected_target
+    decision_summary = observation_result.diagnostics.get("decision_summary", {})
+    selected_target_confirmation_score = None
+    selected_target_ice_score = None
+    selected_target_player_veto_score = None
+    selected_target_player_veto_gate_decision = None
+    selected_target_reachable = None
+    selected_target_occupied = None
+    selected_target_distance = None
+    selected_target_confidence = None
+    selected_target_seen_frames = None
+    if selected_target is not None:
+        selected_target_confirmation_score = float(
+            selected_target.metadata.get(
+                "confirmation_selected_score",
+                selected_target.metadata.get("confirmation_confidence", 0.0),
+            )
+        )
+        selected_target_ice_score = float(selected_target.metadata.get("ice_score", 0.0))
+        selected_target_player_veto_score = float(selected_target.metadata.get("player_veto_score", 0.0))
+        selected_target_player_veto_gate_decision = str(
+            selected_target.metadata.get("player_veto_gate_decision", "allow")
+        )
+        selected_target_reachable = bool(selected_target.reachable)
+        selected_target_occupied = bool(selected_target.occupied)
+        selected_target_distance = float(selected_target.distance)
+        selected_target_confidence = float(selected_target.confidence)
+        selected_target_seen_frames = int(selected_target.metadata.get("seen_frames", 0))
     return {
         "occupied_rejection_count": len(observation_result.occupied_detections),
         "out_of_zone_rejection_count": len(observation_result.out_of_zone_detections),
         "selected_target_in_zone": None
         if selected_target is None
         else bool(selected_target.metadata.get("in_scene_zone", True)),
+        "selected_target_confidence": selected_target_confidence,
+        "selected_target_distance": selected_target_distance,
+        "selected_target_seen_frames": selected_target_seen_frames,
+        "selected_target_confirmation_score": selected_target_confirmation_score,
+        "selected_target_ice_score": selected_target_ice_score,
+        "selected_target_player_veto_score": selected_target_player_veto_score,
+        "selected_target_player_veto_gate_decision": selected_target_player_veto_gate_decision,
+        "selected_target_reachable": selected_target_reachable,
+        "selected_target_occupied": selected_target_occupied,
+        "valid_target_available_count": len(observation_result.selectable_detections),
+        "valid_target_available": bool(observation_result.selectable_detections),
+        "player_fp_selected": bool(decision_summary.get("player_fp_selected", False)),
+        "target_switch_detected": bool(decision_summary.get("target_switch_detected", False)),
+        "wrong_target_switch": bool(decision_summary.get("wrong_target_switch", False)),
+        "selected_target_decision_code": decision_summary.get("decision_code", "target_rejected"),
         "scene_calibration_warning": observation_result.scene_calibration.get("warning"),
     }
 

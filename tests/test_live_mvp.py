@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from botlab.adapters.live import (
+    classify_occupied,
     LiveEngageSessionSummary,
     LiveEngageObserve,
     LivePreviewSnapshotWriter,
@@ -31,6 +32,7 @@ from botlab.adapters.live.capture import ForegroundWindowCapture, WindowCaptureS
 from botlab.adapters.live.input import LiveInputDriver
 from botlab.adapters.live import preview as live_preview_module
 from botlab.adapters.live.models import (
+    LiveEngageResult,
     LiveEngageOutcome,
     LiveFrame,
     LiveResourceSnapshot,
@@ -40,6 +42,7 @@ from botlab.adapters.live.models import (
 )
 from botlab.adapters.live.perception import (
     BenchmarkDatasetLoader,
+    PerceptionFrameResult,
     PerceptionFrameLoader,
     ReactionLatency,
     TemplateHit,
@@ -510,6 +513,45 @@ def _find_closest_detection(
             closest_distance = distance
             closest_target = detection
     return closest_target, closest_distance
+
+
+def _build_sequence_perception_result(
+    *,
+    cycle_id: int,
+    frame_source: str,
+    detections: tuple[LiveTargetDetection, ...],
+    selected_target_id: str | None,
+    selection_reason: str | None = None,
+) -> PerceptionFrameResult:
+    return PerceptionFrameResult(
+        cycle_id=cycle_id,
+        phase=f"sequence_{cycle_id:03d}",
+        frame_source=frame_source,
+        frame_width=1280,
+        frame_height=720,
+        reference_point_xy=(640.0, 360.0),
+        roi={
+            "name": "spawn_roi",
+            "x": 0,
+            "y": 0,
+            "width": 1280,
+            "height": 720,
+            "frame_width": 1280,
+            "frame_height": 720,
+            "source": "test",
+        },
+        raw_hits=(),
+        detections=detections,
+        selected_target_id=selected_target_id,
+        timings=ReactionLatency(
+            frame_captured_ts=float(cycle_id),
+            detection_started_ts=float(cycle_id),
+            detection_finished_ts=float(cycle_id),
+            target_selected_ts=float(cycle_id),
+            action_ready_ts=float(cycle_id),
+        ),
+        diagnostics={} if selection_reason is None else {"selection_reason": selection_reason},
+    )
 
 
 def test_filter_occupied_targets_excludes_busy_groups() -> None:
@@ -2447,6 +2489,34 @@ def test_occupied_template_rescue_can_classify_occupied_without_green_color_seed
     assert detection.metadata["occupied_reason"] == "occupied_template_rescue_confirmed"
 
 
+def test_occupied_template_rescue_without_green_seed_requires_full_threshold() -> None:
+    mob_hit = TemplateHit(
+        label="mob_a",
+        x=150,
+        y=104,
+        width=18,
+        height=24,
+        confidence=0.80,
+    )
+    occupied_hit = TemplateHit(
+        label="occupied_swords",
+        x=148,
+        y=78,
+        width=12,
+        height=12,
+        confidence=0.58,
+    )
+
+    occupied_candidate, occupied_confidence = classify_occupied(
+        mob_hit=mob_hit,
+        occupied_hits=(occupied_hit,),
+        minimum_confidence=0.60,
+    )
+
+    assert occupied_candidate is False
+    assert occupied_confidence == pytest.approx(0.58)
+
+
 def test_marker_first_candidate_becomes_actionable_after_seen_frames_threshold(
     tmp_path: Path,
 ) -> None:
@@ -3557,6 +3627,70 @@ def test_live_preview_snapshot_writer_overwrites_single_latest_files(tmp_path: P
     assert saved_image.size == (120, 60)
 
 
+def test_build_live_preview_state_marks_shadow_session_and_final_decision() -> None:
+    frame = LiveFrame(
+        width=320,
+        height=240,
+        captured_at_ts=100.0,
+        source="shadow-preview-test",
+        metadata={
+            "capture_reliability": "trusted",
+            "capture_latency_ms": 12.0,
+            "preview_background_bypass": False,
+            "window_guard": {"block_reason": None},
+        },
+    )
+    detection = LiveTargetDetection(
+        target_id="mob-a",
+        screen_x=160,
+        screen_y=120,
+        distance=2.0,
+        occupied=False,
+        reachable=True,
+        confidence=0.80,
+        metadata={"in_scene_zone": True},
+    )
+    result = _build_sequence_perception_result(
+        cycle_id=1,
+        frame_source="shadow-preview-test",
+        detections=(detection,),
+        selected_target_id="mob-a",
+        selection_reason="nearest_free_in_zone_reachable_target",
+    )
+    engage_result = LiveEngageResult(
+        cycle_id=1,
+        outcome=LiveEngageOutcome.NO_TARGET_AVAILABLE,
+        reason="engage_quality_gate_low_confidence",
+        selected_target_id="mob-a",
+        final_target_id="mob-a",
+        click_screen_xy=None,
+        started_at_ts=100.0,
+        completed_at_ts=100.2,
+        detection_latency_ms=120.0,
+        selection_latency_ms=10.0,
+        total_reaction_latency_ms=130.0,
+        verification_latency_ms=0.0,
+        metadata={
+            "engage_gate_decision": "reject",
+            "engage_gate_reason": "engage_quality_gate_low_confidence",
+            "engage_quality_gate_rejection_count": 1,
+            "final_decision_code": "engage_rejected_valid_target",
+        },
+    )
+
+    state = build_live_preview_state(
+        frame=frame,
+        result=result,
+        engage_result=engage_result,
+        preview_mode="shadow_session_standard",
+        capture_mode_used_for_preview="preview_bypass",
+        shadow_session_enabled=True,
+    )
+
+    assert any(line == "shadow_session=true" for line in state.headline_lines)
+    assert any("final_decision=engage_rejected_valid_target" == line for line in state.headline_lines)
+
+
 def test_resolve_snapshot_payload_requires_ready_payload_when_cache_is_empty(tmp_path: Path) -> None:
     from PIL import Image
 
@@ -4277,6 +4411,63 @@ def test_live_engage_session_summary_aggregates_outcomes_and_latencies() -> None
     assert summary.verification_latency.max_ms == pytest.approx(160.0)
 
 
+def test_live_engage_session_summary_counts_sequence_decision_metrics() -> None:
+    result_rejected = LiveEngageResult(
+        cycle_id=1,
+        outcome=LiveEngageOutcome.NO_TARGET_AVAILABLE,
+        reason="engage_quality_gate_low_confidence",
+        selected_target_id="mob-a",
+        final_target_id="mob-a",
+        click_screen_xy=None,
+        started_at_ts=100.0,
+        completed_at_ts=100.2,
+        detection_latency_ms=120.0,
+        selection_latency_ms=12.0,
+        total_reaction_latency_ms=132.0,
+        verification_latency_ms=0.0,
+        metadata={
+            "engage_quality_gate_rejected": True,
+            "engage_quality_gate_rejection_count": 1,
+            "valid_target_available": True,
+            "target_switch_detected": True,
+            "wrong_target_switch": True,
+            "player_fp_selected": True,
+            "final_decision_code": "engage_rejected_valid_target",
+        },
+    )
+    result_lost = LiveEngageResult(
+        cycle_id=2,
+        outcome=LiveEngageOutcome.MISCLICK,
+        reason="target_lost_on_verify",
+        selected_target_id="mob-b",
+        final_target_id="mob-b",
+        click_screen_xy=(620, 300),
+        started_at_ts=101.0,
+        completed_at_ts=101.3,
+        detection_latency_ms=118.0,
+        selection_latency_ms=10.0,
+        total_reaction_latency_ms=128.0,
+        verification_latency_ms=180.0,
+        metadata={
+            "target_switch_detected": False,
+            "wrong_target_switch": False,
+            "player_fp_selected": False,
+            "final_decision_code": "target_lost_on_verify",
+        },
+    )
+
+    summary = LiveEngageSessionSummary.from_results((result_rejected, result_lost))
+
+    assert summary.valid_target_but_engage_rejected_count == 1
+    assert summary.verify_lost_target_count == 1
+    assert summary.player_fp_selected_count == 1
+    assert summary.target_switch_count == 1
+    assert summary.wrong_target_switch_count == 1
+    assert summary.decision_code_counts["engage_rejected_valid_target"] == 1
+    assert summary.decision_code_counts["target_lost_on_verify"] == 1
+    assert summary.selected_target_stability_rate == pytest.approx(0.0)
+
+
 def test_classify_engage_outcome_marks_target_stolen_when_verify_target_is_occupied() -> None:
     world = _build_test_world_snapshot()
     decision = RetargetDecision(
@@ -4379,6 +4570,85 @@ def test_classify_engage_outcome_marks_target_stolen_when_verify_target_is_occup
     assert metadata["verify_target_id"] == "target-a"
 
 
+def test_classify_engage_outcome_reports_verify_lost_target() -> None:
+    world = _build_test_world_snapshot()
+    decision = RetargetDecision(
+        current_target_id=None,
+        selected_target=TargetCandidate(
+            group_id="target-a",
+            score=1.0,
+            reason="nearest_free_target",
+            reachable=True,
+            engaged_by_other=False,
+            distance=1.5,
+        ),
+        validation=TargetValidationResult(
+            group_id="target-a",
+            status=TargetValidationStatus.VALID,
+            reason="target_still_available",
+            can_continue=True,
+        ),
+        changed=True,
+        reason="selected_new_target",
+    )
+    engagement = TargetEngagementResult(
+        cycle_id=1,
+        target_resolution=TargetResolution(
+            cycle_id=1,
+            current_target_id=None,
+            selected_target_id="target-a",
+            world_snapshot=world,
+            decision=decision,
+        ),
+        approach_result=TargetApproachResult(
+            cycle_id=1,
+            target_id="target-a",
+            started_at_ts=100.0,
+            completed_at_ts=100.4,
+            travel_s=0.4,
+            arrived=True,
+            reason="target_reached_in_live_adapter",
+            initial_target_id="target-a",
+            retargeted=False,
+        ),
+        interaction_result=TargetInteractionResult(
+            cycle_id=1,
+            target_id="target-a",
+            ready=True,
+            observed_at_ts=100.45,
+            reason="interaction_ready",
+            initial_target_id="target-a",
+            retargeted=False,
+        ),
+    )
+    verify_perception = PerceptionFrameResult(
+        cycle_id=1,
+        phase="engage_verify",
+        frame_source="verify-test",
+        frame_width=1280,
+        frame_height=720,
+        reference_point_xy=(640.0, 360.0),
+        roi={"name": "spawn_roi", "x": 0, "y": 0, "width": 1280, "height": 720},
+        raw_hits=(),
+        detections=(),
+        selected_target_id=None,
+        timings=ReactionLatency(100.7, 100.7, 100.7, 100.7, 100.7),
+    )
+
+    outcome, reason, metadata = classify_engage_outcome(
+        engagement=engagement,
+        verify_state=LiveStateSnapshot(in_combat=False, reward_visible=False, rest_available=True),
+        verify_frame_metadata={},
+        verify_perception=verify_perception,
+        click_point_xy=(632, 304),
+        target_match_max_distance_px=72,
+    )
+
+    assert outcome is LiveEngageOutcome.MISCLICK
+    assert reason == "target_lost_on_verify"
+    assert metadata["final_decision_code"] == "target_lost_on_verify"
+
+
 def test_live_runner_dry_run_engage_attempts_produce_artifacts_and_records(tmp_path: Path) -> None:
     settings = _build_live_settings(tmp_path)
     runner = LiveRunner.from_settings(
@@ -4406,6 +4676,32 @@ def test_live_runner_dry_run_engage_attempts_produce_artifacts_and_records(tmp_p
     assert summary_payload["right_click_action_count"] >= 1
     assert summary_payload["key_sequence_action_count"] == 0
     assert summary_payload["calibration_warning_count"] == 0
+
+
+def test_live_runner_shadow_session_forces_dry_run_input(tmp_path: Path) -> None:
+    settings = _build_live_settings(tmp_path)
+    settings = replace(
+        settings,
+        live=replace(
+            settings.live,
+            shadow_session_enabled=True,
+            enable_real_input=True,
+            enable_real_clicks=True,
+            enable_real_keys=True,
+        ),
+    )
+    runner = LiveRunner.from_settings(
+        settings,
+        initial_anchor_spawn_ts=100.0,
+        initial_anchor_cycle_id=0,
+        enable_console=False,
+    )
+
+    report = runner.run_shadow_session(1)
+
+    assert report.summary.total_attempts == 1
+    assert report.summary.real_input_action_count == 0
+    assert report.results[0].metadata["real_input_action_count"] == 0
 
 
 def test_live_runner_engage_quality_gate_rejects_unstable_target_before_click(
@@ -4525,6 +4821,106 @@ def test_live_target_approach_provider_rejects_relaxed_engage_when_confirmation_
     assert reason == "engage_quality_gate_confirmation_too_weak"
     assert metadata["engage_gate_reason"] == "engage_quality_gate_confirmation_too_weak"
     assert metadata["engage_quality_gate_rejection_count"] == 1
+
+
+def test_perception_sequence_evaluation_reports_wrong_target_switch_and_player_fp(
+    tmp_path: Path,
+) -> None:
+    live_config = load_config("config/live_accuracy_regression.yaml").live
+    analyzer = PerceptionAnalysisRunner(
+        live_config=live_config,
+        output_directory=tmp_path / "sequence-eval",
+    )._analyzer
+    frame_one_target = LiveTargetDetection(
+        target_id="mob-a",
+        screen_x=600,
+        screen_y=320,
+        distance=90.0,
+        occupied=False,
+        confidence=0.78,
+        metadata={
+            "in_scene_zone": True,
+            "seen_frames": 2,
+        },
+    )
+    frame_two_previous = LiveTargetDetection(
+        target_id="mob-a",
+        screen_x=602,
+        screen_y=322,
+        distance=88.0,
+        occupied=False,
+        confidence=0.79,
+        metadata={
+            "in_scene_zone": True,
+            "seen_frames": 3,
+        },
+    )
+    frame_two_selected = LiveTargetDetection(
+        target_id="mob-b",
+        screen_x=620,
+        screen_y=325,
+        distance=84.0,
+        occupied=False,
+        confidence=0.80,
+        metadata={
+            "in_scene_zone": True,
+            "seen_frames": 3,
+            "selection_previous_target_id": "mob-a",
+        },
+    )
+    frame_three_selected = LiveTargetDetection(
+        target_id="mob-b",
+        screen_x=621,
+        screen_y=326,
+        distance=83.0,
+        occupied=False,
+        confidence=0.81,
+        metadata={
+            "in_scene_zone": True,
+            "seen_frames": 4,
+            "selection_previous_target_id": "mob-b",
+            "player_veto_score": 0.90,
+            "player_veto_threshold": 0.95,
+            "player_veto_triggered": True,
+            "player_veto_green_ratio": 0.03,
+            "ice_signature_brown_ratio": 0.02,
+            "ice_score": 0.20,
+            "marker_score": 0.10,
+        },
+    )
+    summary = analyzer.summarize_session(
+        (
+            _build_sequence_perception_result(
+                cycle_id=1,
+                frame_source="frame_001",
+                detections=(frame_one_target,),
+                selected_target_id="mob-a",
+                selection_reason="nearest_free_in_zone_reachable_target",
+            ),
+            _build_sequence_perception_result(
+                cycle_id=2,
+                frame_source="frame_002",
+                detections=(frame_two_previous, frame_two_selected),
+                selected_target_id="mob-b",
+                selection_reason="nearest_free_in_zone_reachable_target",
+            ),
+            _build_sequence_perception_result(
+                cycle_id=3,
+                frame_source="frame_003",
+                detections=(frame_three_selected,),
+                selected_target_id="mob-b",
+                selection_reason="nearest_free_in_zone_reachable_target",
+            ),
+        )
+    )
+
+    assert summary.sequence_evaluation is not None
+    assert summary.sequence_evaluation.target_switch_count == 1
+    assert summary.sequence_evaluation.wrong_target_switch_count == 1
+    assert summary.sequence_evaluation.player_fp_selected_count == 1
+    assert summary.sequence_evaluation.selected_target_stability_rate == pytest.approx(0.5)
+    assert summary.sequence_evaluation.decision_code_counts["target_switched_wrong"] == 1
+    assert summary.sequence_evaluation.decision_code_counts["player_false_positive"] == 1
 
 
 @pytest.mark.parametrize(

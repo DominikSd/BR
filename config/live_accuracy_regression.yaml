@@ -26,6 +26,7 @@ vision:
 
 live:
   dry_run: false
+  shadow_session_enabled: false
   foreground_only: true
   enable_real_input: false
   enable_real_clicks: false

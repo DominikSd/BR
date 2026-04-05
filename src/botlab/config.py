@@ -59,6 +59,7 @@ class VisionConfig:
 @dataclass(slots=True, frozen=True)
 class LiveConfig:
     dry_run: bool = False
+    shadow_session_enabled: bool = False
     foreground_only: bool = True
     enable_real_input: bool = False
     enable_real_clicks: bool = False
@@ -298,6 +299,7 @@ def load_config(config_path: str | Path) -> Settings:
 
     live_config = LiveConfig(
         dry_run=_optional_bool(live_section, "dry_run", False),
+        shadow_session_enabled=_optional_bool(live_section, "shadow_session_enabled", False),
         foreground_only=_optional_bool(live_section, "foreground_only", True),
         enable_real_input=_optional_bool(live_section, "enable_real_input", False),
         enable_real_clicks=_optional_bool(live_section, "enable_real_clicks", False),
