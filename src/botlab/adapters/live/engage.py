@@ -312,6 +312,12 @@ class LiveEngageArtifactWriter:
         lines.append(
             f'<text x="16" y="24" fill="#f9fafb" font-size="18">engage outcome={result.outcome.value} reason={result.reason}</text>'
         )
+        engage_gate_reason = result.metadata.get("engage_gate_reason")
+        engage_gate_decision = result.metadata.get("engage_gate_decision")
+        if engage_gate_reason is not None or engage_gate_decision is not None:
+            lines.append(
+                f'<text x="16" y="72" fill="#cbd5e1" font-size="14">engage_gate_decision={engage_gate_decision} engage_gate_reason={engage_gate_reason}</text>'
+            )
         verify_state_detection = result.metadata.get("verify_state_detection")
         if isinstance(verify_state_detection, dict):
             lines.append(

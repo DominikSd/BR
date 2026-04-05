@@ -708,7 +708,7 @@ class PerceptionAnalyzer:
                 reference_point_xy=reference_point_xy,
             )
             pipeline_mode = "metadata_fallback"
-        detections, candidate_tracks = self._smooth_detections(detections)
+        detections, candidate_tracks = self._smooth_detections(detections, frame=frame)
         detections = self._apply_scene_zone_filter(
             detections=detections,
             scene_profile=calibrated_scene_profile,
@@ -1184,7 +1184,19 @@ class PerceptionAnalyzer:
                 box=player_veto_roi_box,
                 live_config=self._live_config,
             )
-            if bool(player_veto.get("triggered", False)):
+            center_x, center_y = best_confirmation.center_xy
+            distance = math.dist(reference_point_xy, (center_x, center_y))
+            detection_confidence = (
+                marker_hit.confidence * 0.45
+                + best_confirmation.confidence * 0.55
+            )
+            player_veto_gate = _evaluate_player_veto_gate(
+                player_veto=player_veto,
+                upper_score=upper_score,
+                detection_confidence=detection_confidence,
+                live_config=self._live_config,
+            )
+            if bool(player_veto_gate.get("hard_triggered", False)):
                 player_veto_rejections.append(
                     {
                         "target_id": f"player-veto-{index:03d}",
@@ -1193,7 +1205,7 @@ class PerceptionAnalyzer:
                         "player_veto_roi": list(player_veto_roi_box),
                         "mob_variant": best_confirmation.label,
                         "confirmation_confidence": best_confirmation.confidence,
-                        "rejection_reason": "player_veto_green_name",
+                        "rejection_reason": str(player_veto_gate.get("reason", "player_veto_green_name")),
                         "green_pixel_count": int(player_veto.get("green_pixel_count", 0)),
                         "green_pixel_ratio": float(player_veto.get("green_pixel_ratio", 0.0)),
                         "green_bbox": player_veto.get("green_bbox"),
@@ -1208,7 +1220,10 @@ class PerceptionAnalyzer:
                             player_veto.get("threshold", self._live_config.player_veto_score_threshold)
                         ),
                         "player_veto_triggered": True,
-                        "player_veto_reason": str(player_veto.get("reason", "player_veto_green_name")),
+                        "player_veto_reason": str(player_veto_gate.get("reason", "player_veto_green_name")),
+                        "player_veto_raw_reason": str(player_veto_gate.get("raw_reason", player_veto.get("reason", "player_veto_green_name"))),
+                        "player_veto_gate_decision": str(player_veto_gate.get("decision", "hard_reject")),
+                        "player_veto_soft_triggered": False,
                         "confirmation_stage": confirmation_stage,
                     }
                 )
@@ -1236,45 +1251,55 @@ class PerceptionAnalyzer:
             should_run_occupied_template_match = bool(occupied_color_hits) or (
                 occupied_green_ratio >= self._live_config.occupied_template_match_min_green_ratio
             )
+            occupied_template_rescue_used = False
+            occupied_template_threshold = float(self._live_config.occupied_confidence_threshold)
+            if (
+                not should_run_occupied_template_match
+                and self._live_config.occupied_template_rescue_enabled
+                and template_pack.occupied_variants
+            ):
+                should_run_occupied_template_match = True
+                occupied_template_rescue_used = True
+                occupied_template_threshold = min(
+                    float(self._live_config.occupied_confidence_threshold),
+                    float(self._live_config.occupied_template_rescue_confidence_threshold),
+                )
             occupied_hits = ()
             if should_run_occupied_template_match:
                 occupied_hits = _match_local_variants(
                     image=image,
                     box=occupied_roi_box,
                     variants=template_pack.occupied_variants,
-                    confidence_threshold=self._live_config.occupied_confidence_threshold,
+                    confidence_threshold=occupied_template_threshold,
                     stride_px=local_stride_px,
                 )
             all_occupied_hits = tuple((*occupied_hits, *occupied_color_hits))
             raw_hits.extend(all_occupied_hits)
+            occupied_threshold = max(
+                0.35,
+                occupied_template_threshold * 0.75,
+            )
             occupied_candidate, occupied_confidence = classify_occupied(
                 mob_hit=best_confirmation,
                 occupied_hits=all_occupied_hits,
-                minimum_confidence=max(
-                    0.35,
-                    self._live_config.occupied_confidence_threshold * 0.75,
-                ),
+                minimum_confidence=occupied_threshold,
             )
             if occupied_candidate:
-                occupied_reason = "occupied_confirmed"
+                occupied_reason = (
+                    "occupied_template_rescue_confirmed"
+                    if occupied_template_rescue_used and not occupied_color_hits
+                    else "occupied_confirmed"
+                )
             elif not occupied_color_hits and occupied_green_ratio < self._live_config.occupied_template_match_min_green_ratio:
-                occupied_reason = "no_occupied_signal"
+                occupied_reason = (
+                    "occupied_template_rescue_no_match"
+                    if occupied_template_rescue_used
+                    else "no_occupied_signal"
+                )
             elif should_run_occupied_template_match and not occupied_hits:
                 occupied_reason = "green_signal_without_template_match"
             else:
                 occupied_reason = "occupied_confidence_below_threshold"
-            center_x, center_y = best_confirmation.center_xy
-            distance = math.dist(reference_point_xy, (center_x, center_y))
-            detection_confidence = (
-                marker_hit.confidence * 0.45
-                + best_confirmation.confidence * 0.55
-            )
-            player_veto_gate = _evaluate_player_veto_gate(
-                player_veto=player_veto,
-                upper_score=upper_score,
-                detection_confidence=detection_confidence,
-                live_config=self._live_config,
-            )
             if bool(player_veto_gate.get("triggered", False)):
                 player_veto_rejections.append(
                     {
@@ -1302,6 +1327,7 @@ class PerceptionAnalyzer:
                         ),
                         "player_veto_triggered": True,
                         "player_veto_reason": str(player_veto_gate.get("reason", "player_veto_soft_suspicious_candidate")),
+                        "player_veto_raw_reason": str(player_veto_gate.get("raw_reason", player_veto.get("reason", "player_veto_below_threshold"))),
                         "player_veto_gate_decision": str(player_veto_gate.get("decision", "soft_reject")),
                         "player_veto_soft_triggered": bool(player_veto_gate.get("soft_triggered", False)),
                         "player_veto_soft_score_threshold": float(
@@ -1359,14 +1385,13 @@ class PerceptionAnalyzer:
                         "occupied_score": occupied_confidence,
                         "occupied_green_ratio": occupied_green_ratio,
                         "occupied_template_match_enabled": should_run_occupied_template_match,
+                        "occupied_template_rescue_used": occupied_template_rescue_used,
+                        "occupied_template_threshold": occupied_template_threshold,
                         "occupied_color_hit_count": len(occupied_color_hits),
                         "occupied_template_hit_count": len(occupied_hits),
                         "occupied_all_hit_count": len(all_occupied_hits),
                         "occupied_reason": occupied_reason,
-                        "occupied_threshold": max(
-                            0.35,
-                            self._live_config.occupied_confidence_threshold * 0.75,
-                        ),
+                        "occupied_threshold": occupied_threshold,
                         "occupied_roi": list(occupied_roi_box),
                         "confirmation_roi": list(confirmation_roi_box),
                         "confirmation_confidence": best_confirmation.confidence,
@@ -1388,7 +1413,8 @@ class PerceptionAnalyzer:
                         "player_veto_threshold": float(
                             player_veto.get("threshold", self._live_config.player_veto_score_threshold)
                         ),
-                        "player_veto_reason": str(player_veto_gate.get("reason", player_veto.get("reason", "player_veto_below_threshold"))),
+                        "player_veto_reason": str(player_veto_gate.get("reason", "player_veto_allowed")),
+                        "player_veto_raw_reason": str(player_veto_gate.get("raw_reason", player_veto.get("reason", "player_veto_below_threshold"))),
                         "player_veto_gate_decision": str(player_veto_gate.get("decision", "allow")),
                         "player_veto_soft_triggered": bool(player_veto_gate.get("soft_triggered", False)),
                         "player_veto_soft_score_threshold": float(
@@ -1583,14 +1609,18 @@ class PerceptionAnalyzer:
     def _smooth_detections(
         self,
         detections: tuple[LiveTargetDetection, ...],
+        *,
+        frame: LiveFrame,
     ) -> tuple[tuple[LiveTargetDetection, ...], tuple[LiveTargetDetection, ...]]:
         if not detections and not self._track_states:
             return (), ()
         matched_track_ids: set[str] = set()
         actionable: list[LiveTargetDetection] = []
         candidates: list[LiveTargetDetection] = []
+        static_frame_override = self._should_apply_static_frame_confirmation_override(frame=frame)
         for detection in detections:
             track_id = self._match_track_id(detection, matched_track_ids)
+            new_track = track_id is None
             if track_id is None:
                 self._track_sequence += 1
                 track_id = f"track-{self._track_sequence:04d}"
@@ -1602,6 +1632,13 @@ class PerceptionAnalyzer:
                     )
                 else:
                     occupied_seen_frames = 0
+                if static_frame_override:
+                    seen_frames = max(seen_frames, self._live_config.candidate_confirmation_frames)
+                    if bool(detection.metadata.get("occupied_candidate", False)):
+                        occupied_seen_frames = max(
+                            occupied_seen_frames,
+                            self._live_config.occupied_confirmation_frames,
+                        )
             else:
                 previous = self._track_states[track_id]
                 seen_frames = previous.seen_frames + 1
@@ -1632,6 +1669,11 @@ class PerceptionAnalyzer:
                     "track_seen_frames": seen_frames,
                     "seen_frames": seen_frames,
                     "occupied_seen_frames": occupied_seen_frames,
+                    "temporal_confirmation_mode": (
+                        "static_frame_override"
+                        if static_frame_override and new_track
+                        else "tracked"
+                    ),
                     "stable_candidate": actionable_now,
                     "actionable": actionable_now,
                     "detection_state": "actionable" if actionable_now else "candidate",
@@ -1655,6 +1697,18 @@ class PerceptionAnalyzer:
             tuple(sorted(actionable, key=lambda item: (item.distance, item.target_id))),
             tuple(sorted(candidates, key=lambda item: (item.distance, item.target_id))),
         )
+
+    def _should_apply_static_frame_confirmation_override(
+        self,
+        *,
+        frame: LiveFrame,
+    ) -> bool:
+        if not self._live_config.offline_static_frame_confirmation_override_enabled:
+            return False
+        capture_reliability = frame.metadata.get("capture_reliability")
+        if isinstance(capture_reliability, str) and capture_reliability.strip():
+            return False
+        return frame.image is not None
 
     def _match_track_id(
         self,
@@ -1890,6 +1944,7 @@ class PerceptionAnalyzer:
                 "player_veto_gate_decision": detection.metadata.get("player_veto_gate_decision", "allow"),
                 "player_veto_soft_triggered": bool(detection.metadata.get("player_veto_soft_triggered", False)),
                 "player_veto_reason": detection.metadata.get("player_veto_reason"),
+                "player_veto_raw_reason": detection.metadata.get("player_veto_raw_reason"),
                 "player_veto_green_pixel_count": int(
                     detection.metadata.get("player_veto_green_pixel_count", 0)
                 ),
@@ -1898,6 +1953,19 @@ class PerceptionAnalyzer:
                 ),
                 "occupied_score": float(detection.metadata.get("occupied_score", 0.0)),
                 "occupied_reason": detection.metadata.get("occupied_reason"),
+                "occupied_template_rescue_used": bool(
+                    detection.metadata.get("occupied_template_rescue_used", False)
+                ),
+                "occupied_template_threshold": float(
+                    detection.metadata.get(
+                        "occupied_template_threshold",
+                        self._live_config.occupied_confidence_threshold,
+                    )
+                ),
+                "temporal_confirmation_mode": detection.metadata.get(
+                    "temporal_confirmation_mode",
+                    "tracked",
+                ),
                 "rejection_reason": "candidate_not_actionable_yet",
             }
             for detection in candidate_tracks
@@ -1947,6 +2015,7 @@ class PerceptionAnalyzer:
                     "player_veto_gate_decision": detection.metadata.get("player_veto_gate_decision", "allow"),
                     "player_veto_soft_triggered": bool(detection.metadata.get("player_veto_soft_triggered", False)),
                     "player_veto_reason": detection.metadata.get("player_veto_reason"),
+                    "player_veto_raw_reason": detection.metadata.get("player_veto_raw_reason"),
                     "player_veto_green_pixel_count": int(
                         detection.metadata.get("player_veto_green_pixel_count", 0)
                     ),
@@ -1955,6 +2024,19 @@ class PerceptionAnalyzer:
                     ),
                     "occupied_score": float(detection.metadata.get("occupied_score", 0.0)),
                     "occupied_reason": detection.metadata.get("occupied_reason"),
+                    "occupied_template_rescue_used": bool(
+                        detection.metadata.get("occupied_template_rescue_used", False)
+                    ),
+                    "occupied_template_threshold": float(
+                        detection.metadata.get(
+                            "occupied_template_threshold",
+                            self._live_config.occupied_confidence_threshold,
+                        )
+                    ),
+                    "temporal_confirmation_mode": detection.metadata.get(
+                        "temporal_confirmation_mode",
+                        "tracked",
+                    ),
                     "track_seen_frames": int(detection.metadata.get("track_seen_frames", 0)),
                     "reasons": reasons,
                 }
@@ -3181,7 +3263,7 @@ def _evaluate_player_veto_gate(
 ) -> dict[str, Any]:
     threshold = float(player_veto.get("threshold", live_config.player_veto_score_threshold))
     score = float(player_veto.get("score", 0.0))
-    base_reason = str(player_veto.get("reason", "player_veto_below_threshold"))
+    raw_reason = str(player_veto.get("reason", "player_veto_below_threshold"))
     green_pixel_count = int(player_veto.get("green_pixel_count", 0))
     green_ratio = float(player_veto.get("green_pixel_ratio", 0.0))
     green_bbox_width = int(player_veto.get("green_bbox_width", 0))
@@ -3189,11 +3271,11 @@ def _evaluate_player_veto_gate(
     hard_triggered = bool(player_veto.get("triggered", False))
     soft_triggered = False
     decision = "allow"
-    reason = base_reason
+    reason = "player_veto_allowed"
 
     if hard_triggered:
         decision = "hard_reject"
-        reason = base_reason or "player_veto_green_name"
+        reason = raw_reason or "player_veto_green_name"
     elif (
         live_config.player_veto_soft_reject_enabled
         and score >= float(live_config.player_veto_soft_reject_score_threshold)
@@ -3205,7 +3287,7 @@ def _evaluate_player_veto_gate(
         reason = "player_veto_soft_suspicious_candidate"
     elif (
         live_config.player_veto_tall_blob_soft_reject_enabled
-        and base_reason == "player_veto_green_blob_too_tall"
+        and raw_reason == "player_veto_green_blob_too_tall"
         and green_ratio >= float(live_config.player_veto_tall_blob_min_green_ratio)
         and green_pixel_count >= int(live_config.player_veto_tall_blob_min_green_pixels)
         and upper_score <= float(live_config.player_veto_tall_blob_max_upper_score)
@@ -3225,6 +3307,7 @@ def _evaluate_player_veto_gate(
         "soft_triggered": soft_triggered,
         "threshold": threshold,
         "score": score,
+        "raw_reason": raw_reason,
         "soft_score_threshold": float(live_config.player_veto_soft_reject_score_threshold),
         "soft_upper_score_threshold": float(live_config.player_veto_soft_reject_max_upper_score),
         "soft_detection_confidence_threshold": float(
@@ -4133,11 +4216,14 @@ def _build_detection_tuning_parameters(live_config: LiveConfig) -> dict[str, Any
         "confirmation_retention_enabled": live_config.confirmation_retention_enabled,
         "confirmation_retention_confidence_threshold": live_config.confirmation_retention_confidence_threshold,
         "occupied_confidence_threshold": live_config.occupied_confidence_threshold,
+        "occupied_template_rescue_enabled": live_config.occupied_template_rescue_enabled,
+        "occupied_template_rescue_confidence_threshold": live_config.occupied_template_rescue_confidence_threshold,
         "template_match_stride_px": live_config.template_match_stride_px,
         "template_rotations_deg": list(live_config.template_rotations_deg),
         "merge_distance_px": live_config.merge_distance_px,
         "candidate_confirmation_frames": live_config.candidate_confirmation_frames,
         "occupied_confirmation_frames": live_config.occupied_confirmation_frames,
+        "offline_static_frame_confirmation_override_enabled": live_config.offline_static_frame_confirmation_override_enabled,
         "candidate_loss_frames": live_config.candidate_loss_frames,
         "enable_fallback_confirmation": live_config.enable_fallback_confirmation,
         "confirmation_anchor_search_enabled": live_config.confirmation_anchor_search_enabled,
@@ -4185,6 +4271,9 @@ def _build_detection_tuning_parameters(live_config: LiveConfig) -> dict[str, Any
         "engage_relaxed_target_confidence": live_config.engage_relaxed_target_confidence,
         "engage_min_seen_frames": live_config.engage_min_seen_frames,
         "engage_relaxed_min_seen_frames": live_config.engage_relaxed_min_seen_frames,
+        "engage_relaxed_min_confirmation_score": live_config.engage_relaxed_min_confirmation_score,
+        "engage_relaxed_min_ice_score": live_config.engage_relaxed_min_ice_score,
+        "engage_relaxed_max_player_veto_score": live_config.engage_relaxed_max_player_veto_score,
         "scene_profile_path": None
         if live_config.scene_profile_path is None
         else str(live_config.scene_profile_path),

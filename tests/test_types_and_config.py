@@ -84,6 +84,8 @@ def test_load_default_config_returns_settings() -> None:
     assert settings.live.swords_confidence_threshold == 0.25
     assert settings.live.occupied_template_match_min_green_ratio == 0.01
     assert settings.live.occupied_local_roi_width_px == 64
+    assert settings.live.occupied_template_rescue_enabled is True
+    assert settings.live.occupied_template_rescue_confidence_threshold == 0.55
     assert settings.live.confirmation_roi_width_px == 88
     assert settings.live.confirmation_alignment_weight == 0.25
     assert settings.live.confirmation_foreground_weight == 0.10
@@ -99,6 +101,10 @@ def test_load_default_config_returns_settings() -> None:
     assert settings.live.engage_relaxed_target_confidence == 0.62
     assert settings.live.engage_min_seen_frames == 1
     assert settings.live.engage_relaxed_min_seen_frames == 2
+    assert settings.live.engage_relaxed_min_confirmation_score == 0.72
+    assert settings.live.engage_relaxed_min_ice_score == 0.35
+    assert settings.live.engage_relaxed_max_player_veto_score == 0.45
+    assert settings.live.offline_static_frame_confirmation_override_enabled is False
     assert settings.live.confirmation_retention_enabled is True
     assert settings.live.confirmation_retention_confidence_threshold == 0.58
     assert settings.live.player_veto_soft_reject_enabled is True
@@ -296,11 +302,17 @@ def test_live_preview_fast_config_can_be_loaded_from_yaml() -> None:
     assert settings.live.preview_max_height_px == 720
     assert settings.live.candidate_confirmation_frames == 1
     assert settings.live.occupied_confirmation_frames == 1
+    assert settings.live.offline_static_frame_confirmation_override_enabled is False
     assert settings.live.player_veto_score_threshold == 0.95
     assert settings.live.engage_min_target_confidence == 0.76
     assert settings.live.engage_relaxed_target_confidence == 0.66
     assert settings.live.engage_min_seen_frames == 2
     assert settings.live.engage_relaxed_min_seen_frames == 2
+    assert settings.live.engage_relaxed_min_confirmation_score == 0.70
+    assert settings.live.engage_relaxed_min_ice_score == 0.30
+    assert settings.live.engage_relaxed_max_player_veto_score == 0.40
+    assert settings.live.occupied_template_rescue_enabled is True
+    assert settings.live.occupied_template_rescue_confidence_threshold == 0.56
     assert settings.live.confirmation_retention_enabled is True
     assert settings.live.confirmation_retention_confidence_threshold == 0.58
     assert settings.live.player_veto_soft_reject_enabled is True
@@ -324,6 +336,7 @@ def test_live_accuracy_regression_config_can_be_loaded_from_yaml() -> None:
     assert settings.live.preview_render_aux_boxes is False
     assert settings.live.candidate_confirmation_frames == 2
     assert settings.live.occupied_confirmation_frames == 2
+    assert settings.live.offline_static_frame_confirmation_override_enabled is True
     assert settings.live.engage_min_seen_frames == 2
     assert settings.live.marker_confidence_threshold == 0.36
     assert settings.live.confirmation_confidence_threshold == 0.66
@@ -336,6 +349,11 @@ def test_live_accuracy_regression_config_can_be_loaded_from_yaml() -> None:
     assert settings.live.engage_min_target_confidence == 0.78
     assert settings.live.engage_relaxed_target_confidence == 0.68
     assert settings.live.engage_relaxed_min_seen_frames == 2
+    assert settings.live.engage_relaxed_min_confirmation_score == 0.74
+    assert settings.live.engage_relaxed_min_ice_score == 0.34
+    assert settings.live.engage_relaxed_max_player_veto_score == 0.32
+    assert settings.live.occupied_template_rescue_enabled is True
+    assert settings.live.occupied_template_rescue_confidence_threshold == 0.60
     assert settings.live.confirmation_retention_enabled is True
     assert settings.live.confirmation_retention_confidence_threshold == 0.58
     assert settings.live.player_veto_soft_reject_enabled is True

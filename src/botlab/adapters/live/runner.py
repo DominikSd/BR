@@ -423,6 +423,9 @@ class LiveTargetApproachProvider(TargetApproachProvider):
         engage_min_seen_frames: int = 1,
         engage_relaxed_target_confidence: float = 0.62,
         engage_relaxed_min_seen_frames: int = 2,
+        engage_relaxed_min_confirmation_score: float = 0.72,
+        engage_relaxed_min_ice_score: float = 0.35,
+        engage_relaxed_max_player_veto_score: float = 0.45,
     ) -> None:
         self._runtime = runtime
         self._input_driver = input_driver
@@ -434,6 +437,9 @@ class LiveTargetApproachProvider(TargetApproachProvider):
         self._engage_min_seen_frames = engage_min_seen_frames
         self._engage_relaxed_target_confidence = engage_relaxed_target_confidence
         self._engage_relaxed_min_seen_frames = engage_relaxed_min_seen_frames
+        self._engage_relaxed_min_confirmation_score = engage_relaxed_min_confirmation_score
+        self._engage_relaxed_min_ice_score = engage_relaxed_min_ice_score
+        self._engage_relaxed_max_player_veto_score = engage_relaxed_max_player_veto_score
 
     def approach_target(self, target_resolution: TargetResolution) -> TargetApproachResult:
         world_snapshot = target_resolution.world_snapshot
@@ -567,11 +573,25 @@ class LiveTargetApproachProvider(TargetApproachProvider):
             "target_player_veto_threshold": float(
                 target_group.metadata.get("player_veto_threshold", 1.0)
             ),
+            "target_player_veto_gate_decision": str(
+                target_group.metadata.get("player_veto_gate_decision", "allow")
+            ),
+            "target_confirmation_score": float(
+                target_group.metadata.get(
+                    "confirmation_selected_score",
+                    target_group.metadata.get("confirmation_confidence", 0.0),
+                )
+            ),
+            "target_ice_score": float(target_group.metadata.get("ice_score", 0.0)),
+            "target_occupied_reason": target_group.metadata.get("occupied_reason"),
             "target_actionable": bool(target_group.metadata.get("actionable", True)),
             "engage_min_target_confidence": self._engage_min_target_confidence,
             "engage_relaxed_target_confidence": self._engage_relaxed_target_confidence,
             "engage_min_seen_frames": self._engage_min_seen_frames,
             "engage_relaxed_min_seen_frames": self._engage_relaxed_min_seen_frames,
+            "engage_relaxed_min_confirmation_score": self._engage_relaxed_min_confirmation_score,
+            "engage_relaxed_min_ice_score": self._engage_relaxed_min_ice_score,
+            "engage_relaxed_max_player_veto_score": self._engage_relaxed_max_player_veto_score,
         }
         if target_group.engaged_by_other:
             metadata["engage_gate_reason"] = "engage_quality_gate_target_occupied"
@@ -593,6 +613,15 @@ class LiveTargetApproachProvider(TargetApproachProvider):
         seen_frames = int(target_group.metadata.get("seen_frames", 1))
         track_seen_frames = int(target_group.metadata.get("track_seen_frames", seen_frames))
         actionable = bool(target_group.metadata.get("actionable", True))
+        confirmation_score = float(
+            target_group.metadata.get(
+                "confirmation_selected_score",
+                target_group.metadata.get("confirmation_confidence", 0.0),
+            )
+        )
+        ice_score = float(target_group.metadata.get("ice_score", 0.0))
+        player_veto_score = float(target_group.metadata.get("player_veto_score", 0.0))
+        player_veto_gate_decision = str(target_group.metadata.get("player_veto_gate_decision", "allow"))
         if not actionable or seen_frames < self._engage_min_seen_frames:
             metadata["engage_gate_reason"] = "engage_quality_gate_not_stable"
             metadata["engage_quality_gate_rejection_count"] = 1
@@ -605,6 +634,18 @@ class LiveTargetApproachProvider(TargetApproachProvider):
             confidence >= self._engage_relaxed_target_confidence
             and track_seen_frames >= max(self._engage_min_seen_frames, self._engage_relaxed_min_seen_frames)
         ):
+            if player_veto_gate_decision != "allow" or player_veto_score > self._engage_relaxed_max_player_veto_score:
+                metadata["engage_gate_reason"] = "engage_quality_gate_player_veto_suspicious"
+                metadata["engage_quality_gate_rejection_count"] = 1
+                return "engage_quality_gate_player_veto_suspicious", metadata
+            if confirmation_score < self._engage_relaxed_min_confirmation_score:
+                metadata["engage_gate_reason"] = "engage_quality_gate_confirmation_too_weak"
+                metadata["engage_quality_gate_rejection_count"] = 1
+                return "engage_quality_gate_confirmation_too_weak", metadata
+            if ice_score < self._engage_relaxed_min_ice_score:
+                metadata["engage_gate_reason"] = "engage_quality_gate_not_icy_enough"
+                metadata["engage_quality_gate_rejection_count"] = 1
+                return "engage_quality_gate_not_icy_enough", metadata
             metadata["engage_gate_decision"] = "relaxed_stable_pass"
             metadata["engage_gate_reason"] = "engage_quality_gate_pass_relaxed_stable"
             return None, metadata
@@ -1134,6 +1175,9 @@ class LiveRunner:
                 engage_min_seen_frames=settings.live.engage_min_seen_frames,
                 engage_relaxed_target_confidence=settings.live.engage_relaxed_target_confidence,
                 engage_relaxed_min_seen_frames=settings.live.engage_relaxed_min_seen_frames,
+                engage_relaxed_min_confirmation_score=settings.live.engage_relaxed_min_confirmation_score,
+                engage_relaxed_min_ice_score=settings.live.engage_relaxed_min_ice_score,
+                engage_relaxed_max_player_veto_score=settings.live.engage_relaxed_max_player_veto_score,
             ),
             approach_world_state_provider=world_provider,
             retarget_policy=retarget_policy,

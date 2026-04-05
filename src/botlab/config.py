@@ -152,6 +152,8 @@ class LiveConfig:
     occupied_local_roi_width_px: int = 64
     occupied_local_roi_height_px: int = 72
     occupied_local_roi_offset_y_px: int = -42
+    occupied_template_rescue_enabled: bool = True
+    occupied_template_rescue_confidence_threshold: float = 0.55
     confirmation_roi_width_px: int = 88
     confirmation_roi_height_px: int = 120
     confirmation_roi_offset_y_px: int = 4
@@ -206,6 +208,7 @@ class LiveConfig:
     candidate_confirmation_frames: int = 1
     candidate_loss_frames: int = 2
     occupied_confirmation_frames: int = 1
+    offline_static_frame_confirmation_override_enabled: bool = False
     engage_verify_delay_s: float = 0.20
     engage_click_offset_y_px: int = 0
     engage_target_match_max_distance_px: int = 72
@@ -213,6 +216,9 @@ class LiveConfig:
     engage_relaxed_target_confidence: float = 0.62
     engage_min_seen_frames: int = 1
     engage_relaxed_min_seen_frames: int = 2
+    engage_relaxed_min_confirmation_score: float = 0.72
+    engage_relaxed_min_ice_score: float = 0.35
+    engage_relaxed_max_player_veto_score: float = 0.45
     preview_fast_mode: bool = False
     preview_skip_fallback_confirmation: bool = False
     preview_render_aux_boxes: bool = True
@@ -666,6 +672,16 @@ def load_config(config_path: str | Path) -> Settings:
             "occupied_local_roi_offset_y_px",
             -42,
         ),
+        occupied_template_rescue_enabled=_optional_bool(
+            live_section,
+            "occupied_template_rescue_enabled",
+            True,
+        ),
+        occupied_template_rescue_confidence_threshold=_optional_ratio_float(
+            live_section,
+            "occupied_template_rescue_confidence_threshold",
+            0.55,
+        ),
         enable_fallback_confirmation=_optional_bool(
             live_section,
             "enable_fallback_confirmation",
@@ -948,6 +964,11 @@ def load_config(config_path: str | Path) -> Settings:
             "occupied_confirmation_frames",
             1,
         ),
+        offline_static_frame_confirmation_override_enabled=_optional_bool(
+            live_section,
+            "offline_static_frame_confirmation_override_enabled",
+            False,
+        ),
         engage_verify_delay_s=_optional_positive_float(
             live_section,
             "engage_verify_delay_s",
@@ -982,6 +1003,21 @@ def load_config(config_path: str | Path) -> Settings:
             live_section,
             "engage_relaxed_min_seen_frames",
             2,
+        ),
+        engage_relaxed_min_confirmation_score=_optional_ratio_float(
+            live_section,
+            "engage_relaxed_min_confirmation_score",
+            0.72,
+        ),
+        engage_relaxed_min_ice_score=_optional_ratio_float(
+            live_section,
+            "engage_relaxed_min_ice_score",
+            0.35,
+        ),
+        engage_relaxed_max_player_veto_score=_optional_ratio_float(
+            live_section,
+            "engage_relaxed_max_player_veto_score",
+            0.45,
         ),
         preview_fast_mode=_optional_bool(
             live_section,

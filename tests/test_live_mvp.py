@@ -2240,6 +2240,35 @@ def test_player_veto_soft_gate_allows_strong_mob_confirmation(
     assert gate["triggered"] is False
     assert gate["soft_triggered"] is False
     assert gate["decision"] == "allow"
+    assert gate["reason"] == "player_veto_allowed"
+    assert gate["raw_reason"] == "player_veto_green_blob_too_tall"
+
+
+def test_player_veto_gate_reports_allow_reason_and_raw_reason_separately(
+    tmp_path: Path,
+) -> None:
+    settings = _build_marker_first_settings(tmp_path)
+
+    gate = _evaluate_player_veto_gate(
+        player_veto={
+            "triggered": False,
+            "score": 0.18,
+            "threshold": 0.90,
+            "reason": "player_veto_green_blob_too_small",
+            "green_pixel_count": 6,
+            "green_pixel_ratio": 0.004,
+            "green_bbox_width": 8,
+            "green_bbox_height": 6,
+        },
+        upper_score=0.90,
+        detection_confidence=0.78,
+        live_config=settings.live,
+    )
+
+    assert gate["triggered"] is False
+    assert gate["decision"] == "allow"
+    assert gate["reason"] == "player_veto_allowed"
+    assert gate["raw_reason"] == "player_veto_green_blob_too_small"
 
 
 def test_player_veto_soft_gate_rejects_tall_green_blob_even_when_base_score_is_zero(
@@ -2345,6 +2374,77 @@ def test_marker_first_perception_rejects_non_icy_candidate_with_marker_present(
     assert isinstance(signature_rejections, list)
     assert len(signature_rejections) >= 1
     assert signature_rejections[0]["rejection_reason"] == "mob_signature_not_icy"
+
+
+def test_occupied_template_rescue_can_classify_occupied_without_green_color_seed(
+    tmp_path: Path,
+) -> None:
+    from PIL import Image, ImageDraw
+
+    settings = _build_marker_first_settings(tmp_path)
+    settings = replace(
+        settings,
+        live=replace(
+            settings.live,
+            marker_color_mode="yellow",
+            occupied_template_rescue_enabled=True,
+            occupied_template_rescue_confidence_threshold=0.55,
+            occupied_confidence_threshold=0.72,
+            swords_min_green=255,
+                swords_green_red_delta=255,
+                swords_green_blue_delta=255,
+                occupied_template_match_min_green_ratio=1.0,
+                occupied_local_roi_height_px=56,
+                occupied_local_roi_offset_y_px=-32,
+                candidate_confirmation_frames=1,
+                occupied_confirmation_frames=1,
+            ),
+        )
+    output_directory = tmp_path / "perception-occupied-template-rescue"
+    frame_path = tmp_path / "occupied_template_rescue_frame.png"
+    sidecar_path = tmp_path / "occupied_template_rescue_frame.json"
+
+    frame_image = Image.new("RGB", (320, 240), color=(40, 40, 40))
+    draw = ImageDraw.Draw(frame_image)
+    mob_template = Image.open(settings.live.mobs_template_directory / "mob_a" / "upper.png").convert("RGB")
+    swords_template = Image.open(
+        settings.live.occupied_template_directory / "crossed_swords.png"
+    ).convert("RGBA")
+
+    frame_image.paste(mob_template, (150, 104))
+    frame_image.paste(swords_template, (146, 78), swords_template)
+    draw.polygon([(159, 92), (163, 86), (167, 92), (163, 98)], fill=(230, 205, 32))
+
+    frame_image.save(frame_path)
+    sidecar_path.write_text(
+        json.dumps(
+            {
+                "captured_at_ts": 104.5,
+                "source": "occupied-template-rescue-test",
+                "metadata": {
+                    "spawn_roi": [0, 0, 320, 240],
+                    "reference_point_xy": [160, 210],
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    runner = PerceptionAnalysisRunner(
+        live_config=settings.live,
+        output_directory=output_directory,
+    )
+    summary = runner.analyze_frame_path(frame_path)
+    result = summary.frame_results[0]
+
+    assert len(result.detections) >= 1
+    detection = result.detections[0]
+    assert detection.occupied is True
+    assert detection.metadata["occupied_candidate"] is True
+    assert detection.metadata["occupied_template_rescue_used"] is True
+    assert detection.metadata["occupied_reason"] == "occupied_template_rescue_confirmed"
 
 
 def test_marker_first_candidate_becomes_actionable_after_seen_frames_threshold(
@@ -2600,6 +2700,61 @@ def test_accuracy_profile_becomes_actionable_after_second_confirmation_frame(tmp
     assert len(second_result.detections) >= 1
     assert second_result.diagnostics["ladder_diagnostics"]["final_detection_count"] >= 1
     assert second_result.detections[0].metadata["detection_state"] == "actionable"
+
+
+def test_accuracy_profile_static_frame_override_keeps_single_raw_detection_actionable(
+    tmp_path: Path,
+) -> None:
+    from PIL import Image, ImageDraw
+
+    base_settings = _build_marker_first_settings(tmp_path)
+    frame_path = tmp_path / "accuracy_profile_static_override.png"
+    sidecar_path = tmp_path / "accuracy_profile_static_override.json"
+
+    frame_image = Image.new("RGB", (320, 240), color=(40, 40, 40))
+    draw = ImageDraw.Draw(frame_image)
+    mob_upper_template = Image.open(
+        base_settings.live.mobs_template_directory / "mob_a" / "upper.png"
+    ).convert("RGB")
+    frame_image.paste(mob_upper_template, (150, 104))
+    draw.polygon([(159, 92), (163, 86), (167, 92), (163, 98)], fill=(230, 205, 32))
+    frame_image.save(frame_path)
+    sidecar_path.write_text(
+        json.dumps(
+            {
+                "captured_at_ts": 107.0,
+                "source": "accuracy-profile-static-override-test",
+                "metadata": {
+                    "spawn_roi": [0, 0, 320, 240],
+                    "reference_point_xy": [160, 210],
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    accuracy_live = replace(
+        base_settings.live,
+        marker_color_mode="yellow",
+        candidate_confirmation_frames=2,
+        occupied_confirmation_frames=2,
+        engage_min_seen_frames=2,
+        confirmation_confidence_threshold=0.66,
+        offline_static_frame_confirmation_override_enabled=True,
+        preview_fast_mode=False,
+    )
+    runner = PerceptionAnalysisRunner(
+        live_config=accuracy_live,
+        output_directory=tmp_path / "accuracy-profile-static-override",
+    )
+    result = runner.analyze_frame_path(frame_path).frame_results[0]
+
+    assert len(result.detections) >= 1
+    assert result.detections[0].metadata["detection_state"] == "actionable"
+    assert result.detections[0].metadata["temporal_confirmation_mode"] == "static_frame_override"
+    assert result.diagnostics["ladder_diagnostics"]["final_detection_count"] >= 1
 
 
 def test_compare_two_live_profiles_on_same_fixture_reports_expected_tuning_delta(tmp_path: Path) -> None:
@@ -4294,6 +4449,9 @@ def test_live_target_approach_provider_allows_relaxed_engage_gate_for_stable_tar
         engage_min_seen_frames=2,
         engage_relaxed_target_confidence=0.68,
         engage_relaxed_min_seen_frames=2,
+        engage_relaxed_min_confirmation_score=0.74,
+        engage_relaxed_min_ice_score=0.34,
+        engage_relaxed_max_player_veto_score=0.32,
     )
     target_group = GroupSnapshot(
         group_id="mob-a",
@@ -4312,6 +4470,9 @@ def test_live_target_approach_provider_allows_relaxed_engage_gate_for_stable_tar
             "player_veto_triggered": False,
             "player_veto_score": 0.15,
             "player_veto_threshold": 0.95,
+            "player_veto_gate_decision": "allow",
+            "confirmation_selected_score": 0.81,
+            "ice_score": 0.46,
         },
     )
 
@@ -4321,6 +4482,49 @@ def test_live_target_approach_provider_allows_relaxed_engage_gate_for_stable_tar
     assert metadata["engage_gate_decision"] == "relaxed_stable_pass"
     assert metadata["engage_gate_reason"] == "engage_quality_gate_pass_relaxed_stable"
     assert metadata["engage_quality_gate_rejection_count"] == 0
+
+
+def test_live_target_approach_provider_rejects_relaxed_engage_when_confirmation_too_weak() -> None:
+    provider = LiveTargetApproachProvider(
+        runtime=SimpleNamespace(),
+        input_driver=SimpleNamespace(),
+        stall_detector=StallDetector(1.0),
+        engage_min_target_confidence=0.80,
+        engage_min_seen_frames=2,
+        engage_relaxed_target_confidence=0.68,
+        engage_relaxed_min_seen_frames=2,
+        engage_relaxed_min_confirmation_score=0.74,
+        engage_relaxed_min_ice_score=0.34,
+        engage_relaxed_max_player_veto_score=0.32,
+    )
+    target_group = GroupSnapshot(
+        group_id="mob-a",
+        position=Position(x=100.0, y=120.0),
+        distance=3.0,
+        alive_count=1,
+        engaged_by_other=False,
+        reachable=True,
+        threat_score=0.0,
+        metadata={
+            "confidence": 0.71,
+            "seen_frames": 2,
+            "track_seen_frames": 2,
+            "actionable": True,
+            "in_scene_zone": True,
+            "player_veto_triggered": False,
+            "player_veto_score": 0.10,
+            "player_veto_threshold": 0.95,
+            "player_veto_gate_decision": "allow",
+            "confirmation_selected_score": 0.60,
+            "ice_score": 0.50,
+        },
+    )
+
+    reason, metadata = provider._evaluate_target_for_engage(target_group)
+
+    assert reason == "engage_quality_gate_confirmation_too_weak"
+    assert metadata["engage_gate_reason"] == "engage_quality_gate_confirmation_too_weak"
+    assert metadata["engage_quality_gate_rejection_count"] == 1
 
 
 @pytest.mark.parametrize(
