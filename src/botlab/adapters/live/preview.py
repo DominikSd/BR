@@ -139,6 +139,7 @@ def build_live_preview_state(
         block_reason = window_guard.get("block_reason")
         if isinstance(block_reason, str) and block_reason.strip():
             window_guard_block_reason = block_reason
+    ladder = result.diagnostics.get("ladder_diagnostics", {})
     headline_lines = [
         f"frame_source={frame.source}",
         f"scene={result.scene_name or 'none'}",
@@ -155,6 +156,18 @@ def build_live_preview_state(
             else "selected_info=None"
         ),
     ]
+    if isinstance(ladder, dict) and ladder:
+        headline_lines.append(
+            "ladder="
+            f"seed={int(ladder.get('seed_stage_count', 0))} "
+            f"marker={int(ladder.get('marker_hit_count', 0))} "
+            f"tmpl={int(ladder.get('template_marker_fallback_count', 0))} "
+            f"rescue={int(ladder.get('upper_rescue_count', 0))} "
+            f"confirm={int(ladder.get('confirmation_pass_count', 0))} "
+            f"veto={int(ladder.get('player_veto_rejection_count', 0))} "
+            f"zone={int(ladder.get('out_of_zone_rejection_count', 0))} "
+            f"final={int(ladder.get('final_detection_count', 0))}"
+        )
     headline_lines.append(f"capture_reliability={capture_reliability or 'unknown'}")
     headline_lines.append(f"preview_background_bypass={'true' if preview_background_bypass else 'false'}")
     headline_lines.append(
@@ -170,6 +183,16 @@ def build_live_preview_state(
             f"click={None if engage_result.click_screen_xy is None else list(engage_result.click_screen_xy)} "
             f"verify={engage_result.verification_latency_ms if engage_result.verification_latency_ms is not None else 0.0:.1f}ms"
         )
+        engage_gate_decision = engage_result.metadata.get("engage_gate_decision")
+        engage_gate_reason = engage_result.metadata.get("engage_gate_reason")
+        engage_gate_rejections = int(engage_result.metadata.get("engage_quality_gate_rejection_count", 0))
+        if engage_gate_decision is not None or engage_gate_reason is not None or engage_gate_rejections > 0:
+            headline_lines.append(
+                "engage_gate="
+                f"{engage_gate_decision or 'none'} "
+                f"reason={engage_gate_reason or 'none'} "
+                f"rejections={engage_gate_rejections}"
+            )
     return LiveVisionPreviewState(
         frame_source=frame.source,
         frame_width=frame.width,
@@ -344,7 +367,7 @@ class LiveVisionPreviewRenderer:
                     font=font,
                 )
 
-        if verification_result is not None:
+        if self._render_aux_boxes and verification_result is not None:
             for detection in verification_result.detections:
                 bbox = detection.bbox or (
                     max(0, detection.screen_x - 18),

@@ -160,6 +160,8 @@ class LiveConfig:
     confirmation_anchor_only: bool = False
     confirmation_template_stride_px: int = 4
     confirmation_confidence_threshold: float = 0.60
+    confirmation_retention_enabled: bool = True
+    confirmation_retention_confidence_threshold: float = 0.58
     confirmation_alignment_weight: float = 0.25
     confirmation_foreground_weight: float = 0.10
     confirmation_max_horizontal_offset_px: int = 56
@@ -180,6 +182,16 @@ class LiveConfig:
     player_veto_min_pixels: int = 18
     player_veto_min_width_px: int = 26
     player_veto_max_height_px: int = 18
+    player_veto_score_threshold: float = 0.95
+    player_veto_soft_reject_enabled: bool = True
+    player_veto_soft_reject_score_threshold: float = 0.55
+    player_veto_soft_reject_max_upper_score: float = 0.85
+    player_veto_soft_reject_max_detection_confidence: float = 0.72
+    player_veto_tall_blob_soft_reject_enabled: bool = True
+    player_veto_tall_blob_min_green_ratio: float = 0.015
+    player_veto_tall_blob_min_green_pixels: int = 40
+    player_veto_tall_blob_max_upper_score: float = 0.88
+    player_veto_tall_blob_max_detection_confidence: float = 0.80
     ice_mob_signature_enabled: bool = False
     ice_mob_min_blue: int = 120
     ice_mob_min_green: int = 110
@@ -198,7 +210,9 @@ class LiveConfig:
     engage_click_offset_y_px: int = 0
     engage_target_match_max_distance_px: int = 72
     engage_min_target_confidence: float = 0.70
+    engage_relaxed_target_confidence: float = 0.62
     engage_min_seen_frames: int = 1
+    engage_relaxed_min_seen_frames: int = 2
     preview_fast_mode: bool = False
     preview_skip_fallback_confirmation: bool = False
     preview_render_aux_boxes: bool = True
@@ -692,6 +706,16 @@ def load_config(config_path: str | Path) -> Settings:
             "confirmation_confidence_threshold",
             0.60,
         ),
+        confirmation_retention_enabled=_optional_bool(
+            live_section,
+            "confirmation_retention_enabled",
+            True,
+        ),
+        confirmation_retention_confidence_threshold=_optional_ratio_float(
+            live_section,
+            "confirmation_retention_confidence_threshold",
+            0.58,
+        ),
         confirmation_alignment_weight=_optional_ratio_float(
             live_section,
             "confirmation_alignment_weight",
@@ -798,6 +822,56 @@ def load_config(config_path: str | Path) -> Settings:
             "player_veto_max_height_px",
             18,
         ),
+        player_veto_score_threshold=_optional_ratio_float(
+            live_section,
+            "player_veto_score_threshold",
+            0.95,
+        ),
+        player_veto_soft_reject_enabled=_optional_bool(
+            live_section,
+            "player_veto_soft_reject_enabled",
+            True,
+        ),
+        player_veto_soft_reject_score_threshold=_optional_ratio_float(
+            live_section,
+            "player_veto_soft_reject_score_threshold",
+            0.55,
+        ),
+        player_veto_soft_reject_max_upper_score=_optional_ratio_float(
+            live_section,
+            "player_veto_soft_reject_max_upper_score",
+            0.85,
+        ),
+        player_veto_soft_reject_max_detection_confidence=_optional_ratio_float(
+            live_section,
+            "player_veto_soft_reject_max_detection_confidence",
+            0.72,
+        ),
+        player_veto_tall_blob_soft_reject_enabled=_optional_bool(
+            live_section,
+            "player_veto_tall_blob_soft_reject_enabled",
+            True,
+        ),
+        player_veto_tall_blob_min_green_ratio=_optional_ratio_float(
+            live_section,
+            "player_veto_tall_blob_min_green_ratio",
+            0.015,
+        ),
+        player_veto_tall_blob_min_green_pixels=_optional_positive_int(
+            live_section,
+            "player_veto_tall_blob_min_green_pixels",
+            40,
+        ),
+        player_veto_tall_blob_max_upper_score=_optional_ratio_float(
+            live_section,
+            "player_veto_tall_blob_max_upper_score",
+            0.88,
+        ),
+        player_veto_tall_blob_max_detection_confidence=_optional_ratio_float(
+            live_section,
+            "player_veto_tall_blob_max_detection_confidence",
+            0.80,
+        ),
         ice_mob_signature_enabled=_optional_bool(
             live_section,
             "ice_mob_signature_enabled",
@@ -894,10 +968,20 @@ def load_config(config_path: str | Path) -> Settings:
             "engage_min_target_confidence",
             0.70,
         ),
+        engage_relaxed_target_confidence=_optional_ratio_float(
+            live_section,
+            "engage_relaxed_target_confidence",
+            0.62,
+        ),
         engage_min_seen_frames=_optional_positive_int(
             live_section,
             "engage_min_seen_frames",
             1,
+        ),
+        engage_relaxed_min_seen_frames=_optional_positive_int(
+            live_section,
+            "engage_relaxed_min_seen_frames",
+            2,
         ),
         preview_fast_mode=_optional_bool(
             live_section,

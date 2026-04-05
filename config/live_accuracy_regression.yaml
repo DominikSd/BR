@@ -107,6 +107,8 @@ live:
   confirmation_anchor_only: true
   confirmation_template_stride_px: 10
   confirmation_confidence_threshold: 0.66
+  confirmation_retention_enabled: true
+  confirmation_retention_confidence_threshold: 0.58
   confirmation_alignment_weight: 0.25
   confirmation_foreground_weight: 0.10
   confirmation_max_horizontal_offset_px: 56
@@ -127,6 +129,16 @@ live:
   player_veto_min_pixels: 8
   player_veto_min_width_px: 12
   player_veto_max_height_px: 24
+  player_veto_score_threshold: 0.90
+  player_veto_soft_reject_enabled: true
+  player_veto_soft_reject_score_threshold: 0.50
+  player_veto_soft_reject_max_upper_score: 0.86
+  player_veto_soft_reject_max_detection_confidence: 0.72
+  player_veto_tall_blob_soft_reject_enabled: true
+  player_veto_tall_blob_min_green_ratio: 0.015
+  player_veto_tall_blob_min_green_pixels: 40
+  player_veto_tall_blob_max_upper_score: 0.88
+  player_veto_tall_blob_max_detection_confidence: 0.80
   ice_mob_signature_enabled: true
   ice_mob_min_blue: 138
   ice_mob_min_green: 108
@@ -144,11 +156,13 @@ live:
   engage_verify_delay_s: 0.20
   engage_click_offset_y_px: 0
   engage_target_match_max_distance_px: 72
-  engage_min_target_confidence: 0.80
+  engage_min_target_confidence: 0.78
+  engage_relaxed_target_confidence: 0.68
   engage_min_seen_frames: 2
+  engage_relaxed_min_seen_frames: 2
   preview_fast_mode: false
   preview_skip_fallback_confirmation: false
-  preview_render_aux_boxes: true
+  preview_render_aux_boxes: false
   preview_crop_to_spawn_roi: true
   preview_crop_padding_px: 16
   preview_analyze_every_nth_frame: 1

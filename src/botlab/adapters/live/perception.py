@@ -1004,6 +1004,7 @@ class PerceptionAnalyzer:
             **marker_seed_diagnostics,
             "marker_hit_count": len(marker_hits),
             "marker_template_hit_count": len(filtered_template_marker_hits),
+            "template_marker_fallback_count": len(filtered_template_marker_hits),
             "rescue_seed_hit_count": len(rescue_seed_hits),
             "merged_seed_hit_count": len(merged_marker_hits),
             "limited_seed_hit_count": len(limited_marker_hits),
@@ -1032,7 +1033,10 @@ class PerceptionAnalyzer:
                 frame_height=frame.height,
             )
             upper_confirmation_hits: tuple[TemplateHit, ...] = ()
+            retention_confirmation_hits: tuple[TemplateHit, ...] = ()
             confirmation_search_mode = "sliding"
+            confirmation_threshold_used = float(self._live_config.confirmation_confidence_threshold)
+            retention_confirmation_used = False
             if self._live_config.confirmation_anchor_search_enabled:
                 upper_confirmation_hits = _match_anchor_aligned_variants(
                     image=image,
@@ -1070,6 +1074,45 @@ class PerceptionAnalyzer:
                 image=image,
                 live_config=self._live_config,
             )
+            if (
+                best_upper_confirmation is None
+                and self._live_config.confirmation_retention_enabled
+                and self._has_nearby_confirmed_track(confirmation_roi_box=confirmation_roi_box)
+            ):
+                retention_threshold = min(
+                    float(self._live_config.confirmation_confidence_threshold),
+                    float(self._live_config.confirmation_retention_confidence_threshold),
+                )
+                retention_confirmation_hits = _match_anchor_aligned_variants(
+                    image=image,
+                    marker_hit=marker_hit,
+                    box=confirmation_roi_box,
+                    variants=template_pack.mob_upper_variants,
+                    confidence_threshold=retention_threshold,
+                    stride_px=local_stride_px,
+                )
+                if not retention_confirmation_hits and not self._live_config.confirmation_anchor_only:
+                    retention_confirmation_hits = _match_local_variants(
+                        image=image,
+                        box=confirmation_roi_box,
+                        variants=template_pack.mob_upper_variants,
+                        confidence_threshold=retention_threshold,
+                        stride_px=local_stride_px,
+                    )
+                    confirmation_search_mode = "anchor_then_retention"
+                elif retention_confirmation_hits:
+                    confirmation_search_mode = "anchor_retention"
+                raw_hits.extend(retention_confirmation_hits)
+                best_retention_confirmation = _select_best_confirmation_hit(
+                    marker_hit=marker_hit,
+                    confirmation_hits=retention_confirmation_hits,
+                    image=image,
+                    live_config=self._live_config,
+                )
+                if best_retention_confirmation is not None:
+                    best_upper_confirmation = best_retention_confirmation
+                    retention_confirmation_used = True
+                    confirmation_threshold_used = retention_threshold
             fallback_confirmation_hits: tuple[TemplateHit, ...] = ()
             best_fallback_confirmation: TemplateHit | None = None
             if (
@@ -1154,11 +1197,18 @@ class PerceptionAnalyzer:
                         "green_pixel_count": int(player_veto.get("green_pixel_count", 0)),
                         "green_pixel_ratio": float(player_veto.get("green_pixel_ratio", 0.0)),
                         "green_bbox": player_veto.get("green_bbox"),
+                        "green_bbox_width": int(player_veto.get("green_bbox_width", 0)),
+                        "green_bbox_height": int(player_veto.get("green_bbox_height", 0)),
                         "marker_score": marker_hit.confidence,
                         "upper_template_score": upper_score,
                         "fallback_template_score": fallback_score,
                         "ice_score": float(ice_signature.get("score", 0.0)),
                         "player_veto_score": float(player_veto.get("score", 0.0)),
+                        "player_veto_threshold": float(
+                            player_veto.get("threshold", self._live_config.player_veto_score_threshold)
+                        ),
+                        "player_veto_triggered": True,
+                        "player_veto_reason": str(player_veto.get("reason", "player_veto_green_name")),
                         "confirmation_stage": confirmation_stage,
                     }
                 )
@@ -1205,12 +1255,78 @@ class PerceptionAnalyzer:
                     self._live_config.occupied_confidence_threshold * 0.75,
                 ),
             )
+            if occupied_candidate:
+                occupied_reason = "occupied_confirmed"
+            elif not occupied_color_hits and occupied_green_ratio < self._live_config.occupied_template_match_min_green_ratio:
+                occupied_reason = "no_occupied_signal"
+            elif should_run_occupied_template_match and not occupied_hits:
+                occupied_reason = "green_signal_without_template_match"
+            else:
+                occupied_reason = "occupied_confidence_below_threshold"
             center_x, center_y = best_confirmation.center_xy
             distance = math.dist(reference_point_xy, (center_x, center_y))
             detection_confidence = (
                 marker_hit.confidence * 0.45
                 + best_confirmation.confidence * 0.55
             )
+            player_veto_gate = _evaluate_player_veto_gate(
+                player_veto=player_veto,
+                upper_score=upper_score,
+                detection_confidence=detection_confidence,
+                live_config=self._live_config,
+            )
+            if bool(player_veto_gate.get("triggered", False)):
+                player_veto_rejections.append(
+                    {
+                        "target_id": f"player-veto-soft-{index:03d}",
+                        "marker_bbox": list(marker_hit.bbox),
+                        "confirmation_bbox": list(best_confirmation.bbox),
+                        "player_veto_roi": list(player_veto_roi_box),
+                        "mob_variant": best_confirmation.label,
+                        "confirmation_confidence": best_confirmation.confidence,
+                        "rejection_reason": str(
+                            player_veto_gate.get("reason", "player_veto_soft_suspicious_candidate")
+                        ),
+                        "green_pixel_count": int(player_veto.get("green_pixel_count", 0)),
+                        "green_pixel_ratio": float(player_veto.get("green_pixel_ratio", 0.0)),
+                        "green_bbox": player_veto.get("green_bbox"),
+                        "green_bbox_width": int(player_veto.get("green_bbox_width", 0)),
+                        "green_bbox_height": int(player_veto.get("green_bbox_height", 0)),
+                        "marker_score": marker_hit.confidence,
+                        "upper_template_score": upper_score,
+                        "fallback_template_score": fallback_score,
+                        "ice_score": float(ice_signature.get("score", 0.0)),
+                        "player_veto_score": float(player_veto.get("score", 0.0)),
+                        "player_veto_threshold": float(
+                            player_veto.get("threshold", self._live_config.player_veto_score_threshold)
+                        ),
+                        "player_veto_triggered": True,
+                        "player_veto_reason": str(player_veto_gate.get("reason", "player_veto_soft_suspicious_candidate")),
+                        "player_veto_gate_decision": str(player_veto_gate.get("decision", "soft_reject")),
+                        "player_veto_soft_triggered": bool(player_veto_gate.get("soft_triggered", False)),
+                        "player_veto_soft_score_threshold": float(
+                            player_veto_gate.get(
+                                "soft_score_threshold",
+                                self._live_config.player_veto_soft_reject_score_threshold,
+                            )
+                        ),
+                        "player_veto_soft_upper_score_threshold": float(
+                            player_veto_gate.get(
+                                "soft_upper_score_threshold",
+                                self._live_config.player_veto_soft_reject_max_upper_score,
+                            )
+                        ),
+                        "player_veto_soft_detection_confidence_threshold": float(
+                            player_veto_gate.get(
+                                "soft_detection_confidence_threshold",
+                                self._live_config.player_veto_soft_reject_max_detection_confidence,
+                            )
+                        ),
+                        "detection_confidence": detection_confidence,
+                        "confirmation_stage": confirmation_stage,
+                    }
+                )
+                continue
             detections.append(
                 LiveTargetDetection(
                     target_id=f"{best_confirmation.label}-marker-{index:03d}",
@@ -1235,12 +1351,22 @@ class PerceptionAnalyzer:
                         "fallback_template_score": fallback_score,
                         "confirmation_stage": confirmation_stage,
                         "confirmation_search_mode": confirmation_search_mode,
+                        "confirmation_threshold_used": confirmation_threshold_used,
+                        "confirmation_retention_used": retention_confirmation_used,
                         "confirmation_selected_score": best_confirmation.confidence,
                         "occupied_confidence": occupied_confidence,
                         "occupied_candidate": occupied_candidate,
                         "occupied_score": occupied_confidence,
                         "occupied_green_ratio": occupied_green_ratio,
                         "occupied_template_match_enabled": should_run_occupied_template_match,
+                        "occupied_color_hit_count": len(occupied_color_hits),
+                        "occupied_template_hit_count": len(occupied_hits),
+                        "occupied_all_hit_count": len(all_occupied_hits),
+                        "occupied_reason": occupied_reason,
+                        "occupied_threshold": max(
+                            0.35,
+                            self._live_config.occupied_confidence_threshold * 0.75,
+                        ),
                         "occupied_roi": list(occupied_roi_box),
                         "confirmation_roi": list(confirmation_roi_box),
                         "confirmation_confidence": best_confirmation.confidence,
@@ -1259,6 +1385,35 @@ class PerceptionAnalyzer:
                         "player_veto_roi": list(player_veto_roi_box),
                         "player_veto_triggered": False,
                         "player_veto_score": float(player_veto.get("score", 0.0)),
+                        "player_veto_threshold": float(
+                            player_veto.get("threshold", self._live_config.player_veto_score_threshold)
+                        ),
+                        "player_veto_reason": str(player_veto_gate.get("reason", player_veto.get("reason", "player_veto_below_threshold"))),
+                        "player_veto_gate_decision": str(player_veto_gate.get("decision", "allow")),
+                        "player_veto_soft_triggered": bool(player_veto_gate.get("soft_triggered", False)),
+                        "player_veto_soft_score_threshold": float(
+                            player_veto_gate.get(
+                                "soft_score_threshold",
+                                self._live_config.player_veto_soft_reject_score_threshold,
+                            )
+                        ),
+                        "player_veto_soft_upper_score_threshold": float(
+                            player_veto_gate.get(
+                                "soft_upper_score_threshold",
+                                self._live_config.player_veto_soft_reject_max_upper_score,
+                            )
+                        ),
+                        "player_veto_soft_detection_confidence_threshold": float(
+                            player_veto_gate.get(
+                                "soft_detection_confidence_threshold",
+                                self._live_config.player_veto_soft_reject_max_detection_confidence,
+                            )
+                        ),
+                        "player_veto_green_pixel_count": int(player_veto.get("green_pixel_count", 0)),
+                        "player_veto_green_ratio": float(player_veto.get("green_pixel_ratio", 0.0)),
+                        "player_veto_green_bbox": player_veto.get("green_bbox"),
+                        "player_veto_green_bbox_width": int(player_veto.get("green_bbox_width", 0)),
+                        "player_veto_green_bbox_height": int(player_veto.get("green_bbox_height", 0)),
                         "confirmation_template": best_confirmation.metadata.get("template_path"),
                         "variant_name": best_confirmation.metadata.get("variant_name"),
                         "raw_hit_count": int(best_confirmation.metadata.get("raw_hit_count", 1)),
@@ -1304,6 +1459,30 @@ class PerceptionAnalyzer:
         if isinstance(override, int) and override > 0:
             return override
         return self._live_config.template_match_stride_px
+
+    def _has_nearby_confirmed_track(
+        self,
+        *,
+        confirmation_roi_box: tuple[int, int, int, int],
+    ) -> bool:
+        if not self._track_states:
+            return False
+        left, top, right, bottom = confirmation_roi_box
+        center_x = (left + right) / 2.0
+        center_y = (top + bottom) / 2.0
+        max_distance = float(
+            max(
+                self._live_config.confirmation_roi_height_px,
+                self._live_config.target_stability_center_distance_px * 2,
+                self._live_config.merge_distance_px * 2,
+            )
+        )
+        for state in self._track_states.values():
+            if state.seen_frames < self._live_config.candidate_confirmation_frames:
+                continue
+            if math.dist((center_x, center_y), (state.screen_x, state.screen_y)) <= max_distance:
+                return True
+        return False
 
     def _filter_hits_to_roi(
         self,
@@ -1378,6 +1557,19 @@ class PerceptionAnalyzer:
                         "fallback_template_score": 0.0,
                         "ice_score": float(merged_hit.metadata.get("ice_score", 0.0)),
                         "player_veto_score": float(merged_hit.metadata.get("player_veto_score", 0.0)),
+                        "player_veto_threshold": float(
+                            merged_hit.metadata.get(
+                                "player_veto_threshold",
+                                self._live_config.player_veto_score_threshold,
+                            )
+                        ),
+                        "player_veto_triggered": bool(
+                            merged_hit.metadata.get("player_veto_triggered", False)
+                        ),
+                        "player_veto_reason": merged_hit.metadata.get(
+                            "player_veto_reason",
+                            "player_veto_not_evaluated",
+                        ),
                         "occupied_candidate": occupied,
                         "occupied_confidence": occupied_confidence,
                         "occupied_score": occupied_confidence,
@@ -1681,8 +1873,31 @@ class PerceptionAnalyzer:
                 "upper_template_score": float(detection.metadata.get("upper_template_score", 0.0)),
                 "fallback_template_score": float(detection.metadata.get("fallback_template_score", 0.0)),
                 "ice_score": float(detection.metadata.get("ice_score", 0.0)),
+                "confirmation_threshold_used": float(
+                    detection.metadata.get(
+                        "confirmation_threshold_used",
+                        self._live_config.confirmation_confidence_threshold,
+                    )
+                ),
+                "confirmation_retention_used": bool(
+                    detection.metadata.get("confirmation_retention_used", False)
+                ),
                 "player_veto_score": float(detection.metadata.get("player_veto_score", 0.0)),
+                "player_veto_threshold": float(
+                    detection.metadata.get("player_veto_threshold", self._live_config.player_veto_score_threshold)
+                ),
+                "player_veto_triggered": bool(detection.metadata.get("player_veto_triggered", False)),
+                "player_veto_gate_decision": detection.metadata.get("player_veto_gate_decision", "allow"),
+                "player_veto_soft_triggered": bool(detection.metadata.get("player_veto_soft_triggered", False)),
+                "player_veto_reason": detection.metadata.get("player_veto_reason"),
+                "player_veto_green_pixel_count": int(
+                    detection.metadata.get("player_veto_green_pixel_count", 0)
+                ),
+                "player_veto_green_ratio": float(
+                    detection.metadata.get("player_veto_green_ratio", 0.0)
+                ),
                 "occupied_score": float(detection.metadata.get("occupied_score", 0.0)),
+                "occupied_reason": detection.metadata.get("occupied_reason"),
                 "rejection_reason": "candidate_not_actionable_yet",
             }
             for detection in candidate_tracks
@@ -1715,8 +1930,31 @@ class PerceptionAnalyzer:
                     "upper_template_score": float(detection.metadata.get("upper_template_score", 0.0)),
                     "fallback_template_score": float(detection.metadata.get("fallback_template_score", 0.0)),
                     "ice_score": float(detection.metadata.get("ice_score", 0.0)),
+                    "confirmation_threshold_used": float(
+                        detection.metadata.get(
+                            "confirmation_threshold_used",
+                            self._live_config.confirmation_confidence_threshold,
+                        )
+                    ),
+                    "confirmation_retention_used": bool(
+                        detection.metadata.get("confirmation_retention_used", False)
+                    ),
                     "player_veto_score": float(detection.metadata.get("player_veto_score", 0.0)),
+                    "player_veto_threshold": float(
+                        detection.metadata.get("player_veto_threshold", self._live_config.player_veto_score_threshold)
+                    ),
+                    "player_veto_triggered": bool(detection.metadata.get("player_veto_triggered", False)),
+                    "player_veto_gate_decision": detection.metadata.get("player_veto_gate_decision", "allow"),
+                    "player_veto_soft_triggered": bool(detection.metadata.get("player_veto_soft_triggered", False)),
+                    "player_veto_reason": detection.metadata.get("player_veto_reason"),
+                    "player_veto_green_pixel_count": int(
+                        detection.metadata.get("player_veto_green_pixel_count", 0)
+                    ),
+                    "player_veto_green_ratio": float(
+                        detection.metadata.get("player_veto_green_ratio", 0.0)
+                    ),
                     "occupied_score": float(detection.metadata.get("occupied_score", 0.0)),
+                    "occupied_reason": detection.metadata.get("occupied_reason"),
                     "track_seen_frames": int(detection.metadata.get("track_seen_frames", 0)),
                     "reasons": reasons,
                 }
@@ -1730,7 +1968,7 @@ class PerceptionAnalyzer:
             "seed="
             f"mode={seed_diagnostics.get('seed_mode', 'unknown')} "
             f"marker={seed_diagnostics.get('marker_hit_count', 0)} "
-            f"marker_template={seed_diagnostics.get('marker_template_hit_count', 0)} "
+            f"marker_template={seed_diagnostics.get('template_marker_fallback_count', seed_diagnostics.get('marker_template_hit_count', 0))} "
             f"upper_rescue={seed_diagnostics.get('rescue_seed_hit_count', 0)}",
             "raw="
             f"{len(raw_hits)} low_conf={len(low_confidence_hits)} "
@@ -1743,12 +1981,18 @@ class PerceptionAnalyzer:
         ladder_diagnostics = {
             "seed_stage_count": int(seed_diagnostics.get("merged_seed_hit_count", 0)),
             "marker_hit_count": int(seed_diagnostics.get("marker_hit_count", 0)),
-            "marker_template_fallback_count": int(seed_diagnostics.get("marker_template_hit_count", 0)),
+            "template_marker_fallback_count": int(
+                seed_diagnostics.get(
+                    "template_marker_fallback_count",
+                    seed_diagnostics.get("marker_template_hit_count", 0),
+                )
+            ),
             "upper_rescue_count": int(seed_diagnostics.get("rescue_seed_hit_count", 0)),
             "confirmation_pass_count": len(candidate_tracks),
             "ice_signature_rejection_count": len(mob_signature_rejections),
             "player_veto_rejection_count": len(player_veto_rejections),
             "out_of_zone_rejection_count": len(out_of_zone_rejections),
+            "engage_quality_gate_rejection_count": 0,
             "final_detection_count": len(detections),
         }
         return {
@@ -1771,8 +2015,9 @@ class PerceptionAnalyzer:
 
 
 class PerceptionArtifactWriter:
-    def __init__(self, output_directory: Path) -> None:
+    def __init__(self, output_directory: Path, live_config: LiveConfig | None = None) -> None:
         self._output_directory = output_directory
+        self._live_config = live_config
 
     def write_cycle_result(
         self,
@@ -2015,7 +2260,7 @@ class PerceptionArtifactWriter:
                 f'<circle cx="{detection.screen_x}" cy="{detection.screen_y}" r="4" fill="{color}" />'
             )
             lines.append(
-                f'<text x="{bbox[0]}" y="{max(14, bbox[1] - 6)}" fill="#f9fafb" font-size="14">{detection.target_id} {label} conf={detection.confidence:.2f} dist={detection.distance:.1f} m={float(detection.metadata.get("marker_score", 0.0)):.2f} u={float(detection.metadata.get("upper_template_score", 0.0)):.2f} f={float(detection.metadata.get("fallback_template_score", 0.0)):.2f} ice={float(detection.metadata.get("ice_score", 0.0)):.2f} occ={float(detection.metadata.get("occupied_score", 0.0)):.2f} seen={int(detection.metadata.get("track_seen_frames", 0))}</text>'
+                f'<text x="{bbox[0]}" y="{max(14, bbox[1] - 6)}" fill="#f9fafb" font-size="14">{detection.target_id} {label} conf={detection.confidence:.2f} dist={detection.distance:.1f} m={float(detection.metadata.get("marker_score", 0.0)):.2f} u={float(detection.metadata.get("upper_template_score", 0.0)):.2f} f={float(detection.metadata.get("fallback_template_score", 0.0)):.2f} ice={float(detection.metadata.get("ice_score", 0.0)):.2f} pv={float(detection.metadata.get("player_veto_score", 0.0)):.2f}/{float(detection.metadata.get("player_veto_threshold", self._live_config.player_veto_score_threshold if self._live_config is not None else 0.95)):.2f} occ={float(detection.metadata.get("occupied_score", 0.0)):.2f} thr={float(detection.metadata.get("confirmation_threshold_used", self._live_config.confirmation_confidence_threshold if self._live_config is not None else 0.60)):.2f} keep={int(bool(detection.metadata.get("confirmation_retention_used", False)))} seen={int(detection.metadata.get("track_seen_frames", 0))}</text>'
             )
             if selected:
                 lines.append(
@@ -2031,7 +2276,7 @@ class PerceptionArtifactWriter:
                     f'<rect x="{bbox[0]}" y="{bbox[1]}" width="{bbox[2]}" height="{bbox[3]}" fill="none" stroke="#facc15" stroke-dasharray="5 4" stroke-width="2" />'
                 )
                 lines.append(
-                    f'<text x="{bbox[0]}" y="{max(14, bbox[1] - 4)}" fill="#fef08a" font-size="12">{entry.get("target_id")} candidate seen={entry.get("track_seen_frames")} m={float(entry.get("marker_score", 0.0)):.2f} u={float(entry.get("upper_template_score", 0.0)):.2f} f={float(entry.get("fallback_template_score", 0.0)):.2f} ice={float(entry.get("ice_score", 0.0)):.2f}</text>'
+                    f'<text x="{bbox[0]}" y="{max(14, bbox[1] - 4)}" fill="#fef08a" font-size="12">{entry.get("target_id")} candidate seen={entry.get("track_seen_frames")} m={float(entry.get("marker_score", 0.0)):.2f} u={float(entry.get("upper_template_score", 0.0)):.2f} f={float(entry.get("fallback_template_score", 0.0)):.2f} ice={float(entry.get("ice_score", 0.0)):.2f} pv={float(entry.get("player_veto_score", 0.0)):.2f}/{float(entry.get("player_veto_threshold", self._live_config.player_veto_score_threshold if self._live_config is not None else 0.95)):.2f} thr={float(entry.get("confirmation_threshold_used", self._live_config.confirmation_confidence_threshold if self._live_config is not None else 0.60)):.2f} keep={int(bool(entry.get("confirmation_retention_used", False)))}</text>'
                 )
         player_veto_rejections = result.diagnostics.get("player_veto_rejections", [])
         if isinstance(player_veto_rejections, list):
@@ -2049,7 +2294,7 @@ class PerceptionArtifactWriter:
                         f'<rect x="{confirmation_bbox[0]}" y="{confirmation_bbox[1]}" width="{confirmation_bbox[2]}" height="{confirmation_bbox[3]}" fill="none" stroke="#f43f5e" stroke-width="2" stroke-dasharray="4 3" />'
                     )
                     lines.append(
-                        f'<text x="{confirmation_bbox[0]}" y="{max(14, confirmation_bbox[1] - 4)}" fill="#fecdd3" font-size="12">{entry.get("target_id")} player_veto green_px={entry.get("green_pixel_count")}</text>'
+                        f'<text x="{confirmation_bbox[0]}" y="{max(14, confirmation_bbox[1] - 4)}" fill="#fecdd3" font-size="12">{entry.get("target_id")} player_veto score={float(entry.get("player_veto_score", 0.0)):.2f}/{float(entry.get("player_veto_threshold", self._live_config.player_veto_score_threshold if self._live_config is not None else 0.95)):.2f} green_px={entry.get("green_pixel_count")} reason={entry.get("player_veto_reason")}</text>'
                     )
                 if isinstance(veto_roi, list) and len(veto_roi) == 4:
                     lines.append(
@@ -2231,7 +2476,7 @@ class PerceptionAnalysisRunner:
             strict_pixel_only=strict_pixel_only,
         )
         self._loader = PerceptionFrameLoader()
-        self._artifact_writer = PerceptionArtifactWriter(output_directory)
+        self._artifact_writer = PerceptionArtifactWriter(output_directory, live_config)
         self._dataset_loader = BenchmarkDatasetLoader(
             dataset_root=live_config.benchmark_dataset_directory,
             frame_loader=self._loader,
@@ -2825,20 +3070,31 @@ def _detect_player_veto(
     box: tuple[int, int, int, int],
     live_config: LiveConfig,
 ) -> dict[str, Any]:
+    threshold = float(live_config.player_veto_score_threshold)
     if Image is None:
         return {
             "triggered": False,
+            "score": 0.0,
+            "threshold": threshold,
+            "reason": "player_veto_not_available",
             "green_pixel_count": 0,
             "green_pixel_ratio": 0.0,
             "green_bbox": None,
+            "green_bbox_width": 0,
+            "green_bbox_height": 0,
         }
     left, top, width, height = box
     if width <= 0 or height <= 0:
         return {
             "triggered": False,
+            "score": 0.0,
+            "threshold": threshold,
+            "reason": "player_veto_invalid_roi",
             "green_pixel_count": 0,
             "green_pixel_ratio": 0.0,
             "green_bbox": None,
+            "green_bbox_width": 0,
+            "green_bbox_height": 0,
         }
     roi = image.crop((left, top, left + width, top + height)).convert("RGB")
     pixels = roi.load()
@@ -2874,25 +3130,125 @@ def _detect_player_veto(
             bbox_width,
             bbox_height,
         ]
-    triggered = (
-        green_pixels >= live_config.player_veto_min_pixels
-        and bbox_width >= live_config.player_veto_min_width_px
-        and 0 < bbox_height <= live_config.player_veto_max_height_px
-    )
-    score = min(
-        1.0,
-        max(
-            green_ratio * 4.0,
-            green_pixels / max(1.0, float(live_config.player_veto_min_pixels * 4)),
-            bbox_width / max(1.0, float(live_config.player_veto_min_width_px * 3)),
-        ),
-    )
+    pixel_score = min(1.0, green_pixels / max(1.0, float(live_config.player_veto_min_pixels)))
+    width_score = min(1.0, bbox_width / max(1.0, float(live_config.player_veto_min_width_px)))
+    if bbox_height <= 0:
+        height_score = 0.0
+    elif bbox_height <= live_config.player_veto_max_height_px:
+        height_score = 1.0
+    else:
+        overflow = bbox_height - live_config.player_veto_max_height_px
+        height_score = max(
+            0.0,
+            1.0 - (overflow / max(1.0, float(live_config.player_veto_max_height_px))),
+        )
+    presence_score = 1.0 if green_bbox is not None else 0.0
+    score = min(pixel_score, width_score, height_score, presence_score)
+    triggered = score >= threshold
+    if green_bbox is None:
+        reason = "player_veto_no_green_blob"
+    elif green_pixels < live_config.player_veto_min_pixels:
+        reason = "player_veto_green_blob_too_small"
+    elif bbox_width < live_config.player_veto_min_width_px:
+        reason = "player_veto_green_blob_too_narrow"
+    elif bbox_height <= 0:
+        reason = "player_veto_green_blob_missing_height"
+    elif bbox_height > live_config.player_veto_max_height_px:
+        reason = "player_veto_green_blob_too_tall"
+    elif triggered:
+        reason = "player_veto_green_name"
+    else:
+        reason = "player_veto_below_threshold"
     return {
         "triggered": triggered,
+        "score": score,
+        "threshold": threshold,
+        "reason": reason,
         "green_pixel_count": green_pixels,
         "green_pixel_ratio": green_ratio,
         "green_bbox": green_bbox,
+        "green_bbox_width": bbox_width,
+        "green_bbox_height": bbox_height,
+    }
+
+
+def _evaluate_player_veto_gate(
+    *,
+    player_veto: dict[str, Any],
+    upper_score: float,
+    detection_confidence: float,
+    live_config: LiveConfig,
+) -> dict[str, Any]:
+    threshold = float(player_veto.get("threshold", live_config.player_veto_score_threshold))
+    score = float(player_veto.get("score", 0.0))
+    base_reason = str(player_veto.get("reason", "player_veto_below_threshold"))
+    green_pixel_count = int(player_veto.get("green_pixel_count", 0))
+    green_ratio = float(player_veto.get("green_pixel_ratio", 0.0))
+    green_bbox_width = int(player_veto.get("green_bbox_width", 0))
+    green_bbox_height = int(player_veto.get("green_bbox_height", 0))
+    hard_triggered = bool(player_veto.get("triggered", False))
+    soft_triggered = False
+    decision = "allow"
+    reason = base_reason
+
+    if hard_triggered:
+        decision = "hard_reject"
+        reason = base_reason or "player_veto_green_name"
+    elif (
+        live_config.player_veto_soft_reject_enabled
+        and score >= float(live_config.player_veto_soft_reject_score_threshold)
+        and upper_score <= float(live_config.player_veto_soft_reject_max_upper_score)
+        and detection_confidence <= float(live_config.player_veto_soft_reject_max_detection_confidence)
+    ):
+        soft_triggered = True
+        decision = "soft_reject"
+        reason = "player_veto_soft_suspicious_candidate"
+    elif (
+        live_config.player_veto_tall_blob_soft_reject_enabled
+        and base_reason == "player_veto_green_blob_too_tall"
+        and green_ratio >= float(live_config.player_veto_tall_blob_min_green_ratio)
+        and green_pixel_count >= int(live_config.player_veto_tall_blob_min_green_pixels)
+        and upper_score <= float(live_config.player_veto_tall_blob_max_upper_score)
+        and detection_confidence <= float(
+            live_config.player_veto_tall_blob_max_detection_confidence
+        )
+    ):
+        soft_triggered = True
+        decision = "soft_reject_tall_blob"
+        reason = "player_veto_soft_tall_green_blob"
+
+    return {
+        "decision": decision,
+        "reason": reason,
+        "triggered": hard_triggered or soft_triggered,
+        "hard_triggered": hard_triggered,
+        "soft_triggered": soft_triggered,
+        "threshold": threshold,
         "score": score,
+        "soft_score_threshold": float(live_config.player_veto_soft_reject_score_threshold),
+        "soft_upper_score_threshold": float(live_config.player_veto_soft_reject_max_upper_score),
+        "soft_detection_confidence_threshold": float(
+            live_config.player_veto_soft_reject_max_detection_confidence
+        ),
+        "tall_blob_soft_reject_enabled": bool(
+            live_config.player_veto_tall_blob_soft_reject_enabled
+        ),
+        "tall_blob_min_green_ratio": float(
+            live_config.player_veto_tall_blob_min_green_ratio
+        ),
+        "tall_blob_min_green_pixels": int(
+            live_config.player_veto_tall_blob_min_green_pixels
+        ),
+        "tall_blob_max_upper_score": float(
+            live_config.player_veto_tall_blob_max_upper_score
+        ),
+        "tall_blob_max_detection_confidence": float(
+            live_config.player_veto_tall_blob_max_detection_confidence
+        ),
+        "green_pixel_count": green_pixel_count,
+        "green_pixel_ratio": green_ratio,
+        "green_bbox_width": green_bbox_width,
+        "green_bbox_height": green_bbox_height,
     }
 
 
@@ -3752,10 +4108,18 @@ def _parse_ground_truth_candidates(ground_truth: dict[str, Any]) -> tuple[Ground
 
 def _bucket_false_positive_detection(detection: LiveTargetDetection) -> str:
     player_veto_score = float(detection.metadata.get("player_veto_score", 0.0))
+    player_veto_threshold = float(detection.metadata.get("player_veto_threshold", 0.95))
+    player_veto_triggered = bool(detection.metadata.get("player_veto_triggered", False))
+    player_veto_green_ratio = float(detection.metadata.get("player_veto_green_ratio", 0.0))
     brown_ratio = float(detection.metadata.get("ice_signature_brown_ratio", 0.0))
     ice_score = float(detection.metadata.get("ice_score", 0.0))
     marker_score = float(detection.metadata.get("marker_score", 0.0))
-    if player_veto_score >= 0.10 or brown_ratio >= 0.12:
+    if (
+        player_veto_triggered
+        or player_veto_score >= max(0.70, player_veto_threshold * 0.85)
+        or player_veto_green_ratio >= 0.02
+        or brown_ratio >= 0.12
+    ):
         return "player_fp"
     if ice_score >= 0.40 and marker_score >= 0.40:
         return "wrong_mob_fp"
@@ -3766,6 +4130,8 @@ def _build_detection_tuning_parameters(live_config: LiveConfig) -> dict[str, Any
     return {
         "perception_confidence_threshold": live_config.perception_confidence_threshold,
         "confirmation_confidence_threshold": live_config.confirmation_confidence_threshold,
+        "confirmation_retention_enabled": live_config.confirmation_retention_enabled,
+        "confirmation_retention_confidence_threshold": live_config.confirmation_retention_confidence_threshold,
         "occupied_confidence_threshold": live_config.occupied_confidence_threshold,
         "template_match_stride_px": live_config.template_match_stride_px,
         "template_rotations_deg": list(live_config.template_rotations_deg),
@@ -3786,6 +4152,16 @@ def _build_detection_tuning_parameters(live_config: LiveConfig) -> dict[str, Any
         "player_veto_roi_width_px": live_config.player_veto_roi_width_px,
         "player_veto_roi_height_px": live_config.player_veto_roi_height_px,
         "player_veto_roi_offset_y_px": live_config.player_veto_roi_offset_y_px,
+        "player_veto_score_threshold": live_config.player_veto_score_threshold,
+        "player_veto_soft_reject_enabled": live_config.player_veto_soft_reject_enabled,
+        "player_veto_soft_reject_score_threshold": live_config.player_veto_soft_reject_score_threshold,
+        "player_veto_soft_reject_max_upper_score": live_config.player_veto_soft_reject_max_upper_score,
+        "player_veto_soft_reject_max_detection_confidence": live_config.player_veto_soft_reject_max_detection_confidence,
+        "player_veto_tall_blob_soft_reject_enabled": live_config.player_veto_tall_blob_soft_reject_enabled,
+        "player_veto_tall_blob_min_green_ratio": live_config.player_veto_tall_blob_min_green_ratio,
+        "player_veto_tall_blob_min_green_pixels": live_config.player_veto_tall_blob_min_green_pixels,
+        "player_veto_tall_blob_max_upper_score": live_config.player_veto_tall_blob_max_upper_score,
+        "player_veto_tall_blob_max_detection_confidence": live_config.player_veto_tall_blob_max_detection_confidence,
         "ice_mob_signature_enabled": live_config.ice_mob_signature_enabled,
         "ice_mob_min_blue": live_config.ice_mob_min_blue,
         "ice_mob_min_green": live_config.ice_mob_min_green,
@@ -3805,6 +4181,10 @@ def _build_detection_tuning_parameters(live_config: LiveConfig) -> dict[str, Any
         "preview_skip_fallback_confirmation": live_config.preview_skip_fallback_confirmation,
         "preview_render_aux_boxes": live_config.preview_render_aux_boxes,
         "preview_analyze_every_nth_frame": live_config.preview_analyze_every_nth_frame,
+        "engage_min_target_confidence": live_config.engage_min_target_confidence,
+        "engage_relaxed_target_confidence": live_config.engage_relaxed_target_confidence,
+        "engage_min_seen_frames": live_config.engage_min_seen_frames,
+        "engage_relaxed_min_seen_frames": live_config.engage_relaxed_min_seen_frames,
         "scene_profile_path": None
         if live_config.scene_profile_path is None
         else str(live_config.scene_profile_path),

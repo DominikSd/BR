@@ -37,6 +37,7 @@ class LiveEngageSessionSummary:
     approach_stalled_count: int
     approach_timeout_count: int
     no_target_available_count: int
+    engage_quality_gate_rejection_count: int
     occupied_rejection_count: int
     out_of_zone_rejection_count: int
     detection_latency: LatencyAggregate
@@ -67,6 +68,10 @@ class LiveEngageSessionSummary:
             ),
             no_target_available_count=sum(
                 1 for result in parsed_results if result.outcome is LiveEngageOutcome.NO_TARGET_AVAILABLE
+            ),
+            engage_quality_gate_rejection_count=sum(
+                int(result.metadata.get("engage_quality_gate_rejection_count", 0))
+                for result in parsed_results
             ),
             occupied_rejection_count=sum(
                 int(result.metadata.get("occupied_rejection_count", 0))
@@ -140,6 +145,7 @@ class LiveEngageSessionSummary:
             "approach_stalled_count": self.approach_stalled_count,
             "approach_timeout_count": self.approach_timeout_count,
             "no_target_available_count": self.no_target_available_count,
+            "engage_quality_gate_rejection_count": self.engage_quality_gate_rejection_count,
             "occupied_rejection_count": self.occupied_rejection_count,
             "out_of_zone_rejection_count": self.out_of_zone_rejection_count,
             "calibration_warning_count": self.calibration_warning_count,
@@ -381,7 +387,12 @@ class LiveEngageService:
                 metadata={
                     "approach_reason": engagement.approach_result.reason,
                     "interaction_reason": engagement.interaction_result.reason,
+                    **engagement.approach_result.metadata,
                     **observation_metrics_metadata,
+                    "engage_ladder_diagnostics": _build_engage_ladder_diagnostics(
+                        observation_result=observation_result,
+                        quality_gate_rejected=False,
+                    ),
                     **input_metrics_metadata,
                 },
             )
@@ -409,9 +420,12 @@ class LiveEngageService:
                 metadata={
                     "approach_reason": engagement.approach_result.reason,
                     "interaction_reason": engagement.interaction_result.reason,
-                    "engage_quality_gate_rejected": True,
                     **engagement.approach_result.metadata,
                     **observation_metrics_metadata,
+                    "engage_ladder_diagnostics": _build_engage_ladder_diagnostics(
+                        observation_result=observation_result,
+                        quality_gate_rejected=True,
+                    ),
                     **input_metrics_metadata,
                 },
             )
@@ -439,7 +453,12 @@ class LiveEngageService:
                 metadata={
                     "approach_reason": engagement.approach_result.reason,
                     "interaction_reason": engagement.interaction_result.reason,
+                    **engagement.approach_result.metadata,
                     **observation_metrics_metadata,
+                    "engage_ladder_diagnostics": _build_engage_ladder_diagnostics(
+                        observation_result=observation_result,
+                        quality_gate_rejected=False,
+                    ),
                     **input_metrics_metadata,
                 },
             )
@@ -495,8 +514,13 @@ class LiveEngageService:
                 "verify_frame_source": verify_frame.source,
                 "verify_state_detection": verify_state.metadata,
                 "verify_selected_target_id": verify_perception.selected_target_id,
+                **engagement.approach_result.metadata,
                 **observation_metrics_metadata,
                 **input_metrics_metadata,
+                "engage_ladder_diagnostics": _build_engage_ladder_diagnostics(
+                    observation_result=observation_result,
+                    quality_gate_rejected=False,
+                ),
                 **classification_metadata,
             },
         )
@@ -709,6 +733,31 @@ def _build_observation_metrics_metadata(
         if selected_target is None
         else bool(selected_target.metadata.get("in_scene_zone", True)),
         "scene_calibration_warning": observation_result.scene_calibration.get("warning"),
+    }
+
+
+def _build_engage_ladder_diagnostics(
+    *,
+    observation_result: PerceptionFrameResult | None,
+    quality_gate_rejected: bool,
+) -> dict[str, int]:
+    base_ladder = {}
+    if observation_result is not None:
+        raw_ladder = observation_result.diagnostics.get("ladder_diagnostics", {})
+        if isinstance(raw_ladder, dict):
+            base_ladder = dict(raw_ladder)
+    base_ladder["engage_quality_gate_rejection_count"] = 1 if quality_gate_rejected else 0
+    return {
+        "seed_stage_count": int(base_ladder.get("seed_stage_count", 0)),
+        "marker_hit_count": int(base_ladder.get("marker_hit_count", 0)),
+        "template_marker_fallback_count": int(base_ladder.get("template_marker_fallback_count", 0)),
+        "upper_rescue_count": int(base_ladder.get("upper_rescue_count", 0)),
+        "confirmation_pass_count": int(base_ladder.get("confirmation_pass_count", 0)),
+        "ice_signature_rejection_count": int(base_ladder.get("ice_signature_rejection_count", 0)),
+        "player_veto_rejection_count": int(base_ladder.get("player_veto_rejection_count", 0)),
+        "out_of_zone_rejection_count": int(base_ladder.get("out_of_zone_rejection_count", 0)),
+        "engage_quality_gate_rejection_count": int(base_ladder.get("engage_quality_gate_rejection_count", 0)),
+        "final_detection_count": int(base_ladder.get("final_detection_count", 0)),
     }
 
 

@@ -123,6 +123,16 @@ live:
   player_veto_min_pixels: 8
   player_veto_min_width_px: 12
   player_veto_max_height_px: 24
+  player_veto_score_threshold: 0.95
+  player_veto_soft_reject_enabled: true
+  player_veto_soft_reject_score_threshold: 0.58
+  player_veto_soft_reject_max_upper_score: 0.85
+  player_veto_soft_reject_max_detection_confidence: 0.71
+  player_veto_tall_blob_soft_reject_enabled: true
+  player_veto_tall_blob_min_green_ratio: 0.018
+  player_veto_tall_blob_min_green_pixels: 48
+  player_veto_tall_blob_max_upper_score: 0.86
+  player_veto_tall_blob_max_detection_confidence: 0.76
   ice_mob_signature_enabled: true
   ice_mob_min_blue: 135
   ice_mob_min_green: 105

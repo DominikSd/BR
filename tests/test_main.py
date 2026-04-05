@@ -554,6 +554,7 @@ def test_main_can_run_live_engage_mvp(monkeypatch, capsys) -> None:
                 approach_stalled_count=0,
                 approach_timeout_count=0,
                 no_target_available_count=0,
+                engage_quality_gate_rejection_count=0,
                 occupied_rejection_count=0,
                 out_of_zone_rejection_count=0,
                 detection_latency=build_aggregate("engage_detection_latency_ms", 10.0),

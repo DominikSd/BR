@@ -37,6 +37,11 @@ Zasady tego etapu:
   - szybki color-first detector zielonych mieczykow w malym ROI nad markerem.
 - dla mobow nadal mozna generowac proste warianty obrotu wedlug `live.template_rotations_deg`.
 
+Priorytet danych do dalszego strojenia:
+- najpierw pelne sceny do `assets/live/sample_frames/raw`,
+- potem aktualne cropy mieczykow do `assets/live/templates/occupied`,
+- dopiero na koncu dodatkowe pomocnicze cropy markerow do `assets/live/templates/markers`, jesli marker stage naprawde tego potrzebuje.
+
 To jest swiadomie MVP:
 - bez OCR,
 - bez ciezkiego CV/ML,

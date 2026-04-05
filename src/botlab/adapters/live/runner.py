@@ -421,6 +421,8 @@ class LiveTargetApproachProvider(TargetApproachProvider):
         step_distance_units: float = 1.0,
         engage_min_target_confidence: float = 0.70,
         engage_min_seen_frames: int = 1,
+        engage_relaxed_target_confidence: float = 0.62,
+        engage_relaxed_min_seen_frames: int = 2,
     ) -> None:
         self._runtime = runtime
         self._input_driver = input_driver
@@ -430,6 +432,8 @@ class LiveTargetApproachProvider(TargetApproachProvider):
         self._step_distance_units = step_distance_units
         self._engage_min_target_confidence = engage_min_target_confidence
         self._engage_min_seen_frames = engage_min_seen_frames
+        self._engage_relaxed_target_confidence = engage_relaxed_target_confidence
+        self._engage_relaxed_min_seen_frames = engage_relaxed_min_seen_frames
 
     def approach_target(self, target_resolution: TargetResolution) -> TargetApproachResult:
         world_snapshot = target_resolution.world_snapshot
@@ -464,7 +468,7 @@ class LiveTargetApproachProvider(TargetApproachProvider):
                 metadata={},
             )
 
-        quality_gate_reason = self._evaluate_target_for_engage(target_group)
+        quality_gate_reason, engage_gate_metadata = self._evaluate_target_for_engage(target_group)
         if quality_gate_reason is not None:
             return TargetApproachResult(
                 cycle_id=target_resolution.cycle_id,
@@ -477,6 +481,7 @@ class LiveTargetApproachProvider(TargetApproachProvider):
                 initial_target_id=target_id,
                 retargeted=False,
                 metadata={
+                    **engage_gate_metadata,
                     "engage_quality_gate_rejected": True,
                     "target_confidence": target_group.metadata.get("confidence"),
                     "target_seen_frames": target_group.metadata.get("seen_frames"),
@@ -542,25 +547,70 @@ class LiveTargetApproachProvider(TargetApproachProvider):
             initial_target_id=target_id,
             retargeted=False,
             metadata={
+                **engage_gate_metadata,
                 "movement_steps": movement_steps,
                 "movement_step_count": len(movement_steps),
             },
         )
 
-    def _evaluate_target_for_engage(self, target_group: GroupSnapshot) -> str | None:
+    def _evaluate_target_for_engage(self, target_group: GroupSnapshot) -> tuple[str | None, dict[str, object]]:
+        metadata: dict[str, object] = {
+            "engage_gate_decision": "reject",
+            "engage_gate_reason": None,
+            "engage_quality_gate_rejection_count": 0,
+            "target_confidence": float(target_group.metadata.get("confidence", 1.0)),
+            "target_seen_frames": int(target_group.metadata.get("seen_frames", 1)),
+            "target_track_seen_frames": int(target_group.metadata.get("track_seen_frames", 1)),
+            "target_in_scene_zone": bool(target_group.metadata.get("in_scene_zone", True)),
+            "target_player_veto_triggered": bool(target_group.metadata.get("player_veto_triggered", False)),
+            "target_player_veto_score": float(target_group.metadata.get("player_veto_score", 0.0)),
+            "target_player_veto_threshold": float(
+                target_group.metadata.get("player_veto_threshold", 1.0)
+            ),
+            "target_actionable": bool(target_group.metadata.get("actionable", True)),
+            "engage_min_target_confidence": self._engage_min_target_confidence,
+            "engage_relaxed_target_confidence": self._engage_relaxed_target_confidence,
+            "engage_min_seen_frames": self._engage_min_seen_frames,
+            "engage_relaxed_min_seen_frames": self._engage_relaxed_min_seen_frames,
+        }
         if target_group.engaged_by_other:
-            return "engage_quality_gate_target_occupied"
+            metadata["engage_gate_reason"] = "engage_quality_gate_target_occupied"
+            metadata["engage_quality_gate_rejection_count"] = 1
+            return "engage_quality_gate_target_occupied", metadata
         if not target_group.reachable:
-            return "engage_quality_gate_target_unreachable"
+            metadata["engage_gate_reason"] = "engage_quality_gate_target_unreachable"
+            metadata["engage_quality_gate_rejection_count"] = 1
+            return "engage_quality_gate_target_unreachable", metadata
         if not bool(target_group.metadata.get("in_scene_zone", True)):
-            return "engage_quality_gate_out_of_zone"
+            metadata["engage_gate_reason"] = "engage_quality_gate_out_of_zone"
+            metadata["engage_quality_gate_rejection_count"] = 1
+            return "engage_quality_gate_out_of_zone", metadata
+        if bool(target_group.metadata.get("player_veto_triggered", False)):
+            metadata["engage_gate_reason"] = "engage_quality_gate_player_veto"
+            metadata["engage_quality_gate_rejection_count"] = 1
+            return "engage_quality_gate_player_veto", metadata
         confidence = float(target_group.metadata.get("confidence", 1.0))
-        if confidence < self._engage_min_target_confidence:
-            return "engage_quality_gate_low_confidence"
         seen_frames = int(target_group.metadata.get("seen_frames", 1))
-        if seen_frames < self._engage_min_seen_frames:
-            return "engage_quality_gate_not_stable"
-        return None
+        track_seen_frames = int(target_group.metadata.get("track_seen_frames", seen_frames))
+        actionable = bool(target_group.metadata.get("actionable", True))
+        if not actionable or seen_frames < self._engage_min_seen_frames:
+            metadata["engage_gate_reason"] = "engage_quality_gate_not_stable"
+            metadata["engage_quality_gate_rejection_count"] = 1
+            return "engage_quality_gate_not_stable", metadata
+        if confidence >= self._engage_min_target_confidence:
+            metadata["engage_gate_decision"] = "strict_confidence_pass"
+            metadata["engage_gate_reason"] = "engage_quality_gate_pass_strict_confidence"
+            return None, metadata
+        if (
+            confidence >= self._engage_relaxed_target_confidence
+            and track_seen_frames >= max(self._engage_min_seen_frames, self._engage_relaxed_min_seen_frames)
+        ):
+            metadata["engage_gate_decision"] = "relaxed_stable_pass"
+            metadata["engage_gate_reason"] = "engage_quality_gate_pass_relaxed_stable"
+            return None, metadata
+        metadata["engage_gate_reason"] = "engage_quality_gate_low_confidence"
+        metadata["engage_quality_gate_rejection_count"] = 1
+        return "engage_quality_gate_low_confidence", metadata
 
     def _build_movement_steps(
         self,
@@ -1040,7 +1090,7 @@ class LiveRunner:
             capture=capture,
             artifact_writer=DebugArtifactWriter(settings.live),
             perception_analyzer=PerceptionAnalyzer(settings.live),
-            perception_artifact_writer=PerceptionArtifactWriter(settings.live.debug_directory),
+            perception_artifact_writer=PerceptionArtifactWriter(settings.live.debug_directory, settings.live),
             logger=logger,
             default_allow_background_capture=force_background_capture,
         )
@@ -1082,6 +1132,8 @@ class LiveRunner:
                 stall_detector=StallDetector(settings.live.stall_timeout_s),
                 engage_min_target_confidence=settings.live.engage_min_target_confidence,
                 engage_min_seen_frames=settings.live.engage_min_seen_frames,
+                engage_relaxed_target_confidence=settings.live.engage_relaxed_target_confidence,
+                engage_relaxed_min_seen_frames=settings.live.engage_relaxed_min_seen_frames,
             ),
             approach_world_state_provider=world_provider,
             retarget_policy=retarget_policy,

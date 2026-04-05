@@ -96,7 +96,20 @@ def test_load_default_config_returns_settings() -> None:
     assert settings.live.engage_click_offset_y_px == 0
     assert settings.live.engage_target_match_max_distance_px == 72
     assert settings.live.engage_min_target_confidence == 0.70
+    assert settings.live.engage_relaxed_target_confidence == 0.62
     assert settings.live.engage_min_seen_frames == 1
+    assert settings.live.engage_relaxed_min_seen_frames == 2
+    assert settings.live.confirmation_retention_enabled is True
+    assert settings.live.confirmation_retention_confidence_threshold == 0.58
+    assert settings.live.player_veto_soft_reject_enabled is True
+    assert settings.live.player_veto_soft_reject_score_threshold == 0.55
+    assert settings.live.player_veto_soft_reject_max_upper_score == 0.85
+    assert settings.live.player_veto_soft_reject_max_detection_confidence == 0.72
+    assert settings.live.player_veto_tall_blob_soft_reject_enabled is True
+    assert settings.live.player_veto_tall_blob_min_green_ratio == 0.015
+    assert settings.live.player_veto_tall_blob_min_green_pixels == 40
+    assert settings.live.player_veto_tall_blob_max_upper_score == 0.88
+    assert settings.live.player_veto_tall_blob_max_detection_confidence == 0.80
     assert settings.live.preview_fast_mode is False
     assert settings.live.preview_skip_fallback_confirmation is False
     assert settings.live.preview_render_aux_boxes is True
@@ -214,6 +227,7 @@ def test_live_real_mvp_config_can_be_loaded_from_yaml() -> None:
     assert settings.live.player_veto_min_pixels == 8
     assert settings.live.player_veto_min_width_px == 12
     assert settings.live.player_veto_max_height_px == 24
+    assert settings.live.player_veto_score_threshold == 0.95
     assert settings.live.ice_mob_signature_enabled is True
     assert settings.live.ice_mob_min_blue == 135
     assert settings.live.ice_mob_min_green == 105
@@ -233,7 +247,20 @@ def test_live_real_mvp_config_can_be_loaded_from_yaml() -> None:
     assert settings.live.confirmation_anchor_only is True
     assert settings.live.engage_verify_delay_s == 0.20
     assert settings.live.engage_min_target_confidence == 0.80
+    assert settings.live.engage_relaxed_target_confidence == 0.62
     assert settings.live.engage_min_seen_frames == 2
+    assert settings.live.engage_relaxed_min_seen_frames == 2
+    assert settings.live.confirmation_retention_enabled is True
+    assert settings.live.confirmation_retention_confidence_threshold == 0.58
+    assert settings.live.player_veto_soft_reject_enabled is True
+    assert settings.live.player_veto_soft_reject_score_threshold == 0.58
+    assert settings.live.player_veto_soft_reject_max_upper_score == 0.85
+    assert settings.live.player_veto_soft_reject_max_detection_confidence == 0.71
+    assert settings.live.player_veto_tall_blob_soft_reject_enabled is True
+    assert settings.live.player_veto_tall_blob_min_green_ratio == 0.018
+    assert settings.live.player_veto_tall_blob_min_green_pixels == 48
+    assert settings.live.player_veto_tall_blob_max_upper_score == 0.86
+    assert settings.live.player_veto_tall_blob_max_detection_confidence == 0.76
     assert settings.live.max_seed_hits_for_confirmation == 6
     assert settings.live.preview_fast_mode is True
     assert settings.live.preview_skip_fallback_confirmation is True
@@ -269,7 +296,22 @@ def test_live_preview_fast_config_can_be_loaded_from_yaml() -> None:
     assert settings.live.preview_max_height_px == 720
     assert settings.live.candidate_confirmation_frames == 1
     assert settings.live.occupied_confirmation_frames == 1
+    assert settings.live.player_veto_score_threshold == 0.95
+    assert settings.live.engage_min_target_confidence == 0.76
+    assert settings.live.engage_relaxed_target_confidence == 0.66
     assert settings.live.engage_min_seen_frames == 2
+    assert settings.live.engage_relaxed_min_seen_frames == 2
+    assert settings.live.confirmation_retention_enabled is True
+    assert settings.live.confirmation_retention_confidence_threshold == 0.58
+    assert settings.live.player_veto_soft_reject_enabled is True
+    assert settings.live.player_veto_soft_reject_score_threshold == 0.62
+    assert settings.live.player_veto_soft_reject_max_upper_score == 0.84
+    assert settings.live.player_veto_soft_reject_max_detection_confidence == 0.70
+    assert settings.live.player_veto_tall_blob_soft_reject_enabled is True
+    assert settings.live.player_veto_tall_blob_min_green_ratio == 0.020
+    assert settings.live.player_veto_tall_blob_min_green_pixels == 56
+    assert settings.live.player_veto_tall_blob_max_upper_score == 0.85
+    assert settings.live.player_veto_tall_blob_max_detection_confidence == 0.72
 
 
 def test_live_accuracy_regression_config_can_be_loaded_from_yaml() -> None:
@@ -279,7 +321,7 @@ def test_live_accuracy_regression_config_can_be_loaded_from_yaml() -> None:
     assert settings.live.debug_directory.name == "live_accuracy_regression_debug"
     assert settings.live.preview_fast_mode is False
     assert settings.live.preview_skip_fallback_confirmation is False
-    assert settings.live.preview_render_aux_boxes is True
+    assert settings.live.preview_render_aux_boxes is False
     assert settings.live.candidate_confirmation_frames == 2
     assert settings.live.occupied_confirmation_frames == 2
     assert settings.live.engage_min_seen_frames == 2
@@ -290,6 +332,21 @@ def test_live_accuracy_regression_config_can_be_loaded_from_yaml() -> None:
     assert settings.live.target_stability_center_distance_px == 56
     assert settings.live.target_stability_switch_distance_gain_px == 40
     assert settings.live.target_stability_confidence_margin == 0.16
+    assert settings.live.player_veto_score_threshold == 0.90
+    assert settings.live.engage_min_target_confidence == 0.78
+    assert settings.live.engage_relaxed_target_confidence == 0.68
+    assert settings.live.engage_relaxed_min_seen_frames == 2
+    assert settings.live.confirmation_retention_enabled is True
+    assert settings.live.confirmation_retention_confidence_threshold == 0.58
+    assert settings.live.player_veto_soft_reject_enabled is True
+    assert settings.live.player_veto_soft_reject_score_threshold == 0.50
+    assert settings.live.player_veto_soft_reject_max_upper_score == 0.86
+    assert settings.live.player_veto_soft_reject_max_detection_confidence == 0.72
+    assert settings.live.player_veto_tall_blob_soft_reject_enabled is True
+    assert settings.live.player_veto_tall_blob_min_green_ratio == 0.015
+    assert settings.live.player_veto_tall_blob_min_green_pixels == 40
+    assert settings.live.player_veto_tall_blob_max_upper_score == 0.88
+    assert settings.live.player_veto_tall_blob_max_detection_confidence == 0.80
 
 
 def test_cycle_prediction_window_methods() -> None:

@@ -25,6 +25,7 @@ from botlab.adapters.live import (
     select_nearest_target,
     should_start_rest,
 )
+from botlab.adapters.live.preview import LiveVisionPreviewState
 from botlab.adapters.live.capture import CaptureRegion, _calculate_window_relative_capture_bbox
 from botlab.adapters.live.capture import ForegroundWindowCapture, WindowCaptureStatus, create_capture
 from botlab.adapters.live.input import LiveInputDriver
@@ -43,10 +44,12 @@ from botlab.adapters.live.perception import (
     ReactionLatency,
     TemplateHit,
     TemplatePackLoader,
+    _detect_player_veto,
+    _evaluate_player_veto_gate,
     _limit_seed_hits_for_confirmation,
     compare_perception_summary_payloads,
 )
-from botlab.adapters.live.runner import LiveRestProvider, LiveRuntime
+from botlab.adapters.live.runner import LiveRestProvider, LiveRuntime, LiveTargetApproachProvider
 from botlab.adapters.live.vision import LiveResourceProvider, SimpleStateDetector, extract_named_roi
 from botlab.application.dto import (
     TargetApproachResult,
@@ -1022,7 +1025,7 @@ def test_scene_profile_loader_reads_single_spot_profile() -> None:
     assert profile.scene_name == "single_spot_scene"
     assert len(profile.spawn_zone_polygon) >= 4
     assert profile.reference_frame_path is not None
-    assert profile.reference_frame_path.name == "live_spot_scene_1.png"
+    assert profile.reference_frame_path.name == "live_mixed_01.png"
 
 
 def test_scene_profile_calibration_scales_polygon_and_reference_point(tmp_path: Path) -> None:
@@ -1922,6 +1925,9 @@ def test_marker_first_perception_detects_occupied_and_selects_nearest_free_targe
     assert "occupied_roi" in result.selected_target.metadata
     assert "occupied_green_ratio" in result.selected_target.metadata
     assert "occupied_template_match_enabled" in result.selected_target.metadata
+    assert "occupied_reason" in result.selected_target.metadata
+    assert "occupied_color_hit_count" in result.selected_target.metadata
+    assert "occupied_template_hit_count" in result.selected_target.metadata
     assert "confirmation_foreground_score" in result.selected_target.metadata
     assert (output_directory / "marker_frame_perception.json").exists() is True
 
@@ -2118,6 +2124,165 @@ def test_marker_first_perception_rejects_player_like_candidate_with_green_name_v
     assert isinstance(vetoes, list)
     assert len(vetoes) >= 1
     assert vetoes[0]["rejection_reason"] == "player_veto_green_name"
+    assert vetoes[0]["player_veto_triggered"] is True
+    assert vetoes[0]["player_veto_score"] >= vetoes[0]["player_veto_threshold"]
+
+
+def test_player_veto_score_semantics_are_unambiguous(
+    tmp_path: Path,
+) -> None:
+    from PIL import Image, ImageDraw
+
+    settings = _build_marker_first_settings(tmp_path)
+    settings = replace(
+        settings,
+        live=replace(
+            settings.live,
+            player_veto_enabled=True,
+            player_veto_min_pixels=18,
+            player_veto_min_width_px=26,
+            player_veto_max_height_px=18,
+            player_veto_score_threshold=0.95,
+        ),
+    )
+
+    triggered_image = Image.new("RGB", (220, 120), color=(30, 30, 30))
+    triggered_draw = ImageDraw.Draw(triggered_image)
+    triggered_draw.rectangle((40, 20, 110, 32), fill=(20, 210, 40))
+    triggered = _detect_player_veto(
+        image=triggered_image,
+        box=(20, 10, 120, 50),
+        live_config=settings.live,
+    )
+
+    non_triggered_image = Image.new("RGB", (220, 120), color=(30, 30, 30))
+    non_triggered_draw = ImageDraw.Draw(non_triggered_image)
+    non_triggered_draw.rectangle((40, 8, 68, 48), fill=(20, 210, 40))
+    non_triggered = _detect_player_veto(
+        image=non_triggered_image,
+        box=(20, 0, 120, 60),
+        live_config=settings.live,
+    )
+
+    assert triggered["triggered"] is True
+    assert triggered["score"] >= triggered["threshold"]
+    assert triggered["reason"] == "player_veto_green_name"
+    assert triggered["green_bbox_width"] >= settings.live.player_veto_min_width_px
+    assert triggered["green_bbox_height"] <= settings.live.player_veto_max_height_px
+
+    assert non_triggered["triggered"] is False
+    assert non_triggered["score"] < non_triggered["threshold"]
+    assert non_triggered["reason"] == "player_veto_green_blob_too_tall"
+    assert non_triggered["green_bbox_height"] > settings.live.player_veto_max_height_px
+
+
+def test_player_veto_soft_gate_rejects_suspicious_candidate_without_hard_trigger(
+    tmp_path: Path,
+) -> None:
+    settings = _build_marker_first_settings(tmp_path)
+    settings = replace(
+        settings,
+        live=replace(
+            settings.live,
+            player_veto_soft_reject_enabled=True,
+            player_veto_soft_reject_score_threshold=0.50,
+            player_veto_soft_reject_max_upper_score=0.86,
+            player_veto_soft_reject_max_detection_confidence=0.72,
+        ),
+    )
+
+    gate = _evaluate_player_veto_gate(
+        player_veto={
+            "triggered": False,
+            "score": 0.625,
+            "threshold": 0.90,
+            "reason": "player_veto_green_blob_too_tall",
+        },
+        upper_score=0.80,
+        detection_confidence=0.64,
+        live_config=settings.live,
+    )
+
+    assert gate["triggered"] is True
+    assert gate["soft_triggered"] is True
+    assert gate["hard_triggered"] is False
+    assert gate["decision"] == "soft_reject"
+    assert gate["reason"] == "player_veto_soft_suspicious_candidate"
+
+
+def test_player_veto_soft_gate_allows_strong_mob_confirmation(
+    tmp_path: Path,
+) -> None:
+    settings = _build_marker_first_settings(tmp_path)
+    settings = replace(
+        settings,
+        live=replace(
+            settings.live,
+            player_veto_soft_reject_enabled=True,
+            player_veto_soft_reject_score_threshold=0.50,
+            player_veto_soft_reject_max_upper_score=0.86,
+            player_veto_soft_reject_max_detection_confidence=0.72,
+        ),
+    )
+
+    gate = _evaluate_player_veto_gate(
+        player_veto={
+            "triggered": False,
+            "score": 0.625,
+            "threshold": 0.90,
+            "reason": "player_veto_green_blob_too_tall",
+        },
+        upper_score=0.91,
+        detection_confidence=0.77,
+        live_config=settings.live,
+    )
+
+    assert gate["triggered"] is False
+    assert gate["soft_triggered"] is False
+    assert gate["decision"] == "allow"
+
+
+def test_player_veto_soft_gate_rejects_tall_green_blob_even_when_base_score_is_zero(
+    tmp_path: Path,
+) -> None:
+    settings = _build_marker_first_settings(tmp_path)
+    settings = replace(
+        settings,
+        live=replace(
+            settings.live,
+            player_veto_soft_reject_enabled=True,
+            player_veto_soft_reject_score_threshold=0.50,
+            player_veto_soft_reject_max_upper_score=0.86,
+            player_veto_soft_reject_max_detection_confidence=0.72,
+            player_veto_tall_blob_soft_reject_enabled=True,
+            player_veto_tall_blob_min_green_ratio=0.015,
+            player_veto_tall_blob_min_green_pixels=40,
+            player_veto_tall_blob_max_upper_score=0.88,
+            player_veto_tall_blob_max_detection_confidence=0.80,
+        ),
+    )
+
+    gate = _evaluate_player_veto_gate(
+        player_veto={
+            "triggered": False,
+            "score": 0.0,
+            "threshold": 0.90,
+            "reason": "player_veto_green_blob_too_tall",
+            "green_pixel_count": 180,
+            "green_pixel_ratio": 0.031,
+            "green_bbox_width": 150,
+            "green_bbox_height": 70,
+        },
+        upper_score=0.82,
+        detection_confidence=0.76,
+        live_config=settings.live,
+    )
+
+    assert gate["triggered"] is True
+    assert gate["soft_triggered"] is True
+    assert gate["hard_triggered"] is False
+    assert gate["decision"] == "soft_reject_tall_blob"
+    assert gate["reason"] == "player_veto_soft_tall_green_blob"
 
 
 def test_marker_first_perception_rejects_non_icy_candidate_with_marker_present(
@@ -2296,12 +2461,13 @@ def test_marker_first_diagnostics_include_ladder_counts(tmp_path: Path) -> None:
     assert set(ladder) == {
         "seed_stage_count",
         "marker_hit_count",
-        "marker_template_fallback_count",
+        "template_marker_fallback_count",
         "upper_rescue_count",
         "confirmation_pass_count",
         "ice_signature_rejection_count",
         "player_veto_rejection_count",
         "out_of_zone_rejection_count",
+        "engage_quality_gate_rejection_count",
         "final_detection_count",
     }
 
@@ -2382,6 +2548,58 @@ def test_accuracy_profile_confirmation_frames_reduce_temporary_detections(tmp_pa
     assert accuracy_result.diagnostics["candidate_tracks"][0]["detection_state"] == "candidate"
     assert preview_fast_summary.tuning_parameters["candidate_confirmation_frames"] == 1
     assert accuracy_summary.tuning_parameters["candidate_confirmation_frames"] == 2
+
+
+def test_accuracy_profile_becomes_actionable_after_second_confirmation_frame(tmp_path: Path) -> None:
+    from PIL import Image, ImageDraw
+
+    base_settings = _build_marker_first_settings(tmp_path)
+    frame_path = tmp_path / "accuracy_profile_second_frame.png"
+    sidecar_path = tmp_path / "accuracy_profile_second_frame.json"
+
+    frame_image = Image.new("RGB", (320, 240), color=(40, 40, 40))
+    draw = ImageDraw.Draw(frame_image)
+    mob_upper_template = Image.open(base_settings.live.mobs_template_directory / "mob_a" / "upper.png").convert("RGB")
+    frame_image.paste(mob_upper_template, (150, 104))
+    draw.polygon([(159, 92), (163, 86), (167, 92), (163, 98)], fill=(230, 205, 32))
+    frame_image.save(frame_path)
+    sidecar_path.write_text(
+        json.dumps(
+            {
+                "captured_at_ts": 106.0,
+                "source": "accuracy-profile-second-frame-test",
+                "metadata": {
+                    "spawn_roi": [0, 0, 320, 240],
+                    "reference_point_xy": [160, 210],
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    accuracy_live = replace(
+        base_settings.live,
+        marker_color_mode="yellow",
+        candidate_confirmation_frames=2,
+        occupied_confirmation_frames=2,
+        engage_min_seen_frames=2,
+        confirmation_confidence_threshold=0.66,
+        preview_fast_mode=False,
+    )
+    runner = PerceptionAnalysisRunner(
+        live_config=accuracy_live,
+        output_directory=tmp_path / "accuracy-profile-second-frame",
+    )
+    first_result = runner.analyze_frame_path(frame_path).frame_results[0]
+    second_result = runner.analyze_frame_path(frame_path).frame_results[0]
+
+    assert len(first_result.detections) == 0
+    assert first_result.diagnostics["ladder_diagnostics"]["confirmation_pass_count"] >= 1
+    assert len(second_result.detections) >= 1
+    assert second_result.diagnostics["ladder_diagnostics"]["final_detection_count"] >= 1
+    assert second_result.detections[0].metadata["detection_state"] == "actionable"
 
 
 def test_compare_two_live_profiles_on_same_fixture_reports_expected_tuning_delta(tmp_path: Path) -> None:
@@ -3054,6 +3272,88 @@ def test_live_preview_renderer_can_crop_to_spawn_roi(tmp_path: Path) -> None:
     assert cropped_image.size == (640, 320)
 
 
+def test_live_preview_renderer_hides_verification_boxes_when_aux_boxes_disabled(tmp_path: Path) -> None:
+    from PIL import Image
+
+    frame = LiveFrame(
+        width=320,
+        height=240,
+        captured_at_ts=100.0,
+        source="preview-verify-hide-test",
+        metadata={},
+        image=Image.new("RGB", (320, 240), color=(20, 20, 20)),
+    )
+    detection = LiveTargetDetection(
+        target_id="mob-a",
+        screen_x=160,
+        screen_y=120,
+        distance=10.0,
+        occupied=False,
+        confidence=0.80,
+        bbox=(140, 96, 40, 48),
+        metadata={"in_scene_zone": True},
+    )
+    verification_detection = LiveTargetDetection(
+        target_id="verify-a",
+        screen_x=160,
+        screen_y=120,
+        distance=10.0,
+        occupied=False,
+        confidence=0.75,
+        bbox=(136, 92, 48, 56),
+        metadata={"in_scene_zone": True},
+    )
+    result = SimpleNamespace(
+        roi={"x": 0, "y": 0, "width": 320, "height": 240},
+        scene_zone_polygon=(),
+        scene_name="single_spot_scene",
+        reference_point_xy=(160, 120),
+        raw_hits=(),
+        detections=(detection,),
+        selected_target_id="mob-a",
+    )
+    verification_result = SimpleNamespace(detections=(verification_detection,))
+    state = LiveVisionPreviewState(
+        frame_source="preview-verify-hide-test",
+        frame_width=320,
+        frame_height=240,
+        capture_reliability="trusted",
+        capture_latency_ms=0.0,
+        preview_background_bypass=False,
+        window_guard_block_reason=None,
+        capture_mode_used_for_preview="default",
+        selected_target_id="mob-a",
+        candidate_count=1,
+        free_target_count=1,
+        occupied_target_count=0,
+        out_of_zone_target_count=0,
+        detection_latency_ms=10.0,
+        selection_latency_ms=0.0,
+        total_reaction_latency_ms=10.0,
+        render_latency_ms=0.0,
+        dropped_or_skipped_frames=0,
+        preview_mode="test",
+        headline_lines=("test",),
+    )
+
+    renderer = LiveVisionPreviewRenderer(
+        max_width_px=320,
+        max_height_px=240,
+        render_aux_boxes=False,
+        crop_to_spawn_roi=False,
+        crop_padding_px=0,
+    )
+    image = renderer.render(
+        frame=frame,
+        result=result,
+        state=state,
+        verification_result=verification_result,
+    )
+
+    # Verification box would color this pixel cyan if it were still rendered.
+    assert image.getpixel((136, 92)) != (56, 189, 248)
+
+
 def test_live_preview_snapshot_writer_overwrites_single_latest_files(tmp_path: Path) -> None:
     from PIL import Image
 
@@ -3609,20 +3909,18 @@ def test_marker_first_pipeline_can_smoke_test_real_sample_frame_if_present(tmp_p
     assert (output_directory / "live_spot_scene_1_perception.json").exists() is True
 
 
-def test_live_spot_scene_sidecar_is_loaded_for_real_sample_frames() -> None:
+def test_scene_profile_is_applied_for_real_sample_frames() -> None:
     settings = load_config("config/live_real_mvp.yaml")
     loader = PerceptionFrameLoader()
 
-    frame = loader.load_frame(settings.live.sample_frames_directory / "live_spot_scene_1.png")
+    frame = loader.load_frame(settings.live.sample_frames_directory / "live_mixed_01.png")
     roi = extract_named_roi(frame, roi_name="spawn_roi", live_config=settings.live)
 
-    assert frame.source == "live_spot_scene_1"
-    assert frame.metadata["reference_point_xy"] == [760, 285]
-    assert frame.metadata["template_match_stride_px"] == 12
+    assert frame.source == "live_mixed_01.png"
     assert roi["x"] == 80
-    assert roi["y"] == 300
-    assert roi["width"] == 1360
-    assert roi["height"] == 640
+    assert roi["y"] == 40
+    assert roi["width"] == 1450
+    assert roi["height"] == 860
 
 
 def test_live_spot_scenes_match_expected_perception_contracts(tmp_path: Path) -> None:
@@ -3982,8 +4280,47 @@ def test_live_runner_engage_quality_gate_rejects_unstable_target_before_click(
     assert result.outcome is LiveEngageOutcome.NO_TARGET_AVAILABLE
     assert result.reason == "engage_quality_gate_not_stable"
     assert payload["metadata"]["engage_quality_gate_rejected"] is True
+    assert payload["metadata"]["engage_ladder_diagnostics"]["engage_quality_gate_rejection_count"] == 1
     assert payload["metadata"]["target_seen_frames"] == 1
     assert all(event["action"] != "right_click_target" for event in payload["input_events"])
+
+
+def test_live_target_approach_provider_allows_relaxed_engage_gate_for_stable_target() -> None:
+    provider = LiveTargetApproachProvider(
+        runtime=SimpleNamespace(),
+        input_driver=SimpleNamespace(),
+        stall_detector=StallDetector(1.0),
+        engage_min_target_confidence=0.80,
+        engage_min_seen_frames=2,
+        engage_relaxed_target_confidence=0.68,
+        engage_relaxed_min_seen_frames=2,
+    )
+    target_group = GroupSnapshot(
+        group_id="mob-a",
+        position=Position(x=100.0, y=120.0),
+        distance=3.0,
+        alive_count=1,
+        engaged_by_other=False,
+        reachable=True,
+        threat_score=0.0,
+        metadata={
+            "confidence": 0.71,
+            "seen_frames": 2,
+            "track_seen_frames": 2,
+            "actionable": True,
+            "in_scene_zone": True,
+            "player_veto_triggered": False,
+            "player_veto_score": 0.15,
+            "player_veto_threshold": 0.95,
+        },
+    )
+
+    reason, metadata = provider._evaluate_target_for_engage(target_group)
+
+    assert reason is None
+    assert metadata["engage_gate_decision"] == "relaxed_stable_pass"
+    assert metadata["engage_gate_reason"] == "engage_quality_gate_pass_relaxed_stable"
+    assert metadata["engage_quality_gate_rejection_count"] == 0
 
 
 @pytest.mark.parametrize(

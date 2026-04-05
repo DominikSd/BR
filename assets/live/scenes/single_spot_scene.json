@@ -1,6 +1,6 @@
 {
   "scene_name": "single_spot_scene",
-  "reference_frame_path": "../sample_frames/raw/live_spot_scene_1.png",
+  "reference_frame_path": "../sample_frames/raw/live_mixed_01.png",
   "reference_point_xy": [980, 390],
   "notes": "Profil pojedynczego spota skalibrowany pod realny spawn lodowych mobow. W live path scena jest kotwiczona lagodniej do custom anchor zamiast pelnego frame_center, zeby nie wycinac poprawnych detekcji na gorze i po prawej stronie spota.",
   "spawn_zone_polygon": [
