@@ -29,3 +29,13 @@ data/test-runtime-temp/
 
 # Local raw capture dumps that are not part of the canonical sample set
 /assets/live/sample_frames/raw/[0-9][0-9][0-9]_*.png
+
+# Local ad-hoc live regression screenshots kept only for manual analysis
+/assets/live/sample_frames/raw/live_free_*.png
+/assets/live/sample_frames/raw/live_occupied_*.png
+/assets/live/sample_frames/raw/live_mixed_*.png
+/assets/live/sample_frames/raw/live_player_confusion_*.png
+/assets/live/sample_frames/raw/live_occluded_*.png
+
+# Local archive/reference templates that should not go into normal commits
+/assets/live/templates/archive/

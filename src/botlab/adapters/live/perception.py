@@ -653,6 +653,8 @@ class PerceptionAnalyzer:
         self._track_sequence = 0
         self._strict_pixel_only = strict_pixel_only
         self._zero_seed_streak = 0
+        self._last_selected_target_id: str | None = None
+        self._last_selected_screen_xy: tuple[float, float] | None = None
 
     def analyze_frame(
         self,
@@ -722,12 +724,14 @@ class PerceptionAnalyzer:
         )
 
         selection_perf_started = self._clock()
-        selected_target = select_nearest_target(
-            tuple(
-                detection
-                for detection in filter_occupied_targets(detections)
-                if bool(detection.metadata.get("in_scene_zone", True)) and detection.reachable
-            )
+        selectable_detections = tuple(
+            detection
+            for detection in filter_occupied_targets(detections)
+            if bool(detection.metadata.get("in_scene_zone", True)) and detection.reachable
+        )
+        selected_target, selection_reason = self._select_target_with_stability_guard(
+            detections=selectable_detections,
+            frame_source=frame.source,
         )
         selection_finished_ts = detection_finished_ts + self._resolve_duration_s(
             frame=frame,
@@ -747,6 +751,7 @@ class PerceptionAnalyzer:
             mob_signature_rejections=mob_signature_rejections,
             seed_diagnostics=seed_diagnostics,
             selected_target=selected_target,
+            selection_reason=selection_reason,
         )
 
         return PerceptionFrameResult(
@@ -1481,6 +1486,101 @@ class PerceptionAnalyzer:
                 best_track_id = track_id
         return best_track_id
 
+    def _select_target_with_stability_guard(
+        self,
+        *,
+        detections: tuple[LiveTargetDetection, ...],
+        frame_source: str,
+    ) -> tuple[LiveTargetDetection | None, str | None]:
+        best_target = select_nearest_target(detections)
+        if best_target is None:
+            self._last_selected_target_id = None
+            self._last_selected_screen_xy = None
+            return None, None
+
+        selected_target = best_target
+        selection_reason = "nearest_free_in_zone_reachable_target"
+        previous_target_id = self._last_selected_target_id
+        previous_screen_xy = self._last_selected_screen_xy
+        guarded_target = self._apply_target_stability_guard(
+            detections=detections,
+            best_target=best_target,
+            frame_source=frame_source,
+        )
+        if guarded_target is not None and guarded_target.target_id != best_target.target_id:
+            selected_target = guarded_target
+            selection_reason = "stability_guard_retained_previous_target"
+        self._last_selected_target_id = selected_target.target_id
+        self._last_selected_screen_xy = (
+            float(selected_target.screen_x),
+            float(selected_target.screen_y),
+        )
+        if previous_target_id is not None or previous_screen_xy is not None:
+            selected_target = replace(
+                selected_target,
+                metadata={
+                    **selected_target.metadata,
+                    "selection_stability_guard_applied": selection_reason.startswith("stability_guard"),
+                    "selection_previous_target_id": previous_target_id,
+                    "selection_previous_screen_xy": None
+                    if previous_screen_xy is None
+                    else [previous_screen_xy[0], previous_screen_xy[1]],
+                    "selection_reason": selection_reason,
+                },
+            )
+        return selected_target, selection_reason
+
+    def _apply_target_stability_guard(
+        self,
+        *,
+        detections: tuple[LiveTargetDetection, ...],
+        best_target: LiveTargetDetection,
+        frame_source: str,
+    ) -> LiveTargetDetection | None:
+        if not self._live_config.target_stability_enabled:
+            return best_target
+        if self._last_selected_target_id is None and self._last_selected_screen_xy is None:
+            return best_target
+        if not str(frame_source).startswith("foreground_window_capture") and not str(frame_source).startswith(
+            "window_content_capture_preview_bypass"
+        ):
+            return best_target
+
+        previous_target = None
+        if self._last_selected_target_id is not None:
+            previous_target = next(
+                (detection for detection in detections if detection.target_id == self._last_selected_target_id),
+                None,
+            )
+        if previous_target is None and self._last_selected_screen_xy is not None and detections:
+            previous_target = min(
+                detections,
+                key=lambda detection: math.dist(
+                    (float(detection.screen_x), float(detection.screen_y)),
+                    self._last_selected_screen_xy if self._last_selected_screen_xy is not None else (0.0, 0.0),
+                ),
+            )
+            if self._last_selected_screen_xy is not None:
+                previous_distance = math.dist(
+                    (float(previous_target.screen_x), float(previous_target.screen_y)),
+                    self._last_selected_screen_xy,
+                )
+                if previous_distance > float(self._live_config.target_stability_center_distance_px):
+                    previous_target = None
+        if previous_target is None:
+            return best_target
+        if previous_target.target_id == best_target.target_id:
+            return best_target
+        if (
+            best_target.distance
+            + float(self._live_config.target_stability_switch_distance_gain_px)
+            >= previous_target.distance
+            and best_target.confidence
+            <= previous_target.confidence + float(self._live_config.target_stability_confidence_margin)
+        ):
+            return previous_target
+        return best_target
+
     def _resolve_duration_s(
         self,
         *,
@@ -1532,6 +1632,7 @@ class PerceptionAnalyzer:
         mob_signature_rejections: tuple[dict[str, Any], ...],
         seed_diagnostics: dict[str, Any],
         selected_target: LiveTargetDetection | None,
+        selection_reason: str | None,
     ) -> dict[str, Any]:
         low_confidence_hits: list[dict[str, Any]] = []
         duplicate_hits: list[dict[str, Any]] = []
@@ -1639,8 +1740,20 @@ class PerceptionAnalyzer:
             f"occupied={len(occupied_rejections)} out_of_zone={len(out_of_zone_rejections)} "
             f"selected={None if selected_target is None else selected_target.target_id}",
         ]
+        ladder_diagnostics = {
+            "seed_stage_count": int(seed_diagnostics.get("merged_seed_hit_count", 0)),
+            "marker_hit_count": int(seed_diagnostics.get("marker_hit_count", 0)),
+            "marker_template_fallback_count": int(seed_diagnostics.get("marker_template_hit_count", 0)),
+            "upper_rescue_count": int(seed_diagnostics.get("rescue_seed_hit_count", 0)),
+            "confirmation_pass_count": len(candidate_tracks),
+            "ice_signature_rejection_count": len(mob_signature_rejections),
+            "player_veto_rejection_count": len(player_veto_rejections),
+            "out_of_zone_rejection_count": len(out_of_zone_rejections),
+            "final_detection_count": len(detections),
+        }
         return {
             "tuning_parameters": _build_detection_tuning_parameters(self._live_config),
+            "ladder_diagnostics": ladder_diagnostics,
             "raw_hit_summary": _count_hits_by_label(raw_hits),
             "low_confidence_hits": low_confidence_hits,
             "duplicate_merges": duplicate_hits,
@@ -1652,9 +1765,7 @@ class PerceptionAnalyzer:
             "mob_signature_rejections": list(mob_signature_rejections),
             "seed_diagnostics": seed_diagnostics,
             "final_candidates": actionable_entries,
-            "selection_reason": None
-            if selected_target is None
-            else "nearest_free_in_zone_reachable_target",
+            "selection_reason": selection_reason,
             "summary_lines": summary_lines,
         }
 
@@ -3667,6 +3778,10 @@ def _build_detection_tuning_parameters(live_config: LiveConfig) -> dict[str, Any
         "confirmation_anchor_only": live_config.confirmation_anchor_only,
         "confirmation_template_stride_px": live_config.confirmation_template_stride_px,
         "max_seed_hits_for_confirmation": live_config.max_seed_hits_for_confirmation,
+        "target_stability_enabled": live_config.target_stability_enabled,
+        "target_stability_center_distance_px": live_config.target_stability_center_distance_px,
+        "target_stability_switch_distance_gain_px": live_config.target_stability_switch_distance_gain_px,
+        "target_stability_confidence_margin": live_config.target_stability_confidence_margin,
         "player_veto_enabled": live_config.player_veto_enabled,
         "player_veto_roi_width_px": live_config.player_veto_roi_width_px,
         "player_veto_roi_height_px": live_config.player_veto_roi_height_px,

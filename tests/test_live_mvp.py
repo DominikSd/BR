@@ -611,6 +611,52 @@ def test_foreground_window_capture_can_bypass_foreground_guard_for_preview(
     assert frame.height == 80
 
 
+def test_foreground_window_capture_does_not_use_background_bypass_for_minimized_window(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    settings = _build_scene_aware_live_settings(tmp_path)
+    live = replace(
+        settings.live,
+        dry_run=False,
+        foreground_only=True,
+        capture_region=(0, 0, 120, 80),
+    )
+    capture = ForegroundWindowCapture(live)
+
+    monkeypatch.setattr(
+        capture,
+        "_resolve_window_status",
+        lambda: WindowCaptureStatus(
+            configured_window_title="BrokenRanks",
+            matched_window_hwnd=12345,
+            matched_window_title="BrokenRanks",
+            foreground_window_title="botlab live engage observe",
+            window_bbox=(-32000, -32000, -31840, -31972),
+            capture_bbox=(100, 200, 220, 280),
+            foreground_matches=False,
+            reliable=False,
+            real_input_allowed=False,
+            block_reason="window_minimized",
+            warning="window_minimized",
+        ),
+    )
+
+    frame = capture.capture_frame(
+        cycle_id=1,
+        phase="observation",
+        default_ts=123.0,
+        session_state=LiveSessionState(),
+        allow_background_capture=True,
+    )
+
+    assert frame.source == "foreground_window_capture_blocked"
+    assert frame.metadata["capture_reliability"] == "blocked"
+    assert frame.metadata["window_guard"]["block_reason"] == "window_minimized"
+    assert frame.width == 120
+    assert frame.height == 80
+
+
 def test_should_start_rest_when_hp_or_condition_is_below_threshold() -> None:
     combat_config = load_default_config().combat
 
@@ -2197,6 +2243,209 @@ def test_marker_first_candidate_becomes_actionable_after_seen_frames_threshold(
     assert second_result.detections[0].metadata["track_seen_frames"] >= 2
 
 
+def test_marker_first_diagnostics_include_ladder_counts(tmp_path: Path) -> None:
+    from PIL import Image, ImageDraw
+
+    settings = _build_marker_first_settings(tmp_path)
+    settings = replace(
+        settings,
+        live=replace(
+            settings.live,
+            marker_color_mode="yellow",
+            candidate_confirmation_frames=1,
+        ),
+    )
+    output_directory = tmp_path / "perception-ladder-diagnostics"
+    frame_path = tmp_path / "ladder_diagnostics_frame.png"
+    sidecar_path = tmp_path / "ladder_diagnostics_frame.json"
+
+    frame_image = Image.new("RGB", (320, 240), color=(40, 40, 40))
+    draw = ImageDraw.Draw(frame_image)
+    mob_upper_template = Image.open(settings.live.mobs_template_directory / "mob_a" / "upper.png").convert("RGB")
+    frame_image.paste(mob_upper_template, (150, 104))
+    draw.polygon([(159, 92), (163, 86), (167, 92), (163, 98)], fill=(230, 205, 32))
+    frame_image.save(frame_path)
+    sidecar_path.write_text(
+        json.dumps(
+            {
+                "captured_at_ts": 105.25,
+                "source": "ladder-diagnostics-test",
+                "metadata": {
+                    "spawn_roi": [0, 0, 320, 240],
+                    "reference_point_xy": [160, 210],
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    runner = PerceptionAnalysisRunner(
+        live_config=settings.live,
+        output_directory=output_directory,
+    )
+    summary = runner.analyze_frame_path(frame_path)
+    result = summary.frame_results[0]
+    ladder = result.diagnostics["ladder_diagnostics"]
+
+    assert ladder["seed_stage_count"] >= 1
+    assert ladder["marker_hit_count"] >= 1
+    assert ladder["confirmation_pass_count"] >= 1
+    assert ladder["final_detection_count"] == len(result.detections)
+    assert set(ladder) == {
+        "seed_stage_count",
+        "marker_hit_count",
+        "marker_template_fallback_count",
+        "upper_rescue_count",
+        "confirmation_pass_count",
+        "ice_signature_rejection_count",
+        "player_veto_rejection_count",
+        "out_of_zone_rejection_count",
+        "final_detection_count",
+    }
+
+
+def test_accuracy_profile_confirmation_frames_reduce_temporary_detections(tmp_path: Path) -> None:
+    from PIL import Image, ImageDraw
+
+    base_settings = _build_marker_first_settings(tmp_path)
+    output_directory = tmp_path / "perception-profile-compare"
+    frame_path = tmp_path / "profile_compare_frame.png"
+    sidecar_path = tmp_path / "profile_compare_frame.json"
+
+    frame_image = Image.new("RGB", (320, 240), color=(40, 40, 40))
+    draw = ImageDraw.Draw(frame_image)
+    mob_upper_template = Image.open(base_settings.live.mobs_template_directory / "mob_a" / "upper.png").convert("RGB")
+    frame_image.paste(mob_upper_template, (150, 104))
+    draw.polygon([(159, 92), (163, 86), (167, 92), (163, 98)], fill=(230, 205, 32))
+    frame_image.save(frame_path)
+    sidecar_path.write_text(
+        json.dumps(
+            {
+                "captured_at_ts": 105.75,
+                "source": "profile-compare-test",
+                "metadata": {
+                    "spawn_roi": [0, 0, 320, 240],
+                    "reference_point_xy": [160, 210],
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    preview_fast_settings = replace(
+        base_settings,
+        live=replace(
+            base_settings.live,
+            marker_color_mode="yellow",
+            candidate_confirmation_frames=1,
+            occupied_confirmation_frames=1,
+            engage_min_seen_frames=2,
+            preview_fast_mode=True,
+            preview_skip_fallback_confirmation=True,
+            preview_render_aux_boxes=False,
+        ),
+    )
+    accuracy_settings = replace(
+        base_settings,
+        live=replace(
+            base_settings.live,
+            marker_color_mode="yellow",
+            candidate_confirmation_frames=2,
+            occupied_confirmation_frames=2,
+            engage_min_seen_frames=2,
+            preview_fast_mode=False,
+            preview_skip_fallback_confirmation=False,
+            marker_confidence_threshold=0.36,
+            confirmation_confidence_threshold=0.66,
+            swords_confidence_threshold=0.28,
+        ),
+    )
+
+    preview_fast_summary = PerceptionAnalysisRunner(
+        live_config=preview_fast_settings.live,
+        output_directory=output_directory / "preview_fast",
+    ).analyze_frame_path(frame_path)
+    accuracy_summary = PerceptionAnalysisRunner(
+        live_config=accuracy_settings.live,
+        output_directory=output_directory / "accuracy",
+    ).analyze_frame_path(frame_path)
+
+    preview_fast_result = preview_fast_summary.frame_results[0]
+    accuracy_result = accuracy_summary.frame_results[0]
+
+    assert len(preview_fast_result.detections) >= 1
+    assert len(accuracy_result.detections) == 0
+    assert accuracy_result.diagnostics["candidate_tracks"][0]["detection_state"] == "candidate"
+    assert preview_fast_summary.tuning_parameters["candidate_confirmation_frames"] == 1
+    assert accuracy_summary.tuning_parameters["candidate_confirmation_frames"] == 2
+
+
+def test_compare_two_live_profiles_on_same_fixture_reports_expected_tuning_delta(tmp_path: Path) -> None:
+    from PIL import Image, ImageDraw
+
+    base_settings = _build_marker_first_settings(tmp_path)
+    frame_path = tmp_path / "compare_two_profiles_frame.png"
+    sidecar_path = tmp_path / "compare_two_profiles_frame.json"
+
+    frame_image = Image.new("RGB", (320, 240), color=(40, 40, 40))
+    draw = ImageDraw.Draw(frame_image)
+    mob_upper_template = Image.open(base_settings.live.mobs_template_directory / "mob_a" / "upper.png").convert("RGB")
+    frame_image.paste(mob_upper_template, (150, 104))
+    draw.polygon([(159, 92), (163, 86), (167, 92), (163, 98)], fill=(230, 205, 32))
+    frame_image.save(frame_path)
+    sidecar_path.write_text(
+        json.dumps(
+            {
+                "captured_at_ts": 106.25,
+                "source": "compare-two-profiles-test",
+                "metadata": {
+                    "spawn_roi": [0, 0, 320, 240],
+                    "reference_point_xy": [160, 210],
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    preview_fast_live = replace(
+        base_settings.live,
+        marker_color_mode="yellow",
+        candidate_confirmation_frames=1,
+        preview_fast_mode=True,
+    )
+    accuracy_live = replace(
+        base_settings.live,
+        marker_color_mode="yellow",
+        candidate_confirmation_frames=2,
+        occupied_confirmation_frames=2,
+        preview_fast_mode=False,
+    )
+
+    preview_fast_summary = PerceptionAnalysisRunner(
+        live_config=preview_fast_live,
+        output_directory=tmp_path / "compare-preview-fast",
+    ).analyze_frame_path(frame_path)
+    accuracy_summary = PerceptionAnalysisRunner(
+        live_config=accuracy_live,
+        output_directory=tmp_path / "compare-accuracy",
+    ).analyze_frame_path(frame_path)
+
+    comparison = compare_perception_summary_payloads(
+        preview_fast_summary.to_dict(),
+        accuracy_summary.to_dict(),
+    )
+
+    assert preview_fast_summary.tuning_parameters["preview_fast_mode"] is True
+    assert accuracy_summary.tuning_parameters["preview_fast_mode"] is False
+    assert comparison["detection_latency_avg_ms_delta"] is not None
+
+
 def test_marker_first_perception_can_use_anchor_only_upper_confirmation(
     tmp_path: Path,
 ) -> None:
@@ -2887,6 +3136,24 @@ def test_resolve_snapshot_payload_requires_ready_payload_when_cache_is_empty(tmp
 
     assert resolved_state is state
     assert resolved_image.size == (32, 16)
+
+
+def test_should_reuse_previous_preview_payload_for_minimized_or_tiny_frame() -> None:
+    from PIL import Image
+
+    frame = LiveFrame(
+        width=160,
+        height=28,
+        captured_at_ts=100.0,
+        source="window_content_capture_preview_bypass",
+        metadata={
+            "capture_reliability": "preview_background_bypass",
+            "window_guard": {"block_reason": "window_minimized"},
+        },
+        image=Image.new("RGB", (160, 28), color=(8, 8, 8)),
+    )
+
+    assert live_preview_module._should_reuse_previous_preview_payload(frame) is True
 
 
 def test_simple_state_detector_can_detect_combat_indicator_from_pixels(tmp_path: Path) -> None:

@@ -209,7 +209,11 @@ class ForegroundWindowCapture:
             image = ImageGrab.grab(bbox=window_status.capture_bbox)
             source = "foreground_window_capture"
             capture_reliability = "trusted"
-        elif allow_background_capture and window_status.window_bbox is not None:
+        elif (
+            allow_background_capture
+            and window_status.window_bbox is not None
+            and window_status.block_reason != "window_minimized"
+        ):
             image = None
             if window_status.matched_window_hwnd is not None:
                 image = _grab_window_content(
@@ -295,6 +299,23 @@ class ForegroundWindowCapture:
 
         window_bbox = matched_window["bbox"]
         capture_bbox = _calculate_window_relative_capture_bbox(window_bbox, self._region)
+        if _window_looks_minimized_or_invalid(int(matched_window["hwnd"]), window_bbox):
+            previous_capture_bbox = fallback_bbox
+            if self._last_window_status is not None:
+                previous_capture_bbox = self._last_window_status.capture_bbox
+            return WindowCaptureStatus(
+                configured_window_title=configured_title,
+                matched_window_hwnd=int(matched_window["hwnd"]),
+                matched_window_title=str(matched_window["title"]),
+                foreground_window_title=None if foreground_window is None else str(foreground_window["title"]),
+                window_bbox=window_bbox,
+                capture_bbox=previous_capture_bbox,
+                foreground_matches=False if foreground_window is None else bool(foreground_window["hwnd"] == matched_window["hwnd"]),
+                reliable=False,
+                real_input_allowed=False,
+                block_reason="window_minimized",
+                warning="window_minimized",
+            )
         foreground_matches = False
         foreground_title: str | None = None
         if foreground_window is not None:
@@ -1124,6 +1145,28 @@ def _get_window_rect(hwnd: int) -> tuple[int, int, int, int] | None:
     if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
         return None
     return (int(rect.left), int(rect.top), int(rect.right), int(rect.bottom))
+
+
+def _is_window_iconic(hwnd: int) -> bool:
+    if sys.platform != "win32":
+        return False
+    user32 = ctypes.windll.user32
+    return bool(user32.IsIconic(hwnd))
+
+
+def _window_bbox_looks_minimized(bbox: tuple[int, int, int, int]) -> bool:
+    left, top, right, bottom = bbox
+    width = max(0, right - left)
+    height = max(0, bottom - top)
+    if left <= -32000 and top <= -32000:
+        return True
+    if width <= 200 and height <= 80:
+        return True
+    return False
+
+
+def _window_looks_minimized_or_invalid(hwnd: int, bbox: tuple[int, int, int, int]) -> bool:
+    return _is_window_iconic(hwnd) or _window_bbox_looks_minimized(bbox)
 
 
 def _grab_window_content(

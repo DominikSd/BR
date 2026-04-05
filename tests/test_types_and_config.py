@@ -180,8 +180,8 @@ def test_live_real_mvp_config_can_be_loaded_from_yaml() -> None:
     assert settings.live.scene_profile_path.name == "single_spot_scene.json"
     assert settings.live.scene_zone_overlay_visible is False
     assert settings.live.scene_calibration_offset_xy == (0, 0)
-    assert settings.live.scene_reference_anchor_mode == "frame_center"
-    assert settings.live.scene_reference_anchor_xy == (960, 520)
+    assert settings.live.scene_reference_anchor_mode == "custom"
+    assert settings.live.scene_reference_anchor_xy == (980, 520)
     assert settings.live.marker_color_mode == "yellow"
     assert settings.live.marker_min_red == 150
     assert settings.live.marker_min_green == 110
@@ -251,6 +251,45 @@ def test_live_real_mvp_config_can_be_loaded_from_yaml() -> None:
     assert settings.live.rest_resource_growth_min_delta == 0.01
     assert settings.live.rest_resource_warning_spread_threshold == 0.08
     assert settings.live.rest_resource_stall_warning_ticks == 2
+
+
+def test_live_preview_fast_config_can_be_loaded_from_yaml() -> None:
+    settings = load_config(PROJECT_ROOT / "config" / "live_preview_fast.yaml")
+
+    assert settings.app.mode == "live"
+    assert settings.live.debug_directory.name == "live_preview_fast_debug"
+    assert settings.live.preview_fast_mode is True
+    assert settings.live.preview_skip_fallback_confirmation is True
+    assert settings.live.preview_render_aux_boxes is False
+    assert settings.live.preview_crop_to_spawn_roi is True
+    assert settings.live.preview_crop_padding_px == 16
+    assert settings.live.preview_analyze_every_nth_frame == 2
+    assert settings.live.preview_refresh_interval_ms == 150
+    assert settings.live.preview_max_width_px == 1280
+    assert settings.live.preview_max_height_px == 720
+    assert settings.live.candidate_confirmation_frames == 1
+    assert settings.live.occupied_confirmation_frames == 1
+    assert settings.live.engage_min_seen_frames == 2
+
+
+def test_live_accuracy_regression_config_can_be_loaded_from_yaml() -> None:
+    settings = load_config(PROJECT_ROOT / "config" / "live_accuracy_regression.yaml")
+
+    assert settings.app.mode == "live"
+    assert settings.live.debug_directory.name == "live_accuracy_regression_debug"
+    assert settings.live.preview_fast_mode is False
+    assert settings.live.preview_skip_fallback_confirmation is False
+    assert settings.live.preview_render_aux_boxes is True
+    assert settings.live.candidate_confirmation_frames == 2
+    assert settings.live.occupied_confirmation_frames == 2
+    assert settings.live.engage_min_seen_frames == 2
+    assert settings.live.marker_confidence_threshold == 0.36
+    assert settings.live.confirmation_confidence_threshold == 0.66
+    assert settings.live.swords_confidence_threshold == 0.28
+    assert settings.live.target_stability_enabled is True
+    assert settings.live.target_stability_center_distance_px == 56
+    assert settings.live.target_stability_switch_distance_gain_px == 40
+    assert settings.live.target_stability_confidence_margin == 0.16
 
 
 def test_cycle_prediction_window_methods() -> None:

@@ -52,6 +52,7 @@ class LivePreviewSnapshotWriter:
             "frame_width": state.frame_width,
             "frame_height": state.frame_height,
             "capture_reliability": state.capture_reliability,
+            "capture_latency_ms": state.capture_latency_ms,
             "preview_background_bypass": state.preview_background_bypass,
             "window_guard_block_reason": state.window_guard_block_reason,
             "capture_mode_used_for_preview": state.capture_mode_used_for_preview,
@@ -98,6 +99,7 @@ class LiveVisionPreviewState:
     frame_width: int
     frame_height: int
     capture_reliability: str | None
+    capture_latency_ms: float
     preview_background_bypass: bool
     window_guard_block_reason: str | None
     capture_mode_used_for_preview: str
@@ -129,6 +131,7 @@ def build_live_preview_state(
     capture_reliability = frame.metadata.get("capture_reliability")
     if not isinstance(capture_reliability, str) or not capture_reliability:
         capture_reliability = None
+    capture_latency_ms = float(frame.metadata.get("capture_latency_ms", 0.0) or 0.0)
     preview_background_bypass = bool(frame.metadata.get("preview_background_bypass"))
     window_guard = frame.metadata.get("window_guard")
     window_guard_block_reason = None
@@ -141,7 +144,7 @@ def build_live_preview_state(
         f"scene={result.scene_name or 'none'}",
         f"targets={len(result.detections)} free={len(result.selectable_detections)} occupied={len(result.occupied_detections)} out_of_zone={len(result.out_of_zone_detections)}",
         f"selected={result.selected_target_id or 'None'}",
-        f"detection_ms={result.timings.detection_latency_ms:.1f} render_ms={render_latency_ms:.1f} selection={result.timings.selection_latency_ms:.1f} reaction={result.timings.total_reaction_latency_ms:.1f}ms",
+        f"capture_ms={capture_latency_ms:.1f} detection_ms={result.timings.detection_latency_ms:.1f} render_ms={render_latency_ms:.1f} selection={result.timings.selection_latency_ms:.1f} reaction={result.timings.total_reaction_latency_ms:.1f}ms",
         f"preview_mode={preview_mode} dropped_or_skipped_frames={dropped_or_skipped_frames}",
         f"candidate_hits={result.candidate_hit_count} merged={result.merged_hit_count}",
         f"capture_mode_used_for_preview={capture_mode_used_for_preview}",
@@ -172,6 +175,7 @@ def build_live_preview_state(
         frame_width=frame.width,
         frame_height=frame.height,
         capture_reliability=capture_reliability,
+        capture_latency_ms=capture_latency_ms,
         preview_background_bypass=preview_background_bypass,
         window_guard_block_reason=window_guard_block_reason,
         capture_mode_used_for_preview=capture_mode_used_for_preview,
@@ -410,6 +414,20 @@ class LiveVisionPreviewRenderer:
         return canvas.crop((left, top, right, bottom))
 
 
+def _should_reuse_previous_preview_payload(frame: LiveFrame) -> bool:
+    capture_reliability = frame.metadata.get("capture_reliability")
+    if capture_reliability == "blocked":
+        return True
+    window_guard = frame.metadata.get("window_guard", {})
+    if isinstance(window_guard, dict):
+        block_reason = str(window_guard.get("block_reason") or "")
+        if block_reason == "window_minimized":
+            return True
+    if frame.width <= 200 and frame.height <= 80:
+        return True
+    return False
+
+
 class LiveVisionPreview:
     def __init__(
         self,
@@ -453,6 +471,7 @@ class LiveVisionPreview:
             self._skipped_frame_count += 1
             return self._last_render_payload
 
+        capture_started = time.perf_counter()
         frame = self._capture.capture_frame(
             cycle_id=self._tick_index + 1,
             phase="observation",
@@ -460,6 +479,34 @@ class LiveVisionPreview:
             session_state=self._session_state,
             allow_background_capture=True,
         )
+        capture_elapsed_ms = max(0.0, (time.perf_counter() - capture_started) * 1000.0)
+        frame = replace(
+            frame,
+            metadata={
+                **frame.metadata,
+                "capture_latency_ms": capture_elapsed_ms,
+            },
+        )
+        if _should_reuse_previous_preview_payload(frame) and self._last_render_payload is not None:
+            self._skipped_frame_count += 1
+            reused_state, reused_image = self._last_render_payload
+            reused_lines = tuple(
+                line
+                for line in reused_state.headline_lines
+                if not line.startswith("preview_reused_due_to=")
+            ) + (
+                f"preview_reused_due_to={frame.metadata.get('window_guard', {}).get('block_reason', 'invalid_frame')}",
+            )
+            reused_state = replace(
+                reused_state,
+                dropped_or_skipped_frames=self._skipped_frame_count,
+                headline_lines=reused_lines,
+            )
+            self._last_render_payload = (
+                reused_state,
+                reused_image.copy() if hasattr(reused_image, "copy") else reused_image,
+            )
+            return self._last_render_payload
         analyze_started = time.perf_counter()
         result = self._analyzer.analyze_frame(
             frame,
@@ -491,18 +538,20 @@ class LiveVisionPreview:
         refresh_budget_ms = float(self._settings.live.preview_refresh_interval_ms)
         if analyze_elapsed_ms > refresh_budget_ms:
             self._logger.warning(
-                "live_preview detection exceeded refresh budget detection_ms=%.1f budget_ms=%.1f skipped=%s",
+                "live_preview detection exceeded refresh budget capture_ms=%.1f detection_ms=%.1f budget_ms=%.1f skipped=%s",
+                capture_elapsed_ms,
                 analyze_elapsed_ms,
                 refresh_budget_ms,
                 self._skipped_frame_count,
             )
         self._logger.info(
-            "live_preview frame=%s targets=%s free=%s occupied=%s selected=%s detection_ms=%.1f render_ms=%.1f skipped=%s mode=%s reaction_ms=%.3f",
+            "live_preview frame=%s targets=%s free=%s occupied=%s selected=%s capture_ms=%.1f detection_ms=%.1f render_ms=%.1f skipped=%s mode=%s reaction_ms=%.3f",
             self._tick_index,
             state.candidate_count,
             state.free_target_count,
             state.occupied_target_count,
             state.selected_target_id,
+            capture_elapsed_ms,
             analyze_elapsed_ms,
             render_elapsed_ms,
             self._skipped_frame_count,
@@ -687,6 +736,7 @@ class LiveEngageObserve:
         self._logger.warning(
             "live_engage_observe forced dry_run input for safety while preserving real live capture."
         )
+        self._last_render_payload: tuple[LiveVisionPreviewState, Any] | None = None
 
     @property
     def safe_dry_run_enabled(self) -> bool:
@@ -727,6 +777,21 @@ class LiveEngageObserve:
                 allow_background_capture=True,
             )
             capture_mode_used_for_preview = "preview_bypass_fallback"
+        if _should_reuse_previous_preview_payload(frame) and self._last_render_payload is not None:
+            reused_state, reused_image = self._last_render_payload
+            reused_lines = tuple(
+                line
+                for line in reused_state.headline_lines
+                if not line.startswith("preview_reused_due_to=")
+            ) + (
+                f"preview_reused_due_to={frame.metadata.get('window_guard', {}).get('block_reason', 'invalid_frame')}",
+            )
+            reused_state = replace(reused_state, headline_lines=reused_lines)
+            self._last_render_payload = (
+                reused_state,
+                reused_image.copy() if hasattr(reused_image, "copy") else reused_image,
+            )
+            return self._last_render_payload
         state = build_live_preview_state(
             frame=frame,
             result=observation_result,
@@ -749,6 +814,10 @@ class LiveEngageObserve:
             result.outcome.value,
             result.selected_target_id,
             result.click_screen_xy,
+        )
+        self._last_render_payload = (
+            state,
+            image.copy() if hasattr(image, "copy") else image,
         )
         return state, image
 

@@ -166,6 +166,10 @@ class LiveConfig:
     confirmation_min_vertical_offset_px: int = 12
     confirmation_max_vertical_offset_px: int = 180
     max_seed_hits_for_confirmation: int = 24
+    target_stability_enabled: bool = True
+    target_stability_center_distance_px: int = 48
+    target_stability_switch_distance_gain_px: int = 36
+    target_stability_confidence_margin: float = 0.12
     player_veto_enabled: bool = True
     player_veto_roi_width_px: int = 170
     player_veto_roi_height_px: int = 52
@@ -717,6 +721,26 @@ def load_config(config_path: str | Path) -> Settings:
             live_section,
             "max_seed_hits_for_confirmation",
             24,
+        ),
+        target_stability_enabled=_optional_bool(
+            live_section,
+            "target_stability_enabled",
+            True,
+        ),
+        target_stability_center_distance_px=_optional_positive_int(
+            live_section,
+            "target_stability_center_distance_px",
+            48,
+        ),
+        target_stability_switch_distance_gain_px=_optional_positive_int(
+            live_section,
+            "target_stability_switch_distance_gain_px",
+            36,
+        ),
+        target_stability_confidence_margin=_optional_ratio_float(
+            live_section,
+            "target_stability_confidence_margin",
+            0.12,
         ),
         player_veto_enabled=_optional_bool(
             live_section,

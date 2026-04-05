@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import replace
 from pathlib import Path
 
@@ -137,12 +138,21 @@ class LiveRuntime:
         if cached_frame is not None:
             return cached_frame
 
+        capture_started = time.perf_counter()
         frame = self._capture.capture_frame(
             cycle_id=cycle_id,
             phase=phase,
             default_ts=default_ts,
             session_state=self._session_state,
             allow_background_capture=effective_allow_background_capture,
+        )
+        capture_latency_ms = max(0.0, (time.perf_counter() - capture_started) * 1000.0)
+        frame = replace(
+            frame,
+            metadata={
+                **frame.metadata,
+                "capture_latency_ms": capture_latency_ms,
+            },
         )
         artifact_paths = self._artifact_writer.write_frame(
             cycle_id=cycle_id,
@@ -153,10 +163,11 @@ class LiveRuntime:
             frame = replace(frame, artifact_paths=artifact_paths)
         self._frames[cache_key] = frame
         self._logger.info(
-            "live_capture cycle_id=%s phase=%s source=%s artifacts=%s",
+            "live_capture cycle_id=%s phase=%s source=%s capture_ms=%.1f artifacts=%s",
             cycle_id,
             phase,
             frame.source,
+            capture_latency_ms,
             {key: str(path) for key, path in frame.artifact_paths.items()},
         )
         return frame
